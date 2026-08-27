@@ -11,6 +11,10 @@ export const rendererConfig: Configuration = {
         test: /\.css$/,
         use: [{ loader: 'style-loader' }, { loader: 'css-loader' }],
       },
+      {
+        test: /\.(woff2?|ttf|otf)$/i,
+        type: 'asset/resource',
+      },
     ],
   },
   plugins,
