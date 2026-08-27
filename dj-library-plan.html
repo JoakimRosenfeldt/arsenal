@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Local Rekordbox library viewer plan</title>
+  <style>
+    :root {
+      --page: #f4f2ed;
+      --paper: #fffefb;
+      --ink: #171815;
+      --muted: #5d625b;
+      --line: #d8d7cf;
+      --soft: #eeece5;
+      --accent: #315a4e;
+      --accent-soft: #e0ece6;
+      --warn: #855417;
+      --warn-soft: #f8ecd8;
+      --code: #222723;
+      --code-ink: #f1f5f0;
+      --shadow: 0 14px 42px rgba(26, 33, 28, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 16px;
+      line-height: 1.62;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 0.18em;
+    }
+
+    a:hover {
+      text-decoration-thickness: 2px;
+    }
+
+    code,
+    pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    code {
+      font-size: 0.9em;
+    }
+
+    .page {
+      width: min(1040px, calc(100% - 32px));
+      margin: 32px auto 64px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    header,
+    main,
+    footer {
+      padding-inline: clamp(24px, 6vw, 72px);
+    }
+
+    header {
+      padding-top: clamp(40px, 7vw, 76px);
+      padding-bottom: 34px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    main {
+      padding-top: 12px;
+      padding-bottom: 44px;
+    }
+
+    footer {
+      padding-top: 30px;
+      padding-bottom: 42px;
+      background: var(--soft);
+      border-top: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 750;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3 {
+      line-height: 1.18;
+      text-wrap: balance;
+    }
+
+    h1 {
+      max-width: 760px;
+      margin: 0;
+      font-size: clamp(2.15rem, 6vw, 4.4rem);
+      letter-spacing: -0.045em;
+    }
+
+    h2 {
+      margin: 0 0 18px;
+      font-size: clamp(1.45rem, 3vw, 2rem);
+      letter-spacing: -0.025em;
+    }
+
+    h3 {
+      margin: 0 0 9px;
+      font-size: 1.02rem;
+    }
+
+    p {
+      margin: 0 0 16px;
+    }
+
+    .lede {
+      max-width: 760px;
+      margin: 22px 0 0;
+      color: var(--muted);
+      font-size: clamp(1.05rem, 2.2vw, 1.24rem);
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 18px;
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .status {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1px;
+      margin-top: 32px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--line);
+    }
+
+    .status div {
+      padding: 17px 18px;
+      background: var(--paper);
+    }
+
+    .status dt {
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 0.76rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .status dd {
+      margin: 0;
+      font-weight: 700;
+    }
+
+    .contents {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      padding: 22px 0 8px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .contents a {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--ink);
+      font-size: 0.82rem;
+      text-decoration: none;
+    }
+
+    section {
+      padding: 38px 0;
+      border-bottom: 1px solid var(--line);
+      scroll-margin-top: 20px;
+    }
+
+    section:last-child {
+      border-bottom: 0;
+    }
+
+    .decision {
+      padding: 22px;
+      border: 1px solid #abc7bb;
+      border-radius: 12px;
+      background: var(--accent-soft);
+    }
+
+    .decision h3 {
+      color: #21473b;
+      font-size: 1.15rem;
+    }
+
+    .decision p:last-child {
+      margin-bottom: 0;
+    }
+
+    .decision-line {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid #b9cfc6;
+      font-weight: 700;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .card p:last-child,
+    .card ul:last-child {
+      margin-bottom: 0;
+    }
+
+    ul,
+    ol {
+      margin: 0 0 16px;
+      padding-left: 1.25rem;
+    }
+
+    li + li {
+      margin-top: 8px;
+    }
+
+    .compact li + li {
+      margin-top: 4px;
+    }
+
+    .note {
+      margin-top: 18px;
+      padding: 15px 17px;
+      border-left: 4px solid var(--warn);
+      background: var(--warn-soft);
+      color: #59380f;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+
+    th,
+    td {
+      padding: 13px 15px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--soft);
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .recommended td:first-child::after {
+      content: "Recommended";
+      display: inline-block;
+      margin-left: 8px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 0.68rem;
+      font-weight: 750;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr auto 1.3fr auto 1fr auto 1.1fr;
+      align-items: stretch;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    .flow-box {
+      min-width: 0;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .flow-box strong {
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    .flow-box span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.45;
+    }
+
+    .flow-arrow {
+      align-self: center;
+      color: var(--accent);
+      font-size: 1.3rem;
+      font-weight: 800;
+    }
+
+    pre {
+      margin: 18px 0 0;
+      padding: 20px;
+      overflow: auto;
+      border-radius: 10px;
+      background: var(--code);
+      color: var(--code-ink);
+      font-size: 0.82rem;
+      line-height: 1.55;
+    }
+
+    .phases {
+      display: grid;
+      gap: 14px;
+      padding: 0;
+      list-style: none;
+      counter-reset: phase;
+    }
+
+    .phases > li {
+      position: relative;
+      padding: 20px 20px 20px 68px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      counter-increment: phase;
+    }
+
+    .phases > li::before {
+      content: counter(phase);
+      position: absolute;
+      top: 18px;
+      left: 20px;
+      display: grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 800;
+    }
+
+    .phases h3 {
+      margin-bottom: 7px;
+    }
+
+    .phases p,
+    .phases ul {
+      margin-bottom: 0;
+    }
+
+    .checks {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checks li {
+      position: relative;
+      margin: 0;
+      padding: 13px 14px 13px 40px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .checks li::before {
+      content: "";
+      position: absolute;
+      top: 20px;
+      left: 17px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .sources {
+      margin-bottom: 0;
+      font-size: 0.9rem;
+    }
+
+    .small {
+      color: var(--muted);
+      font-size: 0.87rem;
+    }
+
+    @media (max-width: 780px) {
+      .status,
+      .grid-2,
+      .checks {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-arrow {
+        justify-self: center;
+        transform: rotate(90deg);
+      }
+    }
+
+    @media (max-width: 520px) {
+      .page {
+        width: 100%;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+      }
+
+      header,
+      main,
+      footer {
+        padding-inline: 20px;
+      }
+
+      .phases > li {
+        padding-left: 58px;
+      }
+
+      .phases > li::before {
+        left: 14px;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html {
+        scroll-behavior: auto;
+      }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111310;
+        --paper: #191c18;
+        --ink: #f0f2ec;
+        --muted: #b2b8af;
+        --line: #3a3f38;
+        --soft: #232720;
+        --accent: #9ac7b4;
+        --accent-soft: #263b33;
+        --warn: #e5b66e;
+        --warn-soft: #3c2e18;
+        --code: #0d0f0d;
+        --code-ink: #edf4ed;
+        --shadow: none;
+      }
+
+      .card,
+      .flow-box {
+        background: #1d211c;
+      }
+
+      .decision {
+        border-color: #49695d;
+      }
+
+      .decision h3,
+      .note {
+        color: var(--ink);
+      }
+
+      .decision-line {
+        border-color: #49695d;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header>
+      <p class="eyebrow">Architecture proposal · approval required</p>
+      <h1>Local Rekordbox library viewer</h1>
+      <p class="lede">A small Electron app that reads a Rekordbox XML export and shows its Collection songs. Everything runs on the user's computer. This document stops before implementation.</p>
+      <div class="meta">
+        <span>Plan version 1</span>
+        <span>27 August 2026</span>
+        <span>Greenfield repository</span>
+      </div>
+      <dl class="status">
+        <div>
+          <dt>Renderer</dt>
+          <dd>React + strict TypeScript</dd>
+        </div>
+        <div>
+          <dt>Desktop tooling</dt>
+          <dd>Electron Forge + Webpack</dd>
+        </div>
+        <div>
+          <dt>Library source</dt>
+          <dd>Local Rekordbox XML export</dd>
+        </div>
+      </dl>
+    </header>
+
+    <main>
+      <nav class="contents" aria-label="Document sections">
+        <a href="#approval">Approval</a>
+        <a href="#scope">Scope</a>
+        <a href="#source">Data source</a>
+        <a href="#stack">Stack</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#modules">Modules</a>
+        <a href="#plan">Build plan</a>
+        <a href="#done">Done criteria</a>
+        <a href="#risks">Risks</a>
+      </nav>
+
+      <section id="approval">
+        <h2>Decision to approve</h2>
+        <div class="decision">
+          <h3>Approve one package of choices</h3>
+          <p>Use Electron, React, strict TypeScript, Electron Forge, and Forge's stable Webpack template. Read a user-selected Rekordbox XML export into memory. Show Collection songs in a read-only, paged table.</p>
+          <p>The XML is a snapshot. Rekordbox changes appear only after the user exports again and imports the newer file.</p>
+          <p class="decision-line">Reply <code>approve</code> to authorize implementation. Until then, no scaffold, dependency install, or application source code will be created.</p>
+        </div>
+        <p class="note">A live view of Rekordbox would require a different design based on its private encrypted database. This plan rejects that route for the first milestone.</p>
+      </section>
+
+      <section id="scope">
+        <h2>First milestone</h2>
+        <div class="grid-2">
+          <article class="card">
+            <h3>Included</h3>
+            <ul class="compact">
+              <li>Choose one local Rekordbox XML export.</li>
+              <li>Read Collection track metadata without changing the file.</li>
+              <li>Show title, artist, album, genre, BPM, key, and duration.</li>
+              <li>Sort once by artist and title, then page through the songs.</li>
+              <li>Show source name, import time, and song count.</li>
+              <li>Import a newer export during the same session.</li>
+              <li>Keep the current catalog visible if a later import fails.</li>
+              <li>Handle empty, cancelled, malformed, and unreadable files.</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>Deferred</h3>
+            <ul class="compact">
+              <li>Direct access to Rekordbox <code>master.db</code>.</li>
+              <li>Playlists, folders, cue points, beat grids, and waveforms.</li>
+              <li>Search, column sorting, filters, and configurable columns.</li>
+              <li>Editing metadata or writing anything back to Rekordbox.</li>
+              <li>Audio playback and access to music files.</li>
+              <li>A local database, metadata cache, or saved source path.</li>
+              <li>Accounts, cloud sync, telemetry, auto-update, and remote assets.</li>
+              <li>Signing and public distribution.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="source">
+        <h2>Use the documented XML export</h2>
+        <p>Rekordbox 7.2.14 documents <code>File &gt; Library &gt; Export Collection in xml format</code>. The export contains Collection, playlist, and track information. Cloud Library Sync tracks that exist only on another computer or mobile device are omitted. The app will state that limitation next to its import instructions. <a href="https://cdn.rekordbox.com/files/20260409151936/rekordbox7.214_manual_EN.pdf">Rekordbox 7.2.14 manual</a></p>
+        <p>The published XML format defines Collection <code>TRACK</code> fields such as title, artist, album, genre, duration, BPM, rating, file location, and tonality. The parser will map the small subset used by the table and ignore unknown attributes. <a href="https://cdn.rekordbox.com/files/20200410160904/xml_format_list.pdf">Rekordbox XML format</a></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>What it gives us</th>
+                <th>Cost</th>
+                <th>Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="recommended">
+                <td>XML export</td>
+                <td>Documented, local, read-only input with a published shape.</td>
+                <td>The user must export again to refresh the snapshot.</td>
+                <td>Use now.</td>
+              </tr>
+              <tr>
+                <td>Private database</td>
+                <td>Could reflect the installed library without manual export.</td>
+                <td>Rekordbox 6 and 7 use an encrypted SQLCipher database. Existing readers are unofficial and version-sensitive.</td>
+                <td>Reject for this milestone.</td>
+              </tr>
+              <tr>
+                <td>Local mirror</td>
+                <td>Fast queries and persistence.</td>
+                <td>Adds migrations, freshness rules, recovery, and another copy of the data.</td>
+                <td>Add only after measured need.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">The private database assessment is based on the independent <a href="https://github.com/dylanljones/pyrekordbox">pyrekordbox project</a>, which describes itself as unofficial and documents the SQLCipher requirement.</p>
+      </section>
+
+      <section id="stack">
+        <h2>Framework recommendation</h2>
+        <p>Use React with strict TypeScript. The app starts as one table, but library management tends to grow into selection, filters, row actions, and detail panels. React handles that growth without requiring a server framework. Keep the renderer plain: one screen, local component state, semantic HTML, and one CSS file.</p>
+        <p>Use Electron Forge for development and packaging because Electron recommends it. Start from Forge's TypeScript and Webpack template. Forge still marks its Vite integration experimental, and this app gets little value from accepting that churn. <a href="https://www.electronjs.org/docs/latest/tutorial/application-distribution">Electron packaging guidance</a>, <a href="https://www.electronforge.io/templates/typescript-%2B-webpack-template">Forge Webpack and TypeScript template</a>, <a href="https://www.electronforge.io/templates/vite-%2B-typescript">Forge Vite status</a></p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Choice</th>
+                <th>Strength</th>
+                <th>Why it loses or wins</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="recommended">
+                <td>React + TypeScript + Forge Webpack</td>
+                <td>Stable Forge path and a good fit for a data-heavy screen.</td>
+                <td>Wins on maintenance and future UI work. Webpack's slower development loop is acceptable here.</td>
+              </tr>
+              <tr>
+                <td>Svelte + TypeScript</td>
+                <td>Less component code and a smaller renderer.</td>
+                <td>Electron already dominates package size. The smaller runtime does not offset the less standard Forge path.</td>
+              </tr>
+              <tr>
+                <td>Vanilla TypeScript</td>
+                <td>Fewest runtime dependencies.</td>
+                <td>Starts smaller, then makes table state and later interactions manual.</td>
+              </tr>
+              <tr>
+                <td>React + Forge Vite</td>
+                <td>Faster development startup.</td>
+                <td>Forge labels the integration experimental. Revisit when that changes.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">Initial dependencies stay narrow: React, React DOM, and one strict streaming XML parser. Use npm and commit the lockfile. Do not add a router, global state library, component kit, Tailwind, ORM, table framework, or virtualization package.</p>
+      </section>
+
+      <section id="architecture">
+        <h2>Runtime shape</h2>
+        <p>Electron's main process owns every privileged action. It opens the native file dialog, reads the selected XML, normalizes songs, owns the in-memory catalog, and returns one page at a time. The renderer never sees XML, a full filesystem path, Node APIs, or Electron objects.</p>
+        <div class="flow" role="img" aria-label="Rekordbox XML flows through Electron main and preload into the React table">
+          <div class="flow-box">
+            <strong>Rekordbox XML</strong>
+            <span>User-selected snapshot. Read only.</span>
+          </div>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <div class="flow-box">
+            <strong>Electron main</strong>
+            <span>Dialog, stream parser, normalized catalog, paging.</span>
+          </div>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <div class="flow-box">
+            <strong>Preload bridge</strong>
+            <span>Three typed operations. No generic IPC.</span>
+          </div>
+          <div class="flow-arrow" aria-hidden="true">→</div>
+          <div class="flow-box">
+            <strong>React renderer</strong>
+            <span>Local assets and domain rows only.</span>
+          </div>
+        </div>
+        <p class="note">Runtime network access is unnecessary. Production content uses a restrictive content security policy, denies navigation, new windows, and permissions, and enables renderer isolation and sandboxing. <a href="https://www.electronjs.org/docs/latest/tutorial/security">Electron security checklist</a></p>
+
+        <h3>Caller's view</h3>
+        <pre><code>const result = await window.djLibrary.importRekordboxExport();
+
+if (result.kind === "imported") {
+  const firstPage = await window.djLibrary.listSongs({
+    offset: 0,
+    limit: 100,
+  });
+  render(firstPage);
+}</code></pre>
+
+        <h3>Contract sketch</h3>
+        <pre><code>type DjLibraryApi = Readonly&lt;{
+  status(): Promise&lt;LibraryStatus&gt;;
+  importRekordboxExport(): Promise&lt;ImportResult&gt;;
+  listSongs(page: PageRequest): Promise&lt;SongPage&gt;;
+}&gt;;
+
+type SongRow = Readonly&lt;{
+  id: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  genre: string | null;
+  bpm: number | null;
+  musicalKey: string | null;
+  durationSeconds: number | null;
+}&gt;;
+
+type CurrentCatalog = Readonly&lt;{
+  sourceName: string;
+  importedAt: string;
+  songs: readonly SongRow[];
+}&gt;;</code></pre>
+        <p class="small">The main process validates page limits. Song IDs need to be unique only within one import. A successful import replaces the catalog in one step. Cancellation or failure leaves the prior catalog untouched.</p>
+      </section>
+
+      <section id="modules">
+        <h2>Small module map</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Responsibility</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>forge.config.ts</code></td>
+                <td>Forge makers, Webpack entries, packaging, and Electron fuses.</td>
+              </tr>
+              <tr>
+                <td><code>src/main.ts</code></td>
+                <td>App lifecycle, secure window policy, and validated IPC registration.</td>
+              </tr>
+              <tr>
+                <td><code>src/main/rekordbox-library.ts</code></td>
+                <td>File choice, import transaction, current catalog, and page reads.</td>
+              </tr>
+              <tr>
+                <td><code>src/main/parse-rekordbox-xml.ts</code></td>
+                <td>Strict streaming XML parse and conversion from Rekordbox attributes to SongRow.</td>
+              </tr>
+              <tr>
+                <td><code>src/preload.ts</code></td>
+                <td>Expose only DjLibraryApi through contextBridge.</td>
+              </tr>
+              <tr>
+                <td><code>src/shared/dj-library.ts</code></td>
+                <td>JSON-safe domain values and the bridge contract. No XML or Electron types.</td>
+              </tr>
+              <tr>
+                <td><code>src/renderer/App.tsx</code></td>
+                <td>Import instructions, feedback, summary, paging, and the song table.</td>
+              </tr>
+              <tr>
+                <td><code>src/renderer/app.css</code></td>
+                <td>Plain responsive styles for the one screen.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small">Do not start with a worker. A streaming parser keeps memory bounded. If a representative export causes visible lifecycle stalls, move parsing to an Electron utility process or Node worker behind the same API.</p>
+      </section>
+
+      <section id="plan">
+        <h2>Implementation plan after approval</h2>
+        <ol class="phases">
+          <li>
+            <h3>Secure Electron shell</h3>
+            <p>Create the Forge Webpack and TypeScript project, add React, and open one local renderer. Enable <code>contextIsolation</code> and sandboxing, disable Node integration, block unexpected navigation and permissions, and set a restrictive production content security policy. The outcome is an empty local app with no file access in the renderer.</p>
+          </li>
+          <li>
+            <h3>Rekordbox import boundary</h3>
+            <p>Add the native XML picker and a strict streaming parser. Accept <code>DJ_PLAYLISTS/COLLECTION/TRACK</code>, ignore playlists and unknown fields, reject DTDs, external entities, malformed XML, and wrong-root documents, normalize missing values to <code>null</code>, and build a new catalog before replacing the old one.</p>
+          </li>
+          <li>
+            <h3>Read-only song browser</h3>
+            <p>Render import guidance, loading and error feedback, the source summary, a semantic table, and previous and next page controls. Keep the page size fixed at 100. Sort the catalog once by artist and title. Do not add search, editing, playback, or saved settings.</p>
+          </li>
+          <li>
+            <h3>Verify and package locally</h3>
+            <p>Run type checking, linting, and a production package build. Compare the displayed count and sample fields with a real Rekordbox export. Exercise empty, malformed, cancelled, and failed replacement flows. Launch the packaged app offline and confirm that it makes no network requests. Do not add automated tests in this milestone.</p>
+          </li>
+        </ol>
+      </section>
+
+      <section id="done">
+        <h2>Done means</h2>
+        <ul class="checks">
+          <li>A valid Rekordbox XML export opens through a native file dialog.</li>
+          <li>The displayed Collection count matches the export.</li>
+          <li>Every song can be reached through table paging.</li>
+          <li>Core fields match sampled Rekordbox rows.</li>
+          <li>The app never modifies the XML, audio files, or Rekordbox data.</li>
+          <li>Bad input produces a clear local error and no crash.</li>
+          <li>A failed replacement keeps the current catalog visible.</li>
+          <li>The packaged app works with networking disabled.</li>
+        </ul>
+      </section>
+
+      <section id="risks">
+        <h2>Risks and chosen responses</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Risk</th>
+                <th>Response</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>The view becomes stale after Rekordbox changes.</td>
+                <td>Call it an imported snapshot in the UI. Require a new export and import.</td>
+              </tr>
+              <tr>
+                <td>Cloud-only tracks are absent.</td>
+                <td>Show Rekordbox's documented limitation beside the import action.</td>
+              </tr>
+              <tr>
+                <td>The XML gains new fields.</td>
+                <td>Read known fields, ignore unknown attributes, and keep the raw schema inside one parser.</td>
+              </tr>
+              <tr>
+                <td>A very large export blocks Electron's main process.</td>
+                <td>Stream first and measure a real export. Add a worker without changing the renderer API only if needed.</td>
+              </tr>
+              <tr>
+                <td>Users expect the app to remember their file.</td>
+                <td>Keep version one session-only. Add path persistence only after that behavior is requested.</td>
+              </tr>
+              <tr>
+                <td>Packaging scope expands into public distribution.</td>
+                <td>Treat signing, notarization, and platform installers as a separate approved milestone.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="synthesis">
+        <h2>Architecture synthesis</h2>
+        <p>The base design is the session-only, main-owned paged catalog with React, TypeScript, Forge, and Webpack. It won because it keeps XML and filesystem policy behind three operations while avoiding an experimental build path.</p>
+        <ul>
+          <li>Kept from the smallest snapshot design: explicit snapshot wording, the cloud-only warning, atomic catalog replacement, and IDs scoped to one import.</li>
+          <li>Kept from the paged design: main-owned paging and the rule that virtualization waits for measured lag.</li>
+          <li>Rejected: Forge Vite, a full-library IPC payload, saved settings, a local database, a worker before measurement, and renderer-visible service lifecycle events.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer>
+      <h2>Sources</h2>
+      <ul class="sources">
+        <li><a href="https://cdn.rekordbox.com/files/20260409151936/rekordbox7.214_manual_EN.pdf">Rekordbox 7.2.14 manual</a></li>
+        <li><a href="https://cdn.rekordbox.com/files/20200410160904/xml_format_list.pdf">Rekordbox XML file format</a></li>
+        <li><a href="https://www.electronjs.org/docs/latest/tutorial/application-distribution">Electron application packaging</a></li>
+        <li><a href="https://www.electronjs.org/docs/latest/tutorial/security">Electron security checklist</a></li>
+        <li><a href="https://www.electronforge.io/templates/typescript-%2B-webpack-template">Electron Forge Webpack and TypeScript template</a></li>
+        <li><a href="https://www.electronforge.io/templates/vite-%2B-typescript">Electron Forge Vite and TypeScript template</a></li>
+        <li><a href="https://github.com/dylanljones/pyrekordbox">pyrekordbox repository</a></li>
+      </ul>
+    </footer>
+  </div>
+</body>
+</html>
