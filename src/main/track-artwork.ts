@@ -7,6 +7,7 @@ import { nativeImage } from 'electron';
 import { parseFile, selectCover } from 'music-metadata';
 
 export const TRACK_ARTWORK_SCHEME = 'cuebox-art';
+export const TRACK_MEDIA_SCHEME = 'cuebox-media';
 
 export type ArtworkAsset = Readonly<{
   bytes: ArrayBuffer;
@@ -32,10 +33,19 @@ const allowedAudioExtensions = new Set([
 ]);
 
 const MAX_ACTIVE_READS = 3;
-const MAX_CACHE_ENTRIES = 96;
+type ArtworkSize = 'thumbnail' | 'overview';
+
+const MAX_CACHE_ENTRIES = 128;
 const MAX_SOURCE_BYTES = 12 * 1024 * 1024;
-const MAX_OUTPUT_BYTES = 512 * 1024;
-const MAX_EDGE = 256;
+const artworkLimits: Readonly<
+  Record<ArtworkSize, Readonly<{ edge: number; bytes: number; quality: number }>>
+> = {
+  thumbnail: { edge: 128, bytes: 256 * 1024, quality: 82 },
+  overview: { edge: 800, bytes: 2 * 1024 * 1024, quality: 88 },
+};
+
+export const isSupportedAudioPath = (filePath: string): boolean =>
+  allowedAudioExtensions.has(extname(filePath).toLocaleLowerCase());
 
 export class TrackArtworkStore {
   private readonly cache = new Map<
@@ -58,31 +68,52 @@ export class TrackArtworkStore {
       : null;
   }
 
-  async open(requestUrl: string): Promise<ArtworkAsset | null> {
-    const songId = this.songIdFrom(requestUrl);
+  mediaUrlFor(songId: string): string | null {
+    const mediaPath = this.mediaPathBySongId.get(songId);
+    return mediaPath !== undefined && isSupportedAudioPath(mediaPath)
+      ? `${TRACK_MEDIA_SCHEME}://audio/${this.revision}/${encodeURIComponent(songId)}`
+      : null;
+  }
+
+  mediaPathFor(requestUrl: string): string | null {
+    const songId = this.songIdFromMediaUrl(requestUrl);
     if (songId === null) {
       return null;
     }
+    const mediaPath = this.mediaPathBySongId.get(songId) ?? null;
+    return mediaPath !== null && isSupportedAudioPath(mediaPath)
+      ? mediaPath
+      : null;
+  }
 
-    const mediaPath = this.mediaPathBySongId.get(songId);
+  async open(requestUrl: string): Promise<ArtworkAsset | null> {
+    const request = this.artworkRequestFrom(requestUrl);
+    if (request === null) {
+      return null;
+    }
+
+    const mediaPath = this.mediaPathBySongId.get(request.songId);
     if (mediaPath === undefined) {
       return null;
     }
 
-    const cached = this.cache.get(songId);
+    const cacheKey = `${request.songId}:${request.size}`;
+    const cached = this.cache.get(cacheKey);
     if (cached !== undefined) {
-      this.cache.delete(songId);
-      this.cache.set(songId, cached);
+      this.cache.delete(cacheKey);
+      this.cache.set(cacheKey, cached);
       return cached;
     }
 
-    const result = this.enqueue(() => this.readCover(mediaPath));
-    this.cache.set(songId, result);
+    const result = this.enqueue(() => this.readCover(mediaPath, request.size));
+    this.cache.set(cacheKey, result);
     this.trimCache();
     return result;
   }
 
-  private songIdFrom(requestUrl: string): string | null {
+  private artworkRequestFrom(
+    requestUrl: string,
+  ): Readonly<{ songId: string; size: ArtworkSize }> | null {
     try {
       const url = new URL(requestUrl);
       if (
@@ -91,8 +122,15 @@ export class TrackArtworkStore {
         url.username ||
         url.password ||
         url.port ||
-        url.search ||
         url.hash
+      ) {
+        return null;
+      }
+
+      const size = url.searchParams.get('size') ?? 'thumbnail';
+      if (
+        (size !== 'thumbnail' && size !== 'overview') ||
+        [...url.searchParams.keys()].some((key) => key !== 'size')
       ) {
         return null;
       }
@@ -108,6 +146,35 @@ export class TrackArtworkStore {
         return null;
       }
 
+      return { songId: decodeURIComponent(encodedSongId), size };
+    } catch {
+      return null;
+    }
+  }
+
+  private songIdFromMediaUrl(requestUrl: string): string | null {
+    try {
+      const url = new URL(requestUrl);
+      if (
+        url.protocol !== `${TRACK_MEDIA_SCHEME}:` ||
+        url.hostname !== 'audio' ||
+        url.username ||
+        url.password ||
+        url.port ||
+        url.search ||
+        url.hash
+      ) {
+        return null;
+      }
+      const parts = url.pathname.split('/').filter(Boolean);
+      const encodedSongId = parts[1];
+      if (
+        parts.length !== 2 ||
+        parts[0] !== this.revision ||
+        encodedSongId === undefined
+      ) {
+        return null;
+      }
       return decodeURIComponent(encodedSongId);
     } catch {
       return null;
@@ -134,9 +201,12 @@ export class TrackArtworkStore {
     });
   }
 
-  private async readCover(mediaPath: string): Promise<ArtworkAsset | null> {
+  private async readCover(
+    mediaPath: string,
+    size: ArtworkSize,
+  ): Promise<ArtworkAsset | null> {
     try {
-      if (!allowedAudioExtensions.has(extname(mediaPath).toLocaleLowerCase())) {
+      if (!isSupportedAudioPath(mediaPath)) {
         return null;
       }
 
@@ -160,23 +230,24 @@ export class TrackArtworkStore {
         return null;
       }
 
-      const size = source.getSize();
-      const longestEdge = Math.max(size.width, size.height);
+      const imageSize = source.getSize();
+      const longestEdge = Math.max(imageSize.width, imageSize.height);
       if (longestEdge <= 0) {
         return null;
       }
 
-      const scale = Math.min(1, MAX_EDGE / longestEdge);
+      const limit = artworkLimits[size];
+      const scale = Math.min(1, limit.edge / longestEdge);
       const normalized =
         scale < 1
           ? source.resize({
-              width: Math.max(1, Math.round(size.width * scale)),
-              height: Math.max(1, Math.round(size.height * scale)),
+              width: Math.max(1, Math.round(imageSize.width * scale)),
+              height: Math.max(1, Math.round(imageSize.height * scale)),
               quality: 'good',
             })
           : source;
-      const jpeg = normalized.toJPEG(82);
-      if (jpeg.byteLength === 0 || jpeg.byteLength > MAX_OUTPUT_BYTES) {
+      const jpeg = normalized.toJPEG(limit.quality);
+      if (jpeg.byteLength === 0 || jpeg.byteLength > limit.bytes) {
         return null;
       }
 

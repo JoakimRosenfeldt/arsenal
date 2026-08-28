@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -12,13 +13,19 @@ import {
 } from 'electron';
 
 import { RekordboxLibrary } from './main/rekordbox-library';
-import { TRACK_ARTWORK_SCHEME } from './main/track-artwork';
+import {
+  TRACK_ARTWORK_SCHEME,
+  TRACK_MEDIA_SCHEME,
+} from './main/track-artwork';
 import {
   DJ_LIBRARY_CHANNELS,
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
+  SONG_SEARCH_LIMIT,
   type DuplicateMatchMode,
+  type LibraryMutation,
   type PageRequest,
+  type SongSearchRequest,
 } from './shared/dj-library';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
@@ -38,10 +45,45 @@ protocol.registerSchemesAsPrivileged([
     scheme: TRACK_ARTWORK_SCHEME,
     privileges: { secure: true, standard: true },
   },
+  {
+    scheme: TRACK_MEDIA_SCHEME,
+    privileges: { secure: true, standard: true, stream: true },
+  },
 ]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
+
+type ByteRange = Readonly<{ start: number; end: number }>;
+
+const byteRangeFor = (value: string, size: number): ByteRange | null => {
+  const match = /^bytes=(\d*)-(\d*)$/u.exec(value);
+  const rawStart = match?.[1];
+  const rawEnd = match?.[2];
+  if (rawStart === undefined || rawEnd === undefined || size <= 0) {
+    return null;
+  }
+
+  if (rawStart.length === 0) {
+    const suffixLength = Number(rawEnd);
+    return Number.isSafeInteger(suffixLength) && suffixLength > 0
+      ? { start: Math.max(0, size - suffixLength), end: size - 1 }
+      : null;
+  }
+
+  const start = Number(rawStart);
+  const requestedEnd = rawEnd.length === 0 ? size - 1 : Number(rawEnd);
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start < 0 ||
+    start >= size ||
+    requestedEnd < start
+  ) {
+    return null;
+  }
+  return { start, end: Math.min(requestedEnd, size - 1) };
+};
 
 const readPageRequest = (value: unknown): PageRequest => {
   if (!isRecord(value)) {
@@ -69,6 +111,58 @@ const readDuplicateMatchMode = (value: unknown): DuplicateMatchMode => {
     throw new Error('Invalid duplicate match mode');
   }
   return mode;
+};
+
+const readSongSearchRequest = (value: unknown): SongSearchRequest => {
+  if (
+    !isRecord(value) ||
+    typeof value.query !== 'string' ||
+    value.query.length > 200
+  ) {
+    throw new Error('Invalid song search');
+  }
+  return { query: value.query };
+};
+
+const readLibraryMutation = (value: unknown): LibraryMutation => {
+  if (!isRecord(value) || typeof value.kind !== 'string') {
+    throw new Error('Invalid library mutation');
+  }
+  if (value.kind === 'remove-song') {
+    if (
+      typeof value.revision !== 'string' ||
+      value.revision.length === 0 ||
+      typeof value.songId !== 'string' ||
+      value.songId.length === 0 ||
+      typeof value.removeLocalFile !== 'boolean'
+    ) {
+      throw new Error('Invalid song removal');
+    }
+    return {
+      kind: 'remove-song',
+      revision: value.revision,
+      songId: value.songId,
+      removeLocalFile: value.removeLocalFile,
+    };
+  }
+  if (value.kind === 'create-playlist') {
+    if (
+      typeof value.revision !== 'string' ||
+      value.revision.length === 0 ||
+      typeof value.name !== 'string' ||
+      !Array.isArray(value.songIds) ||
+      !value.songIds.every((songId) => typeof songId === 'string')
+    ) {
+      throw new Error('Invalid playlist creation');
+    }
+    return {
+      kind: 'create-playlist',
+      revision: value.revision,
+      name: value.name,
+      songIds: value.songIds,
+    };
+  }
+  throw new Error('Invalid library mutation');
 };
 
 const assertTrustedSender = (
@@ -113,6 +207,25 @@ const installIpc = (owner: BrowserWindow): void => {
       return library.findDuplicates(readDuplicateMatchMode(mode));
     },
   );
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.listPlaylists, (event) => {
+    assertTrustedSender(event, owner);
+    return library.listPlaylists();
+  });
+
+  ipc.handle(
+    DJ_LIBRARY_CHANNELS.searchSongs,
+    (event, request: unknown) => {
+      assertTrustedSender(event, owner);
+      const search = readSongSearchRequest(request);
+      return library.searchSongs(search.query, SONG_SEARCH_LIMIT);
+    },
+  );
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.mutate, (event, change: unknown) => {
+    assertTrustedSender(event, owner);
+    return library.mutate(readLibraryMutation(change));
+  });
 };
 
 const configureSession = (appSession: Session): void => {
@@ -155,6 +268,66 @@ const configureProtocols = (appSession: Session): void => {
         'Content-Type': artwork.contentType,
         'X-Content-Type-Options': 'nosniff',
       },
+    });
+  });
+
+  appSession.protocol.handle(TRACK_MEDIA_SCHEME, async (request) => {
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      return new Response('Not found', { status: 404 });
+    }
+    const mediaPath = library.mediaPathFor(request.url);
+    if (mediaPath === null) {
+      return new Response('Not found', { status: 404 });
+    }
+
+    let fileSize: number;
+    try {
+      const file = await stat(mediaPath);
+      if (!file.isFile() || !Number.isSafeInteger(file.size)) {
+        return new Response('Not found', { status: 404 });
+      }
+      fileSize = file.size;
+    } catch {
+      return new Response('Not found', { status: 404 });
+    }
+
+    const range = request.headers.get('range');
+    const parsedRange =
+      request.method === 'GET' && range !== null
+        ? byteRangeFor(range, fileSize)
+        : null;
+    if (request.method === 'GET' && range !== null && parsedRange === null) {
+      return new Response(null, {
+        status: 416,
+        headers: { 'Content-Range': `bytes */${fileSize}` },
+      });
+    }
+
+    const fetched = await net.fetch(pathToFileURL(mediaPath).toString(), {
+      method: request.method,
+      ...(parsedRange === null
+        ? {}
+        : { headers: { Range: `bytes=${parsedRange.start}-${parsedRange.end}` } }),
+      bypassCustomProtocolHandlers: true,
+    });
+    const headers = new Headers(fetched.headers);
+    headers.set('Accept-Ranges', 'bytes');
+    headers.set('Cache-Control', 'no-store');
+    headers.set('X-Content-Type-Options', 'nosniff');
+    if (parsedRange !== null) {
+      headers.set(
+        'Content-Range',
+        `bytes ${parsedRange.start}-${parsedRange.end}/${fileSize}`,
+      );
+      headers.set(
+        'Content-Length',
+        String(parsedRange.end - parsedRange.start + 1),
+      );
+    }
+    return new Response(fetched.body, {
+      status: parsedRange === null ? fetched.status : 206,
+      statusText: fetched.statusText,
+      headers,
     });
   });
 

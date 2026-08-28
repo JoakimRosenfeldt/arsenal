@@ -1,32 +1,58 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute } from 'node:path';
 
-import { dialog, type BrowserWindow } from 'electron';
+import { dialog, shell, type BrowserWindow } from 'electron';
 
 import type {
   DuplicateMatchMode,
   DuplicateScan,
   ImportResult,
+  LibraryMutation,
+  LibraryMutationResult,
   LibraryStatus,
+  LibrarySummary,
+  LocalFileAction,
+  MutationFailure,
   PageRequest,
+  RekordboxPlaylist,
   SongPage,
   SongRow,
 } from '../shared/dj-library';
+import {
+  editRekordboxXml,
+  RekordboxWriteError,
+  type RekordboxXmlEdit,
+} from './edit-rekordbox-xml';
 import { findDuplicateScan } from './find-duplicates';
 import {
   parseRekordboxXml,
+  type ParsedPlaylist,
+  type ParsedTrack,
   RekordboxXmlError,
 } from './parse-rekordbox-xml';
 import {
   TrackArtworkStore,
   type ArtworkAsset,
+  isSupportedAudioPath,
 } from './track-artwork';
 
+type CatalogTrack = Readonly<{
+  song: SongRow;
+  mediaPath: string | null;
+  rekordboxId: string | null;
+  rawLocation: string | null;
+}>;
+
 type CurrentCatalog = Readonly<{
+  revision: string;
+  sourcePath: string;
   sourceName: string;
   importedAt: string;
+  fingerprint: string;
+  tracks: readonly CatalogTrack[];
   songs: readonly SongRow[];
+  playlists: readonly RekordboxPlaylist[];
   duplicateScans: Map<DuplicateMatchMode, DuplicateScan>;
   artwork: TrackArtworkStore;
 }>;
@@ -34,6 +60,10 @@ type CurrentCatalog = Readonly<{
 type RememberedLibrary = Readonly<{
   rekordboxXmlPath: string;
 }>;
+
+type ReloadResult =
+  | Readonly<{ kind: 'ready'; catalog: CurrentCatalog }>
+  | Readonly<{ kind: 'rejected'; reason: MutationFailure }>;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -64,18 +94,114 @@ const collator = new Intl.Collator(undefined, {
   sensitivity: 'base',
 });
 
-const compareSongs = (left: SongRow, right: SongRow): number => {
-  if (left.artist === null && right.artist !== null) {
+const compareCatalogTracks = (
+  left: CatalogTrack,
+  right: CatalogTrack,
+): number => {
+  if (left.song.artist === null && right.song.artist !== null) {
     return 1;
   }
-  if (left.artist !== null && right.artist === null) {
+  if (left.song.artist !== null && right.song.artist === null) {
     return -1;
   }
 
   return (
-    collator.compare(left.artist ?? '', right.artist ?? '') ||
-    collator.compare(left.title, right.title)
+    collator.compare(left.song.artist ?? '', right.song.artist ?? '') ||
+    collator.compare(left.song.title, right.song.title)
   );
+};
+
+const searchTextFor = (song: SongRow): string =>
+  [song.title, song.artist, song.album, song.genre, song.musicalKey]
+    .filter((value): value is string => value !== null)
+    .join(' ')
+    .toLocaleLowerCase();
+
+const summaryFor = (catalog: CurrentCatalog): LibrarySummary => ({
+  revision: catalog.revision,
+  sourceName: catalog.sourceName,
+  importedAt: catalog.importedAt,
+  songCount: catalog.songs.length,
+  playlistCount: catalog.playlists.length,
+});
+
+const firstSongBy = (
+  tracks: readonly CatalogTrack[],
+  keyFor: (track: CatalogTrack) => string | null,
+): ReadonlyMap<string, SongRow> => {
+  const songs = new Map<string, SongRow>();
+  for (const track of tracks) {
+    const key = keyFor(track);
+    if (key !== null && !songs.has(key)) {
+      songs.set(key, track.song);
+    }
+  }
+  return songs;
+};
+
+const projectPlaylists = (
+  parsedPlaylists: readonly ParsedPlaylist[],
+  tracks: readonly CatalogTrack[],
+): readonly RekordboxPlaylist[] => {
+  const byTrackId = firstSongBy(tracks, (track) => track.rekordboxId);
+  const byLocation = firstSongBy(tracks, (track) => track.rawLocation);
+
+  return parsedPlaylists.map((playlist) => {
+    const lookup =
+      playlist.referenceKind === 'track-id'
+        ? byTrackId
+        : playlist.referenceKind === 'location'
+          ? byLocation
+          : null;
+    const resolved = playlist.keys.map((key) => lookup?.get(key) ?? null);
+    return {
+      id: playlist.id,
+      name: playlist.name,
+      kind: playlist.kind,
+      folderPath: playlist.folderPath,
+      tracks: resolved.filter((song): song is SongRow => song !== null),
+      missingTrackCount: resolved.filter((song) => song === null).length,
+    };
+  });
+};
+
+const fileActionFor = async ({
+  mediaPath,
+  removeLocalFile,
+  sharedLocation,
+}: Readonly<{
+  mediaPath: string | null;
+  removeLocalFile: boolean;
+  sharedLocation: boolean;
+}>): Promise<LocalFileAction> => {
+  if (!removeLocalFile) {
+    return 'kept';
+  }
+  if (sharedLocation) {
+    return 'shared';
+  }
+  if (mediaPath === null) {
+    return 'missing';
+  }
+  if (!isSupportedAudioPath(mediaPath)) {
+    return 'unsupported';
+  }
+
+  try {
+    const file = await stat(mediaPath);
+    if (!file.isFile()) {
+      return 'missing';
+    }
+  } catch (error: unknown) {
+    return isRecord(error) && error.code === 'ENOENT' ? 'missing' : 'failed';
+  }
+
+  try {
+    await shell.trashItem(mediaPath);
+    return 'trashed';
+  } catch {
+    return 'failed';
+  }
 };
 
 export class RekordboxLibrary {
@@ -86,6 +212,8 @@ export class RekordboxLibrary {
   private stateFilePath: string | null = null;
 
   private rememberedPath: string | null = null;
+
+  private operationTail: Promise<void> = Promise.resolve();
 
   async initialize(stateFilePath: string): Promise<void> {
     this.stateFilePath = stateFilePath;
@@ -102,28 +230,15 @@ export class RekordboxLibrary {
   }
 
   status(): LibraryStatus {
-    if (this.catalog === null) {
-      return { kind: 'empty' };
-    }
-
-    return {
-      kind: 'ready',
-      library: {
-        sourceName: this.catalog.sourceName,
-        importedAt: this.catalog.importedAt,
-        songCount: this.catalog.songs.length,
-      },
-    };
+    return this.catalog === null
+      ? { kind: 'empty' }
+      : { kind: 'ready', library: summaryFor(this.catalog) };
   }
 
   listSongs({ offset, limit }: PageRequest): SongPage {
-    if (this.catalog === null) {
-      throw new Error('No Rekordbox export is open');
-    }
-
-    const items = this.catalog.songs.slice(offset, offset + limit);
-    const total = this.catalog.songs.length;
-
+    const catalog = this.requireCatalog();
+    const items = catalog.songs.slice(offset, offset + limit);
+    const total = catalog.songs.length;
     return {
       items,
       offset,
@@ -133,18 +248,28 @@ export class RekordboxLibrary {
     };
   }
 
-  findDuplicates(mode: DuplicateMatchMode): DuplicateScan {
-    if (this.catalog === null) {
-      throw new Error('No Rekordbox export is open');
-    }
+  searchSongs(query: string, limit: number): readonly SongRow[] {
+    const songs = this.requireCatalog().songs;
+    const normalized = query.trim().toLocaleLowerCase();
+    return (normalized.length === 0
+      ? songs
+      : songs.filter((song) => searchTextFor(song).includes(normalized))
+    ).slice(0, limit);
+  }
 
-    const cached = this.catalog.duplicateScans.get(mode);
+  listPlaylists(): readonly RekordboxPlaylist[] {
+    return this.requireCatalog().playlists;
+  }
+
+  findDuplicates(mode: DuplicateMatchMode): DuplicateScan {
+    const catalog = this.requireCatalog();
+    const cached = catalog.duplicateScans.get(mode);
     if (cached !== undefined) {
       return cached;
     }
 
-    const scan = findDuplicateScan(this.catalog.songs, mode);
-    this.catalog.duplicateScans.set(mode, scan);
+    const scan = findDuplicateScan(catalog.songs, mode);
+    catalog.duplicateScans.set(mode, scan);
     return scan;
   }
 
@@ -152,14 +277,17 @@ export class RekordboxLibrary {
     return this.catalog?.artwork.open(requestUrl) ?? null;
   }
 
+  mediaPathFor(requestUrl: string): string | null {
+    return this.catalog?.artwork.mediaPathFor(requestUrl) ?? null;
+  }
+
   async importExport(owner: BrowserWindow): Promise<ImportResult> {
     if (this.activeImport !== null) {
       return this.activeImport;
     }
 
-    const importTask = this.chooseAndImport(owner);
+    const importTask = this.enqueue(() => this.chooseAndImport(owner));
     this.activeImport = importTask;
-
     try {
       return await importTask;
     } finally {
@@ -167,6 +295,26 @@ export class RekordboxLibrary {
         this.activeImport = null;
       }
     }
+  }
+
+  mutate(change: LibraryMutation): Promise<LibraryMutationResult> {
+    return this.enqueue(() => this.applyMutation(change));
+  }
+
+  private requireCatalog(): CurrentCatalog {
+    if (this.catalog === null) {
+      throw new Error('No Rekordbox export is open');
+    }
+    return this.catalog;
+  }
+
+  private enqueue<T>(work: () => Promise<T>): Promise<T> {
+    const operation = this.operationTail.then(work);
+    this.operationTail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
   private async chooseAndImport(owner: BrowserWindow): Promise<ImportResult> {
@@ -183,7 +331,6 @@ export class RekordboxLibrary {
     if (selection.canceled || selection.filePaths.length === 0) {
       return { kind: 'cancelled' };
     }
-
     const selectedPath = selection.filePaths[0];
     if (selectedPath === undefined) {
       return { kind: 'cancelled' };
@@ -194,44 +341,176 @@ export class RekordboxLibrary {
       this.catalog = nextCatalog;
       this.rememberedPath = selectedPath;
       await this.remember(selectedPath);
-      return {
-        kind: 'imported',
-        library: {
-          sourceName: nextCatalog.sourceName,
-          importedAt: nextCatalog.importedAt,
-          songCount: nextCatalog.songs.length,
-        },
-      };
+      return { kind: 'imported', library: summaryFor(nextCatalog) };
     } catch (error: unknown) {
       if (error instanceof RekordboxXmlError) {
         return { kind: 'rejected', reason: error.reason };
       }
-
       return { kind: 'rejected', reason: 'cannot-read' };
+    }
+  }
+
+  private async applyMutation(
+    change: LibraryMutation,
+  ): Promise<LibraryMutationResult> {
+    const catalog = this.requireCatalog();
+    if (change.revision !== catalog.revision) {
+      return { kind: 'rejected', reason: 'stale-library' };
+    }
+
+    switch (change.kind) {
+      case 'remove-song':
+        return this.removeSong(catalog, change);
+      case 'create-playlist':
+        return this.createPlaylist(catalog, change);
+      default: {
+        const exhaustiveChange: never = change;
+        return exhaustiveChange;
+      }
+    }
+  }
+
+  private async removeSong(
+    catalog: CurrentCatalog,
+    change: Extract<LibraryMutation, { kind: 'remove-song' }>,
+  ): Promise<LibraryMutationResult> {
+    const track = catalog.tracks.find(
+      (candidate) => candidate.song.id === change.songId,
+    );
+    if (track === undefined) {
+      return { kind: 'rejected', reason: 'song-not-found' };
+    }
+
+    const sharedLocation =
+      track.rawLocation !== null &&
+      catalog.tracks.filter(
+        (candidate) => candidate.rawLocation === track.rawLocation,
+      ).length > 1;
+    const reload = await this.writeAndReload(catalog, {
+      kind: 'remove-track',
+      trackId: track.rekordboxId,
+      rawLocation: sharedLocation ? null : track.rawLocation,
+    });
+    if (reload.kind === 'rejected') {
+      return reload;
+    }
+
+    this.catalog = reload.catalog;
+    const fileAction = await fileActionFor({
+      mediaPath: track.mediaPath,
+      removeLocalFile: change.removeLocalFile,
+      sharedLocation,
+    });
+    return {
+      kind: 'song-removed',
+      library: summaryFor(reload.catalog),
+      fileAction,
+    };
+  }
+
+  private async createPlaylist(
+    catalog: CurrentCatalog,
+    change: Extract<LibraryMutation, { kind: 'create-playlist' }>,
+  ): Promise<LibraryMutationResult> {
+    const name = change.name.trim();
+    const distinctSongIds = new Set(change.songIds);
+    if (
+      name.length === 0 ||
+      name.length > 100 ||
+      [...name].some((character) => character.charCodeAt(0) < 32) ||
+      change.songIds.length > 10_000 ||
+      distinctSongIds.size !== change.songIds.length
+    ) {
+      return { kind: 'rejected', reason: 'invalid-playlist' };
+    }
+
+    const trackIds: string[] = [];
+    for (const songId of change.songIds) {
+      const track = catalog.tracks.find(
+        (candidate) => candidate.song.id === songId,
+      );
+      if (track?.rekordboxId === null || track?.rekordboxId === undefined) {
+        return { kind: 'rejected', reason: 'invalid-playlist' };
+      }
+      const matches = catalog.tracks.filter(
+        (candidate) => candidate.rekordboxId === track.rekordboxId,
+      );
+      if (matches.length !== 1) {
+        return { kind: 'rejected', reason: 'invalid-playlist' };
+      }
+      trackIds.push(track.rekordboxId);
+    }
+
+    const reload = await this.writeAndReload(catalog, {
+      kind: 'create-root-playlist',
+      name,
+      trackIds,
+    });
+    if (reload.kind === 'rejected') {
+      return reload;
+    }
+    this.catalog = reload.catalog;
+    return {
+      kind: 'playlist-created',
+      library: summaryFor(reload.catalog),
+    };
+  }
+
+  private async writeAndReload(
+    catalog: CurrentCatalog,
+    edit: RekordboxXmlEdit,
+  ): Promise<ReloadResult> {
+    try {
+      await editRekordboxXml({
+        edit,
+        expectedFingerprint: catalog.fingerprint,
+        filePath: catalog.sourcePath,
+      });
+      return { kind: 'ready', catalog: await this.catalogFor(catalog.sourcePath) };
+    } catch (error: unknown) {
+      if (error instanceof RekordboxWriteError) {
+        if (error.reason === 'source-changed') {
+          return { kind: 'rejected', reason: 'source-changed' };
+        }
+        if (error.reason === 'target-not-found') {
+          return { kind: 'rejected', reason: 'song-not-found' };
+        }
+      }
+      return { kind: 'rejected', reason: 'cannot-write' };
     }
   }
 
   private async catalogFor(filePath: string): Promise<CurrentCatalog> {
     const parsed = await parseRekordboxXml(filePath);
+    const revision = randomUUID();
     const mediaPathBySongId = new Map<string, string>();
-    for (const track of parsed) {
+    for (const track of parsed.tracks) {
       if (track.mediaPath !== null) {
         mediaPathBySongId.set(track.song.id, track.mediaPath);
       }
     }
 
-    const artwork = new TrackArtworkStore(randomUUID(), mediaPathBySongId);
-    const songs = parsed
-      .map((track) => ({
-        ...track.song,
-        artworkUrl: artwork.urlFor(track.song.id),
+    const artwork = new TrackArtworkStore(revision, mediaPathBySongId);
+    const tracks = parsed.tracks
+      .map((track: ParsedTrack): CatalogTrack => ({
+        ...track,
+        song: {
+          ...track.song,
+          artworkUrl: artwork.urlFor(track.song.id),
+          audioUrl: artwork.mediaUrlFor(track.song.id),
+        },
       }))
-      .sort(compareSongs);
+      .sort(compareCatalogTracks);
 
     return {
+      revision,
+      sourcePath: filePath,
       sourceName: basename(filePath),
       importedAt: new Date().toISOString(),
-      songs,
+      fingerprint: parsed.fingerprint,
+      tracks,
+      songs: tracks.map((track) => track.song),
+      playlists: projectPlaylists(parsed.playlists, tracks),
       duplicateScans: new Map(),
       artwork,
     };
@@ -244,11 +523,10 @@ export class RekordboxLibrary {
 
     const state: RememberedLibrary = { rekordboxXmlPath };
     try {
-      await writeFile(
-        this.stateFilePath,
-        `${JSON.stringify(state)}\n`,
-        { encoding: 'utf8', mode: 0o600 },
-      );
+      await writeFile(this.stateFilePath, `${JSON.stringify(state)}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
     } catch {
       return;
     }

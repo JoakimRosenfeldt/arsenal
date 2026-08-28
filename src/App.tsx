@@ -1,14 +1,17 @@
-import { useEffect, useState, type JSX } from 'react';
+import { useEffect, useRef, useState, type JSX } from 'react';
 
+import {
+  CueboxPlayer,
+  type PlaybackController,
+} from './CueboxPlayer';
 import {
   CueboxSidebar,
   type PageId,
 } from './CueboxSidebar';
 import {
-  CrateBuilderPage,
   DuplicatesPage,
-  GigPrepPage,
   LibraryPage,
+  PlaylistsPage,
   type LibraryView,
 } from './CueboxPages';
 import {
@@ -16,9 +19,19 @@ import {
   type DuplicateMatchMode,
   type DuplicateScan,
   type ImportFailure,
+  type LibraryMutation,
+  type LibraryMutationResult,
+  type MutationFailure,
+  type RekordboxPlaylist,
+  type SongRow,
 } from './shared/dj-library';
 
-type DisplayError = ImportFailure | 'unexpected';
+type DisplayError = ImportFailure | MutationFailure | 'unexpected';
+
+type Feedback = Readonly<{
+  tone: 'success' | 'warning';
+  message: string;
+}>;
 
 export type DuplicateViewState =
   | Readonly<{ kind: 'empty' }>
@@ -40,8 +53,56 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
     'That file is not a supported Rekordbox Collection export. In Rekordbox, choose File > Library > Export Collection in xml format.',
   'malformed-xml':
     'The XML file is incomplete or malformed. Export the collection again, then choose the new file.',
+  'stale-library':
+    'The library changed before this action ran. Try the action again.',
+  'source-changed':
+    'The XML changed outside Cuebox. Import it again before editing.',
+  'song-not-found':
+    'That track no longer exists in the open XML.',
+  'invalid-playlist':
+    'The playlist name or track selection is not valid for this XML.',
+  'cannot-write':
+    'Cuebox could not save the XML. Check the file permissions and try again.',
   unexpected:
-    'Cuebox could not open the library. Close the app, reopen it, and try the export again.',
+    'Cuebox could not complete that action. Close the app, reopen it, and try again.',
+};
+
+const feedbackForRemoval = (
+  result: Extract<LibraryMutationResult, { kind: 'song-removed' }>,
+): Feedback => {
+  switch (result.fileAction) {
+    case 'kept':
+      return { tone: 'success', message: 'Removed from the Rekordbox XML.' };
+    case 'trashed':
+      return {
+        tone: 'success',
+        message: 'Removed from the Rekordbox XML and moved the local file to Trash.',
+      };
+    case 'shared':
+      return {
+        tone: 'warning',
+        message: 'Removed from the XML. The file was kept because another track uses it.',
+      };
+    case 'missing':
+      return {
+        tone: 'warning',
+        message: 'Removed from the XML. The local file could not be found.',
+      };
+    case 'unsupported':
+      return {
+        tone: 'warning',
+        message: 'Removed from the XML. Cuebox did not recognize the local file as audio.',
+      };
+    case 'failed':
+      return {
+        tone: 'warning',
+        message: 'Removed from the XML, but the local file could not be moved to Trash.',
+      };
+    default: {
+      const exhaustiveAction: never = result.fileAction;
+      return exhaustiveAction;
+    }
+  }
 };
 
 export const App = (): JSX.Element => {
@@ -49,15 +110,24 @@ export const App = (): JSX.Element => {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<LibraryView | null>(null);
+  const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
+  const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [query, setQuery] = useState('');
   const [duplicateMode, setDuplicateMode] =
     useState<DuplicateMatchMode>('versions');
   const [duplicateState, setDuplicateState] = useState<DuplicateViewState>({
     kind: 'empty',
   });
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [playingSong, setPlayingSong] = useState<SongRow | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [position, setPosition] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [playbackFailed, setPlaybackFailed] = useState(false);
   const hasLibrary = view !== null;
-  const libraryVersion = view?.library.importedAt ?? 'empty';
+  const libraryVersion = view?.library.revision ?? 'empty';
 
   useEffect(() => {
     let active = true;
@@ -69,12 +139,16 @@ export const App = (): JSX.Element => {
           return;
         }
 
-        const page = await window.djLibrary.listSongs({
-          offset: 0,
-          limit: SONG_PAGE_SIZE,
-        });
+        const [page, loadedPlaylists] = await Promise.all([
+          window.djLibrary.listSongs({
+            offset: 0,
+            limit: SONG_PAGE_SIZE,
+          }),
+          window.djLibrary.listPlaylists(),
+        ]);
         if (active) {
           setView({ library: status.library, page });
+          setPlaylists(loadedPlaylists);
         }
       } catch {
         if (active) {
@@ -130,12 +204,71 @@ export const App = (): JSX.Element => {
     const focusSearch = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 'k') {
         event.preventDefault();
-        document.getElementById('library-search')?.focus();
+        if (activePage === 'library') {
+          document.getElementById('library-search')?.focus();
+        }
       }
     };
     window.addEventListener('keydown', focusSearch);
     return () => window.removeEventListener('keydown', focusSearch);
-  }, []);
+  }, [activePage]);
+
+  const stopPlayback = (): void => {
+    const audio = audioRef.current;
+    audio?.pause();
+    if (audio !== null) {
+      audio.removeAttribute('src');
+      audio.load();
+    }
+    setPlayingSong(null);
+    setPlaying(false);
+    setPosition(0);
+    setAudioDuration(0);
+    setPlaybackFailed(false);
+  };
+
+  const playSong = (song: SongRow): void => {
+    const audio = audioRef.current;
+    if (audio === null || song.audioUrl === null) {
+      return;
+    }
+
+    setPlaybackFailed(false);
+    if (playingSong?.id === song.id) {
+      if (audio.paused) {
+        void audio.play().catch(() => setPlaybackFailed(true));
+      } else {
+        audio.pause();
+      }
+      return;
+    }
+
+    setPlayingSong(song);
+    setPosition(0);
+    setAudioDuration(song.durationSeconds ?? 0);
+    audio.src = song.audioUrl;
+    audio.load();
+    void audio.play().catch(() => setPlaybackFailed(true));
+  };
+
+  const seekPlayback = (seconds: number): void => {
+    const audio = audioRef.current;
+    if (audio === null || playingSong === null) {
+      return;
+    }
+    audio.currentTime = seconds;
+    setPosition(seconds);
+  };
+
+  const playback: PlaybackController = {
+    song: playingSong,
+    playing,
+    position,
+    duration: audioDuration,
+    failed: playbackFailed,
+    play: playSong,
+    seek: seekPlayback,
+  };
 
   const importLibrary = async (): Promise<void> => {
     if (busy) {
@@ -144,6 +277,7 @@ export const App = (): JSX.Element => {
 
     setBusy(true);
     setError(null);
+    setFeedback(null);
 
     try {
       const result = await window.djLibrary.importRekordboxExport();
@@ -155,11 +289,17 @@ export const App = (): JSX.Element => {
         return;
       }
 
-      const page = await window.djLibrary.listSongs({
-        offset: 0,
-        limit: SONG_PAGE_SIZE,
-      });
+      const [page, loadedPlaylists] = await Promise.all([
+        window.djLibrary.listSongs({
+          offset: 0,
+          limit: SONG_PAGE_SIZE,
+        }),
+        window.djLibrary.listPlaylists(),
+      ]);
+      stopPlayback();
       setView({ library: result.library, page });
+      setPlaylists(loadedPlaylists);
+      setSelectedPlaylistId(null);
       setQuery('');
     } catch {
       setError('unexpected');
@@ -167,6 +307,82 @@ export const App = (): JSX.Element => {
       setBusy(false);
     }
   };
+
+  const applyMutation = async (
+    changeFor: (revision: string) => LibraryMutation,
+  ): Promise<boolean> => {
+    if (busy || view === null) {
+      return false;
+    }
+
+    setBusy(true);
+    setError(null);
+    setFeedback(null);
+    try {
+      const result = await window.djLibrary.mutate(
+        changeFor(view.library.revision),
+      );
+      if (result.kind === 'rejected') {
+        setError(result.reason);
+        return false;
+      }
+
+      const maxOffset = Math.max(
+        0,
+        Math.floor(Math.max(0, result.library.songCount - 1) / SONG_PAGE_SIZE) *
+          SONG_PAGE_SIZE,
+      );
+      const [page, loadedPlaylists] = await Promise.all([
+        window.djLibrary.listSongs({
+          offset: Math.min(view.page.offset, maxOffset),
+          limit: SONG_PAGE_SIZE,
+        }),
+        window.djLibrary.listPlaylists(),
+      ]);
+      setView({ library: result.library, page });
+      setPlaylists(loadedPlaylists);
+      setQuery('');
+      setDuplicateState({ kind: 'empty' });
+      setFeedback(
+        result.kind === 'song-removed'
+          ? feedbackForRemoval(result)
+          : { tone: 'success', message: 'Playlist written to the Rekordbox XML.' },
+      );
+      return true;
+    } catch {
+      setError('unexpected');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeSong = async (
+    songId: string,
+    removeLocalFile: boolean,
+  ): Promise<boolean> => {
+    const removed = await applyMutation((revision) => ({
+      kind: 'remove-song',
+      revision,
+      songId,
+      removeLocalFile,
+    }));
+    if (removed && playingSong?.id === songId) {
+      stopPlayback();
+    }
+    return removed;
+  };
+
+  const createPlaylist = (
+    name: string,
+    songIds: readonly string[],
+  ): Promise<boolean> =>
+    applyMutation((revision) => ({
+      kind: 'create-playlist',
+      revision,
+      name,
+      songIds,
+    }));
 
   const changePage = async (offset: number): Promise<void> => {
     if (busy || view === null || offset < 0) {
@@ -190,6 +406,18 @@ export const App = (): JSX.Element => {
     }
   };
 
+  const navigate = (nextPage: PageId): void => {
+    setActivePage(nextPage);
+    if (nextPage === 'playlists') {
+      setSelectedPlaylistId(null);
+    }
+  };
+
+  const selectPlaylist = (playlistId: string): void => {
+    setSelectedPlaylistId(playlistId);
+    setActivePage('playlists');
+  };
+
   const duplicateCount =
     duplicateState.kind === 'ready' &&
     duplicateState.libraryVersion === libraryVersion &&
@@ -206,6 +434,7 @@ export const App = (): JSX.Element => {
             busy={busy}
             onImport={() => void importLibrary()}
             onPage={(offset) => void changePage(offset)}
+            playback={playback}
             query={query}
             view={view}
           />
@@ -218,25 +447,22 @@ export const App = (): JSX.Element => {
             mode={duplicateMode}
             onImport={() => void importLibrary()}
             onModeChange={setDuplicateMode}
+            onRemove={removeSong}
+            playback={playback}
             state={duplicateState}
             view={view}
           />
         );
-      case 'crate-builder':
+      case 'playlists':
         return (
-          <CrateBuilderPage
-            key={libraryVersion}
+          <PlaylistsPage
+            key={`${libraryVersion}-${selectedPlaylistId ?? 'all'}`}
             busy={busy}
+            onCreate={createPlaylist}
             onImport={() => void importLibrary()}
-            view={view}
-          />
-        );
-      case 'gig-prep':
-        return (
-          <GigPrepPage
-            key={libraryVersion}
-            busy={busy}
-            onImport={() => void importLibrary()}
+            playback={playback}
+            playlists={playlists}
+            selectedPlaylistId={selectedPlaylistId}
             view={view}
           />
         );
@@ -255,16 +481,25 @@ export const App = (): JSX.Element => {
         duplicateCount={duplicateCount}
         hasLibrary={view !== null}
         onImport={() => void importLibrary()}
-        onNavigate={setActivePage}
+        onNavigate={navigate}
+        onPlaylistSelect={selectPlaylist}
         onQueryChange={setQuery}
+        playlists={playlists}
         query={query}
+        selectedPlaylistId={selectedPlaylistId}
         songCount={view?.library.songCount ?? 0}
         sourceName={view?.library.sourceName ?? null}
       />
       <main className="workspace" id="main-content">
+        {feedback !== null && (
+          <div className={`app-feedback is-${feedback.tone}`} role="status">
+            <p>{feedback.message}</p>
+            <button type="button" onClick={() => setFeedback(null)} aria-label="Dismiss message">×</button>
+          </div>
+        )}
         {error !== null && (
           <div className="app-alert" role="alert">
-            <span>Could not import</span>
+            <span>Action failed</span>
             <p>{errorMessages[error]}</p>
             <button type="button" onClick={() => setError(null)} aria-label="Dismiss error">×</button>
           </div>
@@ -276,6 +511,21 @@ export const App = (): JSX.Element => {
           </div>
         ) : page}
       </main>
+      <audio
+        className="global-audio"
+        ref={audioRef}
+        preload="metadata"
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
+        onDurationChange={(event) => {
+          const duration = event.currentTarget.duration;
+          setAudioDuration(Number.isFinite(duration) ? duration : 0);
+        }}
+        onEnded={() => setPlaying(false)}
+        onError={() => setPlaybackFailed(true)}
+      />
+      <CueboxPlayer onStop={stopPlayback} playback={playback} />
     </div>
   );
 };

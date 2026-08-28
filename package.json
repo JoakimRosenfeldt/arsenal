@@ -2,7 +2,7 @@
   "name": "arsenal",
   "productName": "Cuebox",
   "version": "1.0.0",
-  "description": "A local, read-only viewer for Rekordbox collection exports",
+  "description": "A local manager for Rekordbox collection exports",
   "main": ".webpack/main",
   "private": true,
   "engines": {

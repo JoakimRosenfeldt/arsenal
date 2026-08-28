@@ -1,68 +1,30 @@
 import type { JSX } from 'react';
 
+import type { RekordboxPlaylist } from './shared/dj-library';
+
 export type PageId =
   | 'library'
   | 'duplicates'
-  | 'crate-builder'
-  | 'gig-prep';
+  | 'playlists';
 
-type NavigationItem =
-  | Readonly<{
-      kind: 'page';
-      page: PageId;
-      label: string;
-      shortLabel: string;
-      badge: string;
-    }>
-  | Readonly<{
-      kind: 'unavailable';
-      label: string;
-      shortLabel: string;
-      badge: string;
-    }>;
+type NavigationItem = Readonly<{
+  page: Exclude<PageId, 'playlists'>;
+  label: string;
+  shortLabel: string;
+  badge: string;
+}>;
 
 const collectionItems: readonly NavigationItem[] = [
   {
-    kind: 'page',
     page: 'library',
     label: 'Library',
     shortLabel: 'LI',
     badge: '',
   },
   {
-    kind: 'page',
     page: 'duplicates',
     label: 'Duplicates',
     shortLabel: 'DU',
-    badge: '',
-  },
-  {
-    kind: 'unavailable',
-    label: 'Tag cleanup',
-    shortLabel: 'TC',
-    badge: '—',
-  },
-  {
-    kind: 'unavailable',
-    label: 'Analyze queue',
-    shortLabel: 'AQ',
-    badge: '—',
-  },
-];
-
-const curationItems: readonly NavigationItem[] = [
-  {
-    kind: 'page',
-    page: 'crate-builder',
-    label: 'Crate builder',
-    shortLabel: 'CB',
-    badge: '',
-  },
-  {
-    kind: 'page',
-    page: 'gig-prep',
-    label: 'Gig prep',
-    shortLabel: 'GP',
     badge: '',
   },
 ];
@@ -82,23 +44,6 @@ const NavigationGroup = ({
     <p className="sidebar-section-label">{label}</p>
     <div className="sidebar-nav-list">
       {items.map((item) => {
-        if (item.kind === 'unavailable') {
-          return (
-            <button
-              className="sidebar-nav-item is-unavailable"
-              type="button"
-              disabled
-              title={`${item.label} is not included in this design handoff`}
-              key={item.label}
-            >
-              <span className="nav-active-bar" aria-hidden />
-              <span className="nav-short" aria-hidden>{item.shortLabel}</span>
-              <span className="nav-label">{item.label}</span>
-              <span className="nav-badge">{item.badge}</span>
-            </button>
-          );
-        }
-
         const isActive = item.page === activePage;
         return (
           <button
@@ -120,6 +65,97 @@ const NavigationGroup = ({
   </div>
 );
 
+type PlaylistBranchItem =
+  | Readonly<{ kind: 'folder'; name: string }>
+  | Readonly<{ kind: 'playlist'; playlist: RekordboxPlaylist }>;
+
+const startsWithPath = (
+  fullPath: readonly string[],
+  parentPath: readonly string[],
+): boolean =>
+  parentPath.every((folder, index) => fullPath[index] === folder);
+
+const itemsAtPath = (
+  playlists: readonly RekordboxPlaylist[],
+  path: readonly string[],
+): readonly PlaylistBranchItem[] => {
+  const items: PlaylistBranchItem[] = [];
+  const folders = new Set<string>();
+
+  for (const playlist of playlists) {
+    if (!startsWithPath(playlist.folderPath, path)) {
+      continue;
+    }
+
+    const childFolder = playlist.folderPath[path.length];
+    if (childFolder === undefined) {
+      items.push({ kind: 'playlist', playlist });
+    } else if (!folders.has(childFolder)) {
+      folders.add(childFolder);
+      items.push({ kind: 'folder', name: childFolder });
+    }
+  }
+
+  return items;
+};
+
+const PlaylistBranch = ({
+  activePage,
+  onSelect,
+  path,
+  playlists,
+  selectedPlaylistId,
+}: Readonly<{
+  activePage: PageId;
+  onSelect: (playlistId: string) => void;
+  path: readonly string[];
+  playlists: readonly RekordboxPlaylist[];
+  selectedPlaylistId: string | null;
+}>): JSX.Element => (
+  <div className="sidebar-playlist-branch">
+    {itemsAtPath(playlists, path).map((item) => {
+      if (item.kind === 'playlist') {
+        const active = activePage === 'playlists' && item.playlist.id === selectedPlaylistId;
+        return (
+          <button
+            className={active ? 'sidebar-playlist is-active' : 'sidebar-playlist'}
+            type="button"
+            onClick={() => onSelect(item.playlist.id)}
+            aria-current={active ? 'page' : undefined}
+            title={item.playlist.kind === 'smart' ? `${item.playlist.name}, smart playlist` : item.playlist.name}
+            key={item.playlist.id}
+          >
+            <span className={item.playlist.kind === 'smart' ? 'playlist-node-icon is-smart' : 'playlist-node-icon'} aria-hidden />
+            <span>{item.playlist.name}</span>
+            {item.playlist.kind === 'smart' && <small>Smart</small>}
+          </button>
+        );
+      }
+
+      const childPath = [...path, item.name];
+      const playlistCount = playlists.filter((playlist) =>
+        startsWithPath(playlist.folderPath, childPath),
+      ).length;
+      return (
+        <details className="sidebar-playlist-folder" open key={childPath.join('\u0000')}>
+          <summary>
+            <span className="folder-caret" aria-hidden>›</span>
+            <span>{item.name}</span>
+            <small>{playlistCount}</small>
+          </summary>
+          <PlaylistBranch
+            activePage={activePage}
+            onSelect={onSelect}
+            path={childPath}
+            playlists={playlists}
+            selectedPlaylistId={selectedPlaylistId}
+          />
+        </details>
+      );
+    })}
+  </div>
+);
+
 export const CueboxSidebar = ({
   activePage,
   busy,
@@ -127,8 +163,11 @@ export const CueboxSidebar = ({
   hasLibrary,
   onImport,
   onNavigate,
+  onPlaylistSelect,
   onQueryChange,
+  playlists,
   query,
+  selectedPlaylistId,
   songCount,
   sourceName,
 }: Readonly<{
@@ -138,33 +177,30 @@ export const CueboxSidebar = ({
   hasLibrary: boolean;
   onImport: () => void;
   onNavigate: (page: PageId) => void;
+  onPlaylistSelect: (playlistId: string) => void;
   onQueryChange: (query: string) => void;
+  playlists: readonly RekordboxPlaylist[] | null;
   query: string;
+  selectedPlaylistId: string | null;
   songCount: number;
   sourceName: string | null;
 }>): JSX.Element => {
   const collection = collectionItems.map((item) => {
-    if (item.kind === 'unavailable') {
-      return item;
-    }
-
     if (item.page === 'library') {
       return { ...item, badge: hasLibrary ? songCount.toLocaleString() : '—' };
     }
 
-    if (item.page === 'duplicates') {
-      return {
-        ...item,
-        badge: hasLibrary
-          ? duplicateCount === null
-            ? '…'
-            : String(duplicateCount)
-          : '—',
-      };
-    }
-
-    return item;
+    return {
+      ...item,
+      badge: hasLibrary
+        ? duplicateCount === null
+          ? '…'
+          : String(duplicateCount)
+        : '—',
+    };
   });
+
+  const playlistPageActive = activePage === 'playlists' && selectedPlaylistId === null;
 
   return (
     <aside className="cuebox-sidebar" aria-label="Cuebox navigation">
@@ -182,8 +218,8 @@ export const CueboxSidebar = ({
             type="search"
             value={query}
             onChange={(event) => onQueryChange(event.currentTarget.value)}
-            placeholder={hasLibrary ? 'Filter this page' : 'Import to search'}
-            disabled={!hasLibrary}
+            placeholder={hasLibrary ? 'Filter library page' : 'Import to search'}
+            disabled={!hasLibrary || activePage !== 'library'}
           />
           <span className="search-shortcut" aria-hidden>⌘K</span>
         </label>
@@ -196,21 +232,38 @@ export const CueboxSidebar = ({
           label="Collection"
           onNavigate={onNavigate}
         />
-        <NavigationGroup
-          activePage={activePage}
-          items={curationItems}
-          label="Curation"
-          onNavigate={onNavigate}
-        />
-      </nav>
 
-      <div className="sidebar-playlists">
-        <p className="sidebar-section-label">Playlists</p>
-        <div className="sidebar-note">
-          <span aria-hidden>↳</span>
-          <p>Playlist data is not loaded from this XML viewer.</p>
+        <div className="sidebar-group sidebar-playlist-group">
+          <p className="sidebar-section-label">Playlists</p>
+          <button
+            className={playlistPageActive ? 'sidebar-nav-item is-active' : 'sidebar-nav-item'}
+            type="button"
+            onClick={() => onNavigate('playlists')}
+            aria-current={playlistPageActive ? 'page' : undefined}
+            aria-label="Playlists"
+          >
+            <span className="nav-active-bar" aria-hidden />
+            <span className="nav-short" aria-hidden>PL</span>
+            <span className="nav-label">All playlists</span>
+            <span className="nav-badge">{playlists?.length ?? (hasLibrary ? '…' : '—')}</span>
+          </button>
+
+          <div className="sidebar-playlist-tree">
+            {playlists !== null && playlists.length > 0 && (
+              <PlaylistBranch
+                activePage={activePage}
+                onSelect={onPlaylistSelect}
+                path={[]}
+                playlists={playlists}
+                selectedPlaylistId={selectedPlaylistId}
+              />
+            )}
+            {playlists !== null && playlists.length === 0 && (
+              <p className="sidebar-playlist-empty">No playlists in this XML</p>
+            )}
+          </div>
         </div>
-      </div>
+      </nav>
 
       <div className="sidebar-session">
         <div className="session-heading">
@@ -223,7 +276,7 @@ export const CueboxSidebar = ({
         <button type="button" onClick={onImport} disabled={busy}>
           {busy ? 'Reading XML' : hasLibrary ? 'Replace XML' : 'Choose XML'}
         </button>
-        <span className="session-mode">READ ONLY · LOCAL PATH SAVED</span>
+        <span className="session-mode">LOCAL XML · PATH SAVED</span>
       </div>
     </aside>
   );

@@ -3,9 +3,13 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   importExport: 'dj-library:import-export',
   listSongs: 'dj-library:list-songs',
   findDuplicates: 'dj-library:find-duplicates',
+  listPlaylists: 'dj-library:list-playlists',
+  searchSongs: 'dj-library:search-songs',
+  mutate: 'dj-library:mutate',
 });
 
 export const SONG_PAGE_SIZE = 100;
+export const SONG_SEARCH_LIMIT = 100;
 
 export const DUPLICATE_MATCH_MODES = [
   'exact',
@@ -47,6 +51,7 @@ export type SongRow = Readonly<{
   dateAdded: string | null;
   comments: string | null;
   artworkUrl: string | null;
+  audioUrl: string | null;
 }>;
 
 export type DuplicateCandidate = Readonly<{
@@ -70,9 +75,20 @@ export type DuplicateScan = Readonly<{
 }>;
 
 export type LibrarySummary = Readonly<{
+  revision: string;
   sourceName: string;
   importedAt: string;
   songCount: number;
+  playlistCount: number;
+}>;
+
+export type RekordboxPlaylist = Readonly<{
+  id: string;
+  name: string;
+  kind: 'regular' | 'smart';
+  folderPath: readonly string[];
+  tracks: readonly SongRow[];
+  missingTrackCount: number;
 }>;
 
 export type LibraryStatus =
@@ -102,9 +118,60 @@ export type SongPage = Readonly<{
   hasNext: boolean;
 }>;
 
+export type SongSearchRequest = Readonly<{
+  query: string;
+}>;
+
+export type LibraryMutation =
+  | Readonly<{
+      kind: 'remove-song';
+      revision: string;
+      songId: string;
+      removeLocalFile: boolean;
+    }>
+  | Readonly<{
+      kind: 'create-playlist';
+      revision: string;
+      name: string;
+      songIds: readonly string[];
+    }>;
+
+export type LocalFileAction =
+  | 'kept'
+  | 'trashed'
+  | 'missing'
+  | 'shared'
+  | 'unsupported'
+  | 'failed';
+
+export type MutationFailure =
+  | 'stale-library'
+  | 'source-changed'
+  | 'song-not-found'
+  | 'invalid-playlist'
+  | 'cannot-write';
+
+export type LibraryMutationResult =
+  | Readonly<{
+      kind: 'song-removed';
+      library: LibrarySummary;
+      fileAction: LocalFileAction;
+    }>
+  | Readonly<{
+      kind: 'playlist-created';
+      library: LibrarySummary;
+    }>
+  | Readonly<{
+      kind: 'rejected';
+      reason: MutationFailure;
+    }>;
+
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   importRekordboxExport(): Promise<ImportResult>;
   listSongs(page: PageRequest): Promise<SongPage>;
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
+  listPlaylists(): Promise<readonly RekordboxPlaylist[]>;
+  searchSongs(request: SongSearchRequest): Promise<readonly SongRow[]>;
+  mutate(change: LibraryMutation): Promise<LibraryMutationResult>;
 }>;
