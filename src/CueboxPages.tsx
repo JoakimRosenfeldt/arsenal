@@ -144,7 +144,7 @@ const NoLibrary = ({
     <button className="accent-button" type="button" onClick={onImport} disabled={busy}>
       {busy ? 'Reading XML' : 'Choose Rekordbox XML'}
     </button>
-    <small>Nothing is uploaded. Cuebox works with the chosen file on this Mac.</small>
+    <small>Nothing is uploaded. Arsenal works with the chosen file on this Mac.</small>
   </section>
 );
 
@@ -417,7 +417,7 @@ export const LibraryPage = ({
             </dl>
             <div className="inspector-note">
               <span className="mono-label">Local file</span>
-              <p>Playback stays on this Mac. Cuebox never sends the file or its path to the renderer.</p>
+              <p>Playback stays on this Mac. Arsenal never sends the file or its path to the renderer.</p>
             </div>
           </aside>
         )}
@@ -534,83 +534,83 @@ const DuplicateSong = ({
   const isPlaying = playback.song?.id === song.id && playback.playing;
 
   return (
-    <details className="duplicate-song">
-      <summary>
-        <button
-          className={isPlaying ? 'track-play duplicate-play is-playing' : 'track-play duplicate-play'}
-          type="button"
-          onClick={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            playback.play(song);
-          }}
-          disabled={song.audioUrl === null}
-          aria-label={isPlaying ? `Pause ${song.title}` : `Play ${song.title}`}
-        >
-          <TrackArtwork song={song} size="medium" />
-          <span aria-hidden>{isPlaying ? 'Ⅱ' : '▶'}</span>
-        </button>
-        <span className="duplicate-song-identity">
-          <strong>{song.title}</strong>
-          <small>{song.artist ?? 'Unknown artist'} · {candidate.variantLabel}</small>
-        </span>
-        <span className="duplicate-song-facts">
-          <b>{formatBpm(song.bpm)}</b>
-          <small>{song.musicalKey ?? 'No key'} · {formatDuration(song.durationSeconds)}</small>
-        </span>
-        <span className="details-glyph" aria-hidden>+</span>
-      </summary>
-      <div className="duplicate-song-body">
-        <dl className="duplicate-metadata">
-          {importantMetadataFor(song).map((item) => (
-            <div className={item.wide ? 'is-wide' : ''} key={item.label}>
-              <dt>{item.label}</dt>
-              <dd>{item.value}</dd>
-            </div>
-          ))}
-        </dl>
-        <div className="duplicate-remove">
-          {confirming ? (
-            <>
-              <div>
-                <strong>Remove this track from the XML?</strong>
-                <p>References to it will also be removed from playlists.</p>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={removeLocalFile}
-                    onChange={(event) => setRemoveLocalFile(event.currentTarget.checked)}
-                    disabled={song.audioUrl === null || busy}
-                  />
-                  Also move the local audio file to Trash
-                </label>
+    <div className="duplicate-song-shell">
+      <button
+        className={isPlaying ? 'track-play duplicate-play is-playing' : 'track-play duplicate-play'}
+        type="button"
+        onClick={() => playback.play(song)}
+        disabled={song.audioUrl === null}
+        aria-label={isPlaying ? `Pause ${song.title}` : `Play ${song.title}`}
+        title={song.audioUrl === null ? 'Local audio file unavailable' : isPlaying ? 'Pause' : 'Play'}
+      >
+        <TrackArtwork song={song} size="medium" />
+        <span aria-hidden>{isPlaying ? 'Ⅱ' : '▶'}</span>
+      </button>
+      <details className="duplicate-song">
+        <summary>
+          <span aria-hidden />
+          <span className="duplicate-song-identity">
+            <strong>{song.title}</strong>
+            <small>{song.artist ?? 'Unknown artist'} · {candidate.variantLabel}</small>
+          </span>
+          <span className="duplicate-song-facts">
+            <b>{formatBpm(song.bpm)}</b>
+            <small>{song.musicalKey ?? 'No key'} · {formatDuration(song.durationSeconds)}</small>
+          </span>
+          <span className="details-glyph" aria-hidden>+</span>
+        </summary>
+        <div className="duplicate-song-body">
+          <dl className="duplicate-metadata">
+            {importantMetadataFor(song).map((item) => (
+              <div className={item.wide ? 'is-wide' : ''} key={item.label}>
+                <dt>{item.label}</dt>
+                <dd>{item.value}</dd>
               </div>
-              <span>
-                <button type="button" className="quiet-button" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
-                <button
-                  type="button"
-                  className="danger-button"
-                  onClick={() => {
-                    void onRemove(song.id, removeLocalFile).then((removed) => {
-                      if (removed) {
-                        setConfirming(false);
-                      }
-                    });
-                  }}
-                  disabled={busy}
-                >
-                  {busy ? 'Removing' : 'Remove track'}
-                </button>
-              </span>
-            </>
-          ) : (
-            <button type="button" className="danger-text-button" onClick={() => setConfirming(true)}>
-              Remove duplicate
-            </button>
-          )}
+            ))}
+          </dl>
+          <div className="duplicate-remove">
+            {confirming ? (
+              <>
+                <div>
+                  <strong>Remove this track from the XML?</strong>
+                  <p>References to it will also be removed from playlists.</p>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={removeLocalFile}
+                      onChange={(event) => setRemoveLocalFile(event.currentTarget.checked)}
+                      disabled={song.audioUrl === null || busy}
+                    />
+                    Also move the local audio file to Trash
+                  </label>
+                </div>
+                <span>
+                  <button type="button" className="quiet-button" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
+                  <button
+                    type="button"
+                    className="danger-button"
+                    onClick={() => {
+                      void onRemove(song.id, removeLocalFile).then((removed) => {
+                        if (removed) {
+                          setConfirming(false);
+                        }
+                      });
+                    }}
+                    disabled={busy}
+                  >
+                    {busy ? 'Removing' : 'Remove track'}
+                  </button>
+                </span>
+              </>
+            ) : (
+              <button type="button" className="danger-text-button" onClick={() => setConfirming(true)}>
+                Remove duplicate
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-    </details>
+      </details>
+    </div>
   );
 };
 
@@ -638,7 +638,7 @@ export const DuplicatesPage = ({
         busy={busy}
         eyebrow="Collection / Duplicates"
         title="Open a library before comparing tracks."
-        description="Cuebox scans the full collection for exact matches, alternate versions, DJ edits, and remixes."
+        description="Arsenal scans the full collection for exact matches, alternate versions, DJ edits, and remixes."
         onImport={onImport}
       />
     );
@@ -756,7 +756,7 @@ export const DuplicatesPage = ({
             <div className="detail-empty" role="alert">
               <span className="empty-scan" aria-hidden />
               <p className="mono-label">Scan unavailable</p>
-              <h2>Cuebox could not compare this library.</h2>
+              <h2>Arsenal could not compare this library.</h2>
               <p>Import the Rekordbox XML again. Your music files have not been changed.</p>
             </div>
           ) : selectedGroup === null ? (
@@ -852,7 +852,7 @@ export const PlaylistsPage = ({
         busy={busy}
         eyebrow="Collection / Playlists"
         title="Open a library to view playlists."
-        description="Cuebox reads the playlist tree from the Rekordbox XML and can add root playlists."
+        description="Arsenal reads the playlist tree from the Rekordbox XML and can add root playlists."
         onImport={onImport}
       />
     );
@@ -925,7 +925,7 @@ export const PlaylistsPage = ({
                 </div>
               </form>
               {searchFailed && (
-                <p className="playlist-search-error" role="alert">Cuebox could not search this collection.</p>
+                <p className="playlist-search-error" role="alert">Arsenal could not search this collection.</p>
               )}
               <div className="playlist-track-options" aria-label="Tracks to add">
                 {results.length === 0 && !loadingSongs ? (

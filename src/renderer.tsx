@@ -11,7 +11,7 @@ import './index.css';
 const rootElement = document.getElementById('root');
 
 if (rootElement === null) {
-  throw new Error('Cuebox could not find its application root');
+  throw new Error('Arsenal could not find its application root');
 }
 
 createRoot(rootElement).render(

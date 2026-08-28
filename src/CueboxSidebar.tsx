@@ -158,10 +158,8 @@ const PlaylistBranch = ({
 
 export const CueboxSidebar = ({
   activePage,
-  busy,
   duplicateCount,
   hasLibrary,
-  onImport,
   onNavigate,
   onPlaylistSelect,
   onQueryChange,
@@ -169,13 +167,10 @@ export const CueboxSidebar = ({
   query,
   selectedPlaylistId,
   songCount,
-  sourceName,
 }: Readonly<{
   activePage: PageId;
-  busy: boolean;
   duplicateCount: number | null;
   hasLibrary: boolean;
-  onImport: () => void;
   onNavigate: (page: PageId) => void;
   onPlaylistSelect: (playlistId: string) => void;
   onQueryChange: (query: string) => void;
@@ -183,7 +178,6 @@ export const CueboxSidebar = ({
   query: string;
   selectedPlaylistId: string | null;
   songCount: number;
-  sourceName: string | null;
 }>): JSX.Element => {
   const collection = collectionItems.map((item) => {
     if (item.page === 'library') {
@@ -203,11 +197,11 @@ export const CueboxSidebar = ({
   const playlistPageActive = activePage === 'playlists' && selectedPlaylistId === null;
 
   return (
-    <aside className="cuebox-sidebar" aria-label="Cuebox navigation">
+    <aside className="cuebox-sidebar" aria-label="Arsenal navigation">
       <div className="sidebar-top">
-        <div className="cuebox-brand" aria-label="Cuebox">
+        <div className="cuebox-brand" aria-label="Arsenal">
           <span className="cuebox-mark" aria-hidden />
-          <span className="sidebar-brand-text">Cuebox</span>
+          <span className="sidebar-brand-text">Arsenal</span>
           <span className="sidebar-version">LOCAL</span>
         </div>
 
@@ -264,20 +258,6 @@ export const CueboxSidebar = ({
           </div>
         </div>
       </nav>
-
-      <div className="sidebar-session">
-        <div className="session-heading">
-          <span className={hasLibrary ? 'session-dot is-ready' : 'session-dot'} aria-hidden />
-          <span>{hasLibrary ? 'XML ready' : 'No library open'}</span>
-        </div>
-        <p title={sourceName ?? undefined}>
-          {sourceName ?? 'Choose a Rekordbox Collection export to begin.'}
-        </p>
-        <button type="button" onClick={onImport} disabled={busy}>
-          {busy ? 'Reading XML' : hasLibrary ? 'Replace XML' : 'Choose XML'}
-        </button>
-        <span className="session-mode">LOCAL XML · PATH SAVED</span>
-      </div>
     </aside>
   );
 };

@@ -1,6 +1,6 @@
 {
   "name": "arsenal",
-  "productName": "Cuebox",
+  "productName": "Arsenal",
   "version": "1.0.0",
   "description": "A local manager for Rekordbox collection exports",
   "main": ".webpack/main",

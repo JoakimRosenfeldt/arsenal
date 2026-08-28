@@ -36,6 +36,8 @@ const APP_SCHEME = 'arsenal';
 const PACKAGED_RENDERER_URL = `${APP_SCHEME}://app/main_window/index.html`;
 const library = new RekordboxLibrary();
 
+app.setName('Arsenal');
+
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,

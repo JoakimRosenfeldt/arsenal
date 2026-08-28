@@ -497,7 +497,7 @@ export const editRekordboxXml = async ({
     if (fingerprintFor(bytes) !== expectedFingerprint) {
       throw new RekordboxWriteError(
         'source-changed',
-        'The Rekordbox XML changed outside Cuebox',
+        'The Rekordbox XML changed outside Arsenal',
       );
     }
 
@@ -523,7 +523,7 @@ export const editRekordboxXml = async ({
     if (fingerprintFor(latestBytes) !== expectedFingerprint) {
       throw new RekordboxWriteError(
         'source-changed',
-        'The Rekordbox XML changed while Cuebox was saving',
+        'The Rekordbox XML changed while Arsenal was saving',
       );
     }
     await rename(tempPath, filePath);

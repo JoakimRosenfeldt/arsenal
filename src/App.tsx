@@ -48,7 +48,7 @@ export type DuplicateViewState =
 
 const errorMessages: Readonly<Record<DisplayError, string>> = {
   'cannot-read':
-    'Cuebox could not read that XML file. Check that it still exists and that this app can open it.',
+    'Arsenal could not read that XML file. Check that it still exists and that this app can open it.',
   'not-rekordbox-xml':
     'That file is not a supported Rekordbox Collection export. In Rekordbox, choose File > Library > Export Collection in xml format.',
   'malformed-xml':
@@ -56,15 +56,15 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
   'stale-library':
     'The library changed before this action ran. Try the action again.',
   'source-changed':
-    'The XML changed outside Cuebox. Import it again before editing.',
+    'The XML changed outside Arsenal. Import it again before editing.',
   'song-not-found':
     'That track no longer exists in the open XML.',
   'invalid-playlist':
     'The playlist name or track selection is not valid for this XML.',
   'cannot-write':
-    'Cuebox could not save the XML. Check the file permissions and try again.',
+    'Arsenal could not save the XML. Check the file permissions and try again.',
   unexpected:
-    'Cuebox could not complete that action. Close the app, reopen it, and try again.',
+    'Arsenal could not complete that action. Close the app, reopen it, and try again.',
 };
 
 const feedbackForRemoval = (
@@ -91,7 +91,7 @@ const feedbackForRemoval = (
     case 'unsupported':
       return {
         tone: 'warning',
-        message: 'Removed from the XML. Cuebox did not recognize the local file as audio.',
+        message: 'Removed from the XML. Arsenal did not recognize the local file as audio.',
       };
     case 'failed':
       return {
@@ -477,10 +477,8 @@ export const App = (): JSX.Element => {
     <div className="cuebox-app">
       <CueboxSidebar
         activePage={activePage}
-        busy={busy}
         duplicateCount={duplicateCount}
         hasLibrary={view !== null}
-        onImport={() => void importLibrary()}
         onNavigate={navigate}
         onPlaylistSelect={selectPlaylist}
         onQueryChange={setQuery}
@@ -488,7 +486,6 @@ export const App = (): JSX.Element => {
         query={query}
         selectedPlaylistId={selectedPlaylistId}
         songCount={view?.library.songCount ?? 0}
-        sourceName={view?.library.sourceName ?? null}
       />
       <main className="workspace" id="main-content">
         {feedback !== null && (
@@ -507,7 +504,7 @@ export const App = (): JSX.Element => {
         {loading ? (
           <div className="loading-state" role="status">
             <span className="loading-mark" aria-hidden />
-            <p>Opening Cuebox</p>
+            <p>Opening Arsenal</p>
           </div>
         ) : page}
       </main>

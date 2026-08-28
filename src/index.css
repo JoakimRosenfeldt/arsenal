@@ -37,6 +37,15 @@ body {
   overflow: hidden;
   color: var(--text);
   background: var(--canvas);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button,
@@ -412,69 +421,6 @@ input:disabled {
   color: #55555e;
   font-size: 10px;
   line-height: 1.4;
-}
-
-.sidebar-session {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  margin-top: auto;
-  padding: 14px 16px;
-  border-top: 1px solid #1e1e24;
-}
-
-.session-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #8a8a94;
-  font: 500 9.5px/1 "IBM Plex Mono", monospace;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-
-.session-dot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 50%;
-  background: #55555e;
-}
-
-.session-dot.is-ready {
-  background: var(--success);
-}
-
-.sidebar-session > p {
-  overflow: hidden;
-  margin: 0;
-  color: #666670;
-  font-size: 10.5px;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-session > button {
-  height: 29px;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  color: var(--text-soft);
-  background: transparent;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 550;
-}
-
-.sidebar-session > button:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.session-mode {
-  color: var(--quiet);
-  font: 500 8.5px/1 "IBM Plex Mono", monospace;
-  letter-spacing: 0.08em;
 }
 
 .workspace {
@@ -1695,6 +1641,21 @@ input:disabled {
   height: 34px;
 }
 
+.duplicate-song-shell {
+  position: relative;
+}
+
+.duplicate-song-shell > .duplicate-play {
+  position: absolute;
+  z-index: 2;
+  top: 15px;
+  left: 12px;
+}
+
+.duplicate-song-shell > .duplicate-play > span:last-child {
+  opacity: 1;
+}
+
 .track-artwork.is-large {
   width: 112px;
   height: 112px;
@@ -2279,10 +2240,6 @@ input:disabled {
   .nav-badge,
   .sidebar-search input,
   .search-shortcut,
-  .sidebar-session > p,
-  .sidebar-session > button,
-  .session-heading > span:last-child,
-  .session-mode,
   .sidebar-playlist-tree {
     display: none;
   }
@@ -2317,11 +2274,6 @@ input:disabled {
     font: 600 9.5px/1 "IBM Plex Mono", monospace;
     letter-spacing: 0.06em;
     text-align: center;
-  }
-
-  .sidebar-session {
-    align-items: center;
-    padding: 14px;
   }
 
   .page-title-line {

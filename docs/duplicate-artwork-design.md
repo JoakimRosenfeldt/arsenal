@@ -2,7 +2,7 @@
 
 ## Decision
 
-Cuebox will scan duplicates in Electron main, where the complete imported catalog already lives. The renderer requests one of four fixed modes: `exact`, `versions`, `dj-edits`, or `remixes`. It receives typed, read-only groups containing every candidate in each family.
+Arsenal will scan duplicates in Electron main, where the complete imported catalog already lives. The renderer requests one of four fixed modes: `exact`, `versions`, `dj-edits`, or `remixes`. It receives typed, read-only groups containing every candidate in each family.
 
 Embedded artwork stays behind the main-process boundary. Rekordbox `Location` values are converted to private local paths during XML parsing. Public song rows receive only a revision-scoped `cuebox-art:` URL. An `<img>` request resolves that opaque URL to the current catalog, extracts the embedded cover lazily, normalizes it to a small JPEG, and falls back cleanly when the file or cover is unavailable.
 
