@@ -1,4 +1,4 @@
-import { dirname, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -12,9 +12,12 @@ import {
 } from 'electron';
 
 import { RekordboxLibrary } from './main/rekordbox-library';
+import { TRACK_ARTWORK_SCHEME } from './main/track-artwork';
 import {
   DJ_LIBRARY_CHANNELS,
+  DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
+  type DuplicateMatchMode,
   type PageRequest,
 } from './shared/dj-library';
 
@@ -29,6 +32,10 @@ const library = new RekordboxLibrary();
 protocol.registerSchemesAsPrivileged([
   {
     scheme: APP_SCHEME,
+    privileges: { secure: true, standard: true },
+  },
+  {
+    scheme: TRACK_ARTWORK_SCHEME,
     privileges: { secure: true, standard: true },
   },
 ]);
@@ -54,6 +61,14 @@ const readPageRequest = (value: unknown): PageRequest => {
   }
 
   return { offset, limit };
+};
+
+const readDuplicateMatchMode = (value: unknown): DuplicateMatchMode => {
+  const mode = DUPLICATE_MATCH_MODES.find((candidate) => candidate === value);
+  if (mode === undefined) {
+    throw new Error('Invalid duplicate match mode');
+  }
+  return mode;
 };
 
 const assertTrustedSender = (
@@ -90,6 +105,14 @@ const installIpc = (owner: BrowserWindow): void => {
       return library.listSongs(readPageRequest(request));
     },
   );
+
+  ipc.handle(
+    DJ_LIBRARY_CHANNELS.findDuplicates,
+    (event, mode: unknown) => {
+      assertTrustedSender(event, owner);
+      return library.findDuplicates(readDuplicateMatchMode(mode));
+    },
+  );
 };
 
 const configureSession = (appSession: Session): void => {
@@ -111,7 +134,30 @@ const configureSession = (appSession: Session): void => {
   }
 };
 
-const configurePackagedRenderer = (appSession: Session): void => {
+const configureProtocols = (appSession: Session): void => {
+  appSession.protocol.handle(TRACK_ARTWORK_SCHEME, async (request) => {
+    if (request.method !== 'GET') {
+      return new Response('Not found', { status: 404 });
+    }
+
+    const artwork = await library.openArtwork(request.url);
+    if (artwork === null) {
+      return new Response(null, {
+        status: 404,
+        headers: { 'Cache-Control': 'no-store' },
+      });
+    }
+
+    return new Response(artwork.bytes, {
+      status: 200,
+      headers: {
+        'Cache-Control': 'private, max-age=31536000, immutable',
+        'Content-Type': artwork.contentType,
+        'X-Content-Type-Options': 'nosniff',
+      },
+    });
+  });
+
   if (!app.isPackaged) {
     return;
   }
@@ -203,10 +249,13 @@ const createWindow = (): void => {
   void mainWindow.loadURL(rendererUrl);
 };
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
+  await library.initialize(
+    join(app.getPath('userData'), 'last-library.json'),
+  );
   const appSession = session.fromPartition(APP_SESSION_PARTITION);
   configureSession(appSession);
-  configurePackagedRenderer(appSession);
+  configureProtocols(appSession);
   createWindow();
 
   app.on('activate', () => {

@@ -134,7 +134,7 @@ export const CueboxSidebar = ({
 }: Readonly<{
   activePage: PageId;
   busy: boolean;
-  duplicateCount: number;
+  duplicateCount: number | null;
   hasLibrary: boolean;
   onImport: () => void;
   onNavigate: (page: PageId) => void;
@@ -153,7 +153,14 @@ export const CueboxSidebar = ({
     }
 
     if (item.page === 'duplicates') {
-      return { ...item, badge: hasLibrary ? String(duplicateCount) : '—' };
+      return {
+        ...item,
+        badge: hasLibrary
+          ? duplicateCount === null
+            ? '…'
+            : String(duplicateCount)
+          : '—',
+      };
     }
 
     return item;
@@ -216,7 +223,7 @@ export const CueboxSidebar = ({
         <button type="button" onClick={onImport} disabled={busy}>
           {busy ? 'Reading XML' : hasLibrary ? 'Replace XML' : 'Choose XML'}
         </button>
-        <span className="session-mode">READ ONLY · MEMORY ONLY</span>
+        <span className="session-mode">READ ONLY · LOCAL PATH SAVED</span>
       </div>
     </aside>
   );

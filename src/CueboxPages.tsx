@@ -1,9 +1,14 @@
-import { useMemo, useState, type JSX } from 'react';
+import { useState, type JSX } from 'react';
 
-import type {
-  LibrarySummary,
-  SongPage,
-  SongRow,
+import type { DuplicateViewState } from './App';
+import {
+  DUPLICATE_MATCH_MODES,
+  type DuplicateGroup,
+  type DuplicateMatchMode,
+  type DuplicateScan,
+  type LibrarySummary,
+  type SongPage,
+  type SongRow,
 } from './shared/dj-library';
 
 export type LibraryView = Readonly<{
@@ -38,6 +43,197 @@ const formatBpm = (bpm: number | null): string =>
   bpm === null
     ? '—'
     : bpm.toLocaleString(undefined, { maximumFractionDigits: 2 });
+
+type ComparisonRow = Readonly<{
+  label: string;
+  first: string;
+  second: string;
+  wrap?: boolean;
+}>;
+
+const formatFileSize = (bytes: number | null): string | null => {
+  if (bytes === null) {
+    return null;
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB'] as const;
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: unitIndex === 0 ? 0 : 1,
+  })} ${units[unitIndex]}`;
+};
+
+const formatRating = (rating: number | null): string | null => {
+  if (rating === null) {
+    return null;
+  }
+
+  const stars = Math.max(
+    0,
+    Math.min(5, Math.round(rating > 5 ? rating / 51 : rating)),
+  );
+  return `${stars} / 5`;
+};
+
+const comparisonRowsFor = (
+  firstTrack: SongRow,
+  secondTrack: SongRow,
+): readonly ComparisonRow[] => {
+  const rows: ComparisonRow[] = [
+    { label: 'Title', first: firstTrack.title, second: secondTrack.title },
+    {
+      label: 'Artist',
+      first: firstTrack.artist ?? 'Not set',
+      second: secondTrack.artist ?? 'Not set',
+    },
+    {
+      label: 'Album',
+      first: firstTrack.album ?? 'Not set',
+      second: secondTrack.album ?? 'Not set',
+    },
+    {
+      label: 'Genre',
+      first: firstTrack.genre ?? 'Not set',
+      second: secondTrack.genre ?? 'Not set',
+    },
+    {
+      label: 'BPM',
+      first: formatBpm(firstTrack.bpm),
+      second: formatBpm(secondTrack.bpm),
+    },
+    {
+      label: 'Key',
+      first: firstTrack.musicalKey ?? 'Not set',
+      second: secondTrack.musicalKey ?? 'Not set',
+    },
+    {
+      label: 'Duration',
+      first: formatDuration(firstTrack.durationSeconds),
+      second: formatDuration(secondTrack.durationSeconds),
+    },
+  ];
+  const addOptional = ({
+    first,
+    label,
+    second,
+    wrap,
+  }: Readonly<{
+    first: string | null;
+    label: string;
+    second: string | null;
+    wrap?: boolean;
+  }>): void => {
+    if (first === null && second === null) {
+      return;
+    }
+
+    rows.push({
+      label,
+      first: first ?? 'Not set',
+      second: second ?? 'Not set',
+      ...(wrap === undefined ? {} : { wrap }),
+    });
+  };
+  const formatNumber = (value: number | null): string | null =>
+    value?.toLocaleString() ?? null;
+
+  addOptional({
+    label: 'Mix',
+    first: firstTrack.mixName,
+    second: secondTrack.mixName,
+  });
+  addOptional({
+    label: 'Remixer',
+    first: firstTrack.remixer,
+    second: secondTrack.remixer,
+  });
+  addOptional({
+    label: 'Composer',
+    first: firstTrack.composer,
+    second: secondTrack.composer,
+  });
+  addOptional({
+    label: 'Label',
+    first: firstTrack.label,
+    second: secondTrack.label,
+  });
+  addOptional({
+    label: 'Year',
+    first: firstTrack.year === null ? null : String(firstTrack.year),
+    second: secondTrack.year === null ? null : String(secondTrack.year),
+  });
+  addOptional({
+    label: 'Format',
+    first: firstTrack.fileKind,
+    second: secondTrack.fileKind,
+  });
+  addOptional({
+    label: 'Bitrate',
+    first:
+      firstTrack.bitRateKbps === null
+        ? null
+        : `${formatNumber(firstTrack.bitRateKbps)} kbps`,
+    second:
+      secondTrack.bitRateKbps === null
+        ? null
+        : `${formatNumber(secondTrack.bitRateKbps)} kbps`,
+  });
+  addOptional({
+    label: 'Sample rate',
+    first:
+      firstTrack.sampleRateHz === null
+        ? null
+        : `${formatNumber(firstTrack.sampleRateHz)} Hz`,
+    second:
+      secondTrack.sampleRateHz === null
+        ? null
+        : `${formatNumber(secondTrack.sampleRateHz)} Hz`,
+  });
+  addOptional({
+    label: 'File size',
+    first: formatFileSize(firstTrack.fileSizeBytes),
+    second: formatFileSize(secondTrack.fileSizeBytes),
+  });
+  addOptional({
+    label: 'Track no.',
+    first: formatNumber(firstTrack.trackNumber),
+    second: formatNumber(secondTrack.trackNumber),
+  });
+  addOptional({
+    label: 'Disc no.',
+    first: formatNumber(firstTrack.discNumber),
+    second: formatNumber(secondTrack.discNumber),
+  });
+  addOptional({
+    label: 'Rating',
+    first: formatRating(firstTrack.rating),
+    second: formatRating(secondTrack.rating),
+  });
+  addOptional({
+    label: 'Play count',
+    first: formatNumber(firstTrack.playCount),
+    second: formatNumber(secondTrack.playCount),
+  });
+  addOptional({
+    label: 'Added',
+    first: firstTrack.dateAdded,
+    second: secondTrack.dateAdded,
+  });
+  addOptional({
+    label: 'Comments',
+    first: firstTrack.comments,
+    second: secondTrack.comments,
+    wrap: true,
+  });
+
+  return rows;
+};
 
 const formatImportedAt = (importedAt: string): string =>
   new Intl.DateTimeFormat(undefined, {
@@ -103,7 +299,7 @@ const NoLibrary = ({
     <button className="accent-button" type="button" onClick={onImport} disabled={busy}>
       {busy ? 'Reading XML' : 'Choose Rekordbox XML'}
     </button>
-    <small>Nothing is uploaded or saved. Closing Cuebox clears the session.</small>
+    <small>Nothing is uploaded. Cuebox remembers this XML location on this Mac.</small>
   </section>
 );
 
@@ -131,40 +327,33 @@ const WaveBars = ({ song }: Readonly<{ song: SongRow }>): JSX.Element => {
   );
 };
 
-const TrackArtwork = ({ size = 'small' }: Readonly<{ size?: 'small' | 'large' }>): JSX.Element => (
-  <span className={`track-artwork is-${size}`} aria-hidden>
-    <span>CB</span>
-  </span>
-);
+const TrackArtwork = ({
+  loadEagerly = false,
+  size = 'small',
+  song,
+}: Readonly<{
+  loadEagerly?: boolean;
+  size?: 'small' | 'medium' | 'large';
+  song: SongRow;
+}>): JSX.Element => {
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showArtwork =
+    song.artworkUrl !== null && song.artworkUrl !== failedUrl;
 
-export const duplicateGroupsFor = (
-  songs: readonly SongRow[],
-): readonly Readonly<{
-  key: string;
-  title: string;
-  artist: string;
-  tracks: readonly SongRow[];
-}>[] => {
-  const byIdentity = new Map<string, SongRow[]>();
-
-  for (const song of songs) {
-    const key = `${normalize(song.artist)}\u0000${normalize(song.title)}`;
-    const existing = byIdentity.get(key);
-    if (existing === undefined) {
-      byIdentity.set(key, [song]);
-    } else {
-      existing.push(song);
-    }
-  }
-
-  return [...byIdentity.entries()]
-    .filter((entry) => entry[1].length > 1)
-    .map(([key, tracks]) => ({
-      key,
-      title: tracks[0]?.title ?? 'Untitled track',
-      artist: tracks[0]?.artist ?? 'Unknown artist',
-      tracks,
-    }));
+  return (
+    <span className={`track-artwork is-${size}`} aria-hidden>
+      <span>CB</span>
+      {showArtwork && (
+        <img
+          src={song.artworkUrl ?? undefined}
+          alt=""
+          loading={loadEagerly ? 'eager' : 'lazy'}
+          decoding="async"
+          onError={() => setFailedUrl(song.artworkUrl)}
+        />
+      )}
+    </span>
+  );
 };
 
 export const LibraryPage = ({
@@ -283,7 +472,7 @@ export const LibraryPage = ({
                       <span className="visually-hidden">{status.label}</span>
                     </span>
                     <span className="track-index" role="cell">{formatRowNumber(view.page.offset, index)}</span>
-                    <span role="cell"><TrackArtwork /></span>
+                    <span role="cell"><TrackArtwork song={song} /></span>
                     <span className="track-identity" role="cell">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}</small>
@@ -304,7 +493,7 @@ export const LibraryPage = ({
           <aside className={inspectorOpen ? 'library-inspector is-open' : 'library-inspector'} aria-label="Selected track inspector">
             <button className="inspector-close" type="button" onClick={() => setInspectorOpen(false)} aria-label="Close inspector">×</button>
             <div className="inspector-title">
-              <TrackArtwork size="large" />
+              <TrackArtwork song={selectedSong} size="large" />
               <div>
                 <h2>{selectedSong.title}</h2>
                 <p>{selectedSong.artist ?? 'Unknown artist'}</p>
@@ -328,8 +517,8 @@ export const LibraryPage = ({
               <div><dt>Gaps</dt><dd>{metadataGapCount(selectedSong)}</dd></div>
             </dl>
             <div className="inspector-note">
-              <span className="mono-label">Local session</span>
-              <p>Cuebox reads this metadata in memory. It does not edit the track or the Rekordbox export.</p>
+              <span className="mono-label">Local and read-only</span>
+              <p>Cuebox remembers this XML location on this Mac. It does not edit the track or the Rekordbox export.</p>
             </div>
           </aside>
         )}
@@ -368,12 +557,65 @@ export const LibraryPage = ({
   );
 };
 
-export const DuplicatesPage = ({ busy, onImport, view }: CommonPageProps): JSX.Element => {
-  const groups = useMemo(
-    () => duplicateGroupsFor(view?.page.items ?? []),
-    [view?.page.items],
-  );
+type DuplicateModeCopy = Readonly<{
+  description: string;
+  emptyDescription: string;
+  emptyTitle: string;
+  label: string;
+}>;
+
+const duplicateModeCopy: Readonly<
+  Record<DuplicateMatchMode, DuplicateModeCopy>
+> = {
+  exact: {
+    label: 'Exact',
+    description: 'Same title and artist metadata',
+    emptyTitle: 'No exact matches found.',
+    emptyDescription: 'No title and artist pair appears more than once.',
+  },
+  versions: {
+    label: 'All versions',
+    description: 'Same base title with recognized version tags',
+    emptyTitle: 'No version families found.',
+    emptyDescription: 'No tracks share a base title with a recognized version tag.',
+  },
+  'dj-edits': {
+    label: 'DJ edits',
+    description: 'Intro, extended, clean, dirty, radio, club, and other edits',
+    emptyTitle: 'No DJ edit families found.',
+    emptyDescription: 'No track family includes a recognized DJ edit tag.',
+  },
+  remixes: {
+    label: 'Remixes',
+    description: 'Remix, rework, bootleg, mashup, VIP, and flip tags',
+    emptyTitle: 'No remix families found.',
+    emptyDescription: 'No track family includes a recognized remix tag.',
+  },
+};
+
+const variantSummaryFor = (group: DuplicateGroup): string => {
+  const labels = [...new Set(
+    group.candidates.map((candidate) => candidate.variantLabel),
+  )];
+  const visible = labels.slice(0, 3).join(' · ');
+  return labels.length > 3 ? `${visible} +${labels.length - 3}` : visible;
+};
+
+export const DuplicatesPage = ({
+  busy,
+  mode,
+  onImport,
+  onModeChange,
+  state,
+  view,
+}: CommonPageProps &
+  Readonly<{
+    mode: DuplicateMatchMode;
+    onModeChange: (mode: DuplicateMatchMode) => void;
+    state: DuplicateViewState;
+  }>): JSX.Element => {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [comparisonId, setComparisonId] = useState<string | null>(null);
 
   if (view === null) {
     return (
@@ -381,27 +623,58 @@ export const DuplicatesPage = ({ busy, onImport, view }: CommonPageProps): JSX.E
         busy={busy}
         eyebrow="Collection / Duplicates"
         title="Open a library before comparing tracks."
-        description="Cuebox can flag exact title and artist matches in the visible 100-track page."
+        description="Cuebox scans the full collection for exact matches, alternate versions, DJ edits, and remixes."
         onImport={onImport}
       />
     );
   }
 
-  const selectedGroup = groups.find((group) => group.key === selectedKey) ?? groups[0] ?? null;
-  const firstTrack = selectedGroup?.tracks[0] ?? null;
-  const secondTrack = selectedGroup?.tracks[1] ?? null;
-  const duplicateFiles = groups.reduce((total, group) => total + group.tracks.length, 0);
-  const comparisons: readonly Readonly<{ label: string; first: string; second: string }>[] =
+  const scan: DuplicateScan | null =
+    state.kind === 'ready' &&
+    state.libraryVersion === view.library.importedAt &&
+    state.scan.mode === mode
+      ? state.scan
+      : null;
+  const stateMode =
+    state.kind === 'ready'
+      ? state.scan.mode
+      : state.kind === 'error'
+        ? state.mode
+        : null;
+  const scanning =
+    state.kind === 'empty' ||
+    state.libraryVersion !== view.library.importedAt ||
+    stateMode !== mode;
+  const scanFailed =
+    state.kind === 'error' &&
+    state.libraryVersion === view.library.importedAt &&
+    state.mode === mode;
+  const groups = scan?.groups ?? [];
+  const selectedGroup =
+    groups.find((group) => group.key === selectedKey) ?? groups[0] ?? null;
+  const reference = selectedGroup?.candidates[0] ?? null;
+  const comparisonChoices = selectedGroup?.candidates.slice(1) ?? [];
+  const modeDefaultComparison =
+    mode === 'remixes'
+      ? comparisonChoices.find((candidate) =>
+          candidate.variantKinds.includes('remix'),
+        )
+      : mode === 'dj-edits'
+        ? comparisonChoices.find((candidate) =>
+            candidate.variantKinds.includes('dj-edit'),
+          )
+        : undefined;
+  const comparison =
+    comparisonChoices.find((candidate) => candidate.song.id === comparisonId) ??
+    modeDefaultComparison ??
+    comparisonChoices[0] ??
+    null;
+  const firstTrack = reference?.song ?? null;
+  const secondTrack = comparison?.song ?? null;
+  const copy = duplicateModeCopy[mode];
+  const comparisons =
     firstTrack !== null && secondTrack !== null
-      ? [
-          { label: 'Title', first: firstTrack.title, second: secondTrack.title },
-          { label: 'Artist', first: firstTrack.artist ?? 'Not set', second: secondTrack.artist ?? 'Not set' },
-          { label: 'Album', first: firstTrack.album ?? 'Not set', second: secondTrack.album ?? 'Not set' },
-          { label: 'Genre', first: firstTrack.genre ?? 'Not set', second: secondTrack.genre ?? 'Not set' },
-          { label: 'BPM', first: formatBpm(firstTrack.bpm), second: formatBpm(secondTrack.bpm) },
-          { label: 'Key', first: firstTrack.musicalKey ?? 'Not set', second: secondTrack.musicalKey ?? 'Not set' },
-          { label: 'Duration', first: formatDuration(firstTrack.durationSeconds), second: formatDuration(secondTrack.durationSeconds) },
-        ]
+      ? comparisonRowsFor(firstTrack, secondTrack)
       : [];
 
   return (
@@ -409,25 +682,55 @@ export const DuplicatesPage = ({ busy, onImport, view }: CommonPageProps): JSX.E
       <header className="page-header stacked-header">
         <div className="page-title-line">
           <h1 id="duplicates-title">Duplicates</h1>
-          <p>{groups.length} exact groups · {duplicateFiles} tracks · visible page only</p>
+          <p>
+            {scanning
+              ? 'Scanning full library'
+              : scanFailed
+                ? 'Scan unavailable'
+                : `${groups.length} ${groups.length === 1 ? 'group' : 'groups'} · ${scan?.trackCount ?? 0} tracks · full library`}
+          </p>
         </div>
         <div className="header-actions">
           <span className="status-pill is-warning"><i aria-hidden />Review only</span>
-          <button className="quiet-button" type="button" onClick={onImport} disabled={busy}>Import XML</button>
+          <button className="quiet-button" type="button" onClick={onImport} disabled={busy}>
+            {busy ? 'Reading XML' : 'Import XML'}
+          </button>
         </div>
-        <div className="review-progress" aria-label={`${groups.length} duplicate groups found`}>
-          <span style={{ width: groups.length === 0 ? '0%' : '34%' }} />
-          <p>Exact title + artist matching · no files changed</p>
+        <div className="duplicate-controls">
+          <div className="duplicate-mode-switch" role="group" aria-label="Duplicate match type">
+            {DUPLICATE_MATCH_MODES.map((option) => (
+              <button
+                className={option === mode ? 'is-active' : ''}
+                type="button"
+                onClick={() => onModeChange(option)}
+                aria-pressed={option === mode}
+                key={option}
+              >
+                {duplicateModeCopy[option].label}
+              </button>
+            ))}
+          </div>
+          <p>{copy.description} · no files changed</p>
         </div>
       </header>
 
       <div className="duplicates-body">
-        <aside className="duplicate-groups" aria-label="Duplicate groups">
-          <div className="panel-heading"><span>Groups</span><span>Match</span></div>
-          {groups.length === 0 ? (
+        <aside className="duplicate-groups" aria-label="Matched track groups">
+          <div className="panel-heading"><span>Groups</span><span>Variants</span></div>
+          {scanning ? (
+            <div className="panel-empty" role="status">
+              <strong>Scanning the library</strong>
+              <p>Checking every imported track, not only the visible page.</p>
+            </div>
+          ) : scanFailed ? (
+            <div className="panel-empty" role="alert">
+              <strong>Scan unavailable</strong>
+              <p>Choose another mode or import the XML again.</p>
+            </div>
+          ) : groups.length === 0 ? (
             <div className="panel-empty">
-              <strong>No exact matches</strong>
-              <p>This page checks only the current 100-track library page.</p>
+              <strong>{copy.emptyTitle}</strong>
+              <p>{copy.emptyDescription}</p>
             </div>
           ) : (
             groups.map((group, index) => {
@@ -436,13 +739,16 @@ export const DuplicatesPage = ({ busy, onImport, view }: CommonPageProps): JSX.E
                 <button
                   className={isActive ? 'duplicate-group is-active' : 'duplicate-group'}
                   type="button"
-                  onClick={() => setSelectedKey(group.key)}
+                  onClick={() => {
+                    setSelectedKey(group.key);
+                    setComparisonId(null);
+                  }}
                   aria-current={isActive ? 'true' : undefined}
                   key={group.key}
                 >
                   <strong>{group.title}</strong>
                   <span>{group.artist}</span>
-                  <small>{group.tracks.length} copies · group {index + 1}</small>
+                  <small>{group.candidates.length} tracks · {variantSummaryFor(group)} · group {index + 1}</small>
                 </button>
               );
             })
@@ -450,36 +756,87 @@ export const DuplicatesPage = ({ busy, onImport, view }: CommonPageProps): JSX.E
         </aside>
 
         <div className="duplicate-detail">
-          {selectedGroup === null || firstTrack === null || secondTrack === null ? (
+          {scanning ? (
+            <div className="detail-empty" role="status">
+              <span className="loading-mark" aria-hidden />
+              <p className="mono-label">Full library scan</p>
+              <h2>Finding {copy.label.toLocaleLowerCase()}.</h2>
+              <p>This scan uses imported artist and title metadata. Audio files are not fingerprinted.</p>
+            </div>
+          ) : scanFailed ? (
+            <div className="detail-empty" role="alert">
+              <span className="empty-scan" aria-hidden />
+              <p className="mono-label">Scan unavailable</p>
+              <h2>Cuebox could not compare this library.</h2>
+              <p>Import the Rekordbox XML again. Your music files have not been changed.</p>
+            </div>
+          ) : selectedGroup === null || reference === null || comparison === null ? (
             <div className="detail-empty">
               <span className="empty-scan" aria-hidden />
-              <p className="mono-label">Page scan complete</p>
-              <h2>No duplicate group to compare.</h2>
-              <p>Cuebox does not inspect paths, audio fingerprints, or file quality in this read-only viewer.</p>
+              <p className="mono-label">Full library scan complete</p>
+              <h2>{copy.emptyTitle}</h2>
+              <p>{copy.emptyDescription} Cuebox uses explicit metadata rules rather than fuzzy confidence scores.</p>
             </div>
           ) : (
             <>
               <div className="duplicate-detail-title">
-                <span className="accent-tag">Group {groups.indexOf(selectedGroup) + 1} of {groups.length}</span>
-                <p>Matched on exact title and artist metadata</p>
-                <h2>{selectedGroup.title}</h2>
-                <span>{selectedGroup.artist}</span>
+                <TrackArtwork
+                  loadEagerly
+                  song={reference.song}
+                  size="large"
+                />
+                <div className="duplicate-detail-copy">
+                  <div className="duplicate-detail-meta">
+                    <span className="accent-tag">Group {groups.indexOf(selectedGroup) + 1} of {groups.length}</span>
+                    <p>{selectedGroup.matchReason}</p>
+                  </div>
+                  <h2>{selectedGroup.title}</h2>
+                  <span>{selectedGroup.artist}</span>
+                </div>
               </div>
+
+              <div className="version-picker">
+                <span className="mono-label">Compare reference with</span>
+                <div>
+                  {comparisonChoices.map((candidate) => (
+                    <button
+                      className={candidate.song.id === comparison.song.id ? 'is-active' : ''}
+                      type="button"
+                      onClick={() => setComparisonId(candidate.song.id)}
+                      aria-pressed={candidate.song.id === comparison.song.id}
+                      title={candidate.song.title}
+                      key={candidate.song.id}
+                    >
+                      <b>{candidate.variantLabel}</b>
+                      <small>{candidate.song.title}</small>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="comparison-grid">
                 <div className="comparison-head label-cell">Attribute</div>
                 <div className="comparison-head candidate is-selected">
-                  <b>Copy A</b>
-                  <span>Read-only candidate</span>
+                  <TrackArtwork
+                    loadEagerly
+                    song={reference.song}
+                    size="medium"
+                  />
+                  <span><b>Reference</b><small>{reference.variantLabel}</small></span>
                 </div>
                 <div className="comparison-head candidate">
-                  <b>Copy B</b>
-                  <span>Read-only candidate</span>
+                  <TrackArtwork
+                    loadEagerly
+                    song={comparison.song}
+                    size="medium"
+                  />
+                  <span><b>Compare</b><small>{comparison.variantLabel}</small></span>
                 </div>
-                {comparisons.map((comparison) => (
-                  <div className="comparison-row" key={comparison.label}>
-                    <span className="label-cell">{comparison.label}</span>
-                    <span className="comparison-value is-selected">{comparison.first}</span>
-                    <span className="comparison-value">{comparison.second}</span>
+                {comparisons.map((item) => (
+                  <div className="comparison-row" key={item.label}>
+                    <span className="label-cell">{item.label}</span>
+                    <span className={`comparison-value is-selected${item.wrap ? ' is-wrapped' : ''}`}>{item.first}</span>
+                    <span className={`comparison-value${item.wrap ? ' is-wrapped' : ''}`}>{item.second}</span>
                   </div>
                 ))}
               </div>
@@ -487,7 +844,7 @@ export const DuplicatesPage = ({ busy, onImport, view }: CommonPageProps): JSX.E
                 <span className="lock-glyph" aria-hidden>◇</span>
                 <div>
                   <strong>Comparison only</strong>
-                  <p>The current XML model has no safe file path or write-back operation. Cuebox will not remove, merge, or move either track.</p>
+                  <p>Cuebox reads metadata and embedded cover art. It will not remove, merge, move, or edit either track.</p>
                 </div>
               </div>
             </>
@@ -495,9 +852,8 @@ export const DuplicatesPage = ({ busy, onImport, view }: CommonPageProps): JSX.E
         </div>
       </div>
       <footer className="action-rail">
-        <span>READ-ONLY DUPLICATE REVIEW</span>
-        <button type="button" disabled>Approve removal</button>
-        <button type="button" disabled>Keep both</button>
+        <span>READ-ONLY METADATA REVIEW</span>
+        <strong>{copy.label} · full library</strong>
       </footer>
     </section>
   );
@@ -620,7 +976,7 @@ export const CrateBuilderPage = ({ busy, onImport, view }: CommonPageProps): JSX
                     }}
                   />
                   <span className="custom-check" aria-hidden>{isIncluded ? '✓' : ''}</span>
-                  <TrackArtwork />
+                  <TrackArtwork song={song} />
                   <span className="track-identity">
                     <strong>{song.title}</strong>
                     <small>{song.artist ?? 'Unknown artist'}</small>
@@ -832,7 +1188,7 @@ export const GigPrepPage = ({ busy, onImport, view }: CommonPageProps): JSX.Elem
             <p>No unused tracks with BPM metadata on this page.</p>
           ) : bridgeSuggestions.map((song) => (
             <div key={song.id}>
-              <TrackArtwork />
+              <TrackArtwork song={song} />
               <span><strong>{song.title}</strong><small>{formatBpm(song.bpm)} BPM · {song.musicalKey ?? 'KEY NOT SET'}</small></span>
               <button type="button" disabled aria-label={`Adding ${song.title} is not available`}>+</button>
             </div>

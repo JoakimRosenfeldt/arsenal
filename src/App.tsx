@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type JSX } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 
 import {
   CueboxSidebar,
@@ -9,15 +9,29 @@ import {
   DuplicatesPage,
   GigPrepPage,
   LibraryPage,
-  duplicateGroupsFor,
   type LibraryView,
 } from './CueboxPages';
 import {
   SONG_PAGE_SIZE,
+  type DuplicateMatchMode,
+  type DuplicateScan,
   type ImportFailure,
 } from './shared/dj-library';
 
 type DisplayError = ImportFailure | 'unexpected';
+
+export type DuplicateViewState =
+  | Readonly<{ kind: 'empty' }>
+  | Readonly<{
+      kind: 'ready';
+      libraryVersion: string;
+      scan: DuplicateScan;
+    }>
+  | Readonly<{
+      kind: 'error';
+      libraryVersion: string;
+      mode: DuplicateMatchMode;
+    }>;
 
 const errorMessages: Readonly<Record<DisplayError, string>> = {
   'cannot-read':
@@ -37,6 +51,13 @@ export const App = (): JSX.Element => {
   const [view, setView] = useState<LibraryView | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
   const [query, setQuery] = useState('');
+  const [duplicateMode, setDuplicateMode] =
+    useState<DuplicateMatchMode>('versions');
+  const [duplicateState, setDuplicateState] = useState<DuplicateViewState>({
+    kind: 'empty',
+  });
+  const hasLibrary = view !== null;
+  const libraryVersion = view?.library.importedAt ?? 'empty';
 
   useEffect(() => {
     let active = true;
@@ -71,6 +92,39 @@ export const App = (): JSX.Element => {
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!hasLibrary) {
+      return;
+    }
+
+    let active = true;
+
+    void window.djLibrary
+      .findDuplicates(duplicateMode)
+      .then((scan) => {
+        if (active) {
+          setDuplicateState({
+            kind: 'ready',
+            libraryVersion,
+            scan,
+          });
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setDuplicateState({
+            kind: 'error',
+            libraryVersion,
+            mode: duplicateMode,
+          });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [duplicateMode, hasLibrary, libraryVersion]);
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent): void => {
@@ -136,11 +190,12 @@ export const App = (): JSX.Element => {
     }
   };
 
-  const duplicateCount = useMemo(
-    () => duplicateGroupsFor(view?.page.items ?? []).length,
-    [view?.page.items],
-  );
-  const libraryVersion = view?.library.importedAt ?? 'empty';
+  const duplicateCount =
+    duplicateState.kind === 'ready' &&
+    duplicateState.libraryVersion === libraryVersion &&
+    duplicateState.scan.mode === duplicateMode
+      ? duplicateState.scan.groups.length
+      : null;
 
   const page = (() => {
     switch (activePage) {
@@ -160,7 +215,10 @@ export const App = (): JSX.Element => {
           <DuplicatesPage
             key={libraryVersion}
             busy={busy}
+            mode={duplicateMode}
             onImport={() => void importLibrary()}
+            onModeChange={setDuplicateMode}
+            state={duplicateState}
             view={view}
           />
         );

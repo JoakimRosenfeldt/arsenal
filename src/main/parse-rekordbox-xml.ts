@@ -1,8 +1,14 @@
 import { createReadStream } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { SaxesParser } from 'saxes';
 
 import type { SongRow } from '../shared/dj-library';
+
+export type ParsedTrack = Readonly<{
+  song: SongRow;
+  mediaPath: string | null;
+}>;
 
 export type RekordboxXmlFailure = 'malformed-xml' | 'not-rekordbox-xml';
 
@@ -39,32 +45,74 @@ const parseNumber = ({
   return parsed;
 };
 
+const parseMediaPath = (value: string | undefined): string | null => {
+  const location = cleanText(value);
+  if (location === null) {
+    return null;
+  }
+
+  try {
+    const url = new URL(location);
+    return url.protocol === 'file:' ? fileURLToPath(url) : null;
+  } catch {
+    return null;
+  }
+};
+
 const makeSong = ({
   attributes,
   rowNumber,
 }: Readonly<{
   attributes: Readonly<Record<string, string>>;
   rowNumber: number;
-}>): SongRow => {
+}>): ParsedTrack => {
   return {
-    id: String(rowNumber),
-    title: cleanText(attributes.Name) ?? 'Untitled track',
-    artist: cleanText(attributes.Artist),
-    album: cleanText(attributes.Album),
-    genre: cleanText(attributes.Genre),
-    bpm: parseNumber({ value: attributes.AverageBpm, allowZero: false }),
-    musicalKey: cleanText(attributes.Tonality),
-    durationSeconds: parseNumber({
-      value: attributes.TotalTime,
-      allowZero: true,
-    }),
+    song: {
+      id: String(rowNumber),
+      title: cleanText(attributes.Name) ?? 'Untitled track',
+      artist: cleanText(attributes.Artist),
+      composer: cleanText(attributes.Composer),
+      remixer: cleanText(attributes.Remixer),
+      album: cleanText(attributes.Album),
+      mixName: cleanText(attributes.Mix),
+      label: cleanText(attributes.Label),
+      genre: cleanText(attributes.Genre),
+      year: parseNumber({ value: attributes.Year, allowZero: false }),
+      bpm: parseNumber({ value: attributes.AverageBpm, allowZero: false }),
+      musicalKey: cleanText(attributes.Tonality),
+      durationSeconds: parseNumber({
+        value: attributes.TotalTime,
+        allowZero: true,
+      }),
+      fileKind: cleanText(attributes.Kind),
+      fileSizeBytes: parseNumber({ value: attributes.Size, allowZero: false }),
+      bitRateKbps: parseNumber({ value: attributes.BitRate, allowZero: false }),
+      sampleRateHz: parseNumber({
+        value: attributes.SampleRate,
+        allowZero: false,
+      }),
+      trackNumber: parseNumber({
+        value: attributes.TrackNumber,
+        allowZero: false,
+      }),
+      discNumber: parseNumber({
+        value: attributes.DiscNumber,
+        allowZero: false,
+      }),
+      playCount: parseNumber({ value: attributes.PlayCount, allowZero: true }),
+      rating: parseNumber({ value: attributes.Rating, allowZero: true }),
+      dateAdded: cleanText(attributes.DateAdded),
+      comments: cleanText(attributes.Comments),
+      artworkUrl: null,
+    },
+    mediaPath: parseMediaPath(attributes.Location),
   };
 };
 
 export const parseRekordboxXml = async (
   filePath: string,
-): Promise<readonly SongRow[]> => {
-  const songs: SongRow[] = [];
+): Promise<readonly ParsedTrack[]> => {
+  const tracks: ParsedTrack[] = [];
   const elementStack: string[] = [];
   let rootSeen = false;
   let collectionSeen = false;
@@ -126,10 +174,10 @@ export const parseRekordboxXml = async (
       elementStack[1] === 'COLLECTION';
 
     if (isCollectionTrack) {
-      songs.push(
+      tracks.push(
         makeSong({
           attributes: tag.attributes,
-          rowNumber: songs.length + 1,
+          rowNumber: tracks.length + 1,
         }),
       );
     }
@@ -167,5 +215,5 @@ export const parseRekordboxXml = async (
     );
   }
 
-  return songs;
+  return tracks;
 };

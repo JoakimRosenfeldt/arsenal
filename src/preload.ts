@@ -11,6 +11,8 @@ const api: DjLibraryApi = Object.freeze({
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importExport),
   listSongs: (page) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listSongs, page),
+  findDuplicates: (mode) =>
+    ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.findDuplicates, mode),
 });
 
 contextBridge.exposeInMainWorld('djLibrary', api);
