@@ -59,6 +59,10 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
     'The XML changed outside Arsenal. Import it again before editing.',
   'song-not-found':
     'That track no longer exists in the open XML.',
+  'duplicate-not-found':
+    'That duplicate group is no longer in the list. Choose another group.',
+  'cannot-save-preferences':
+    'Arsenal could not save the ignored group. Check the app data folder permissions and try again.',
   'invalid-playlist':
     'The playlist name or track selection is not valid for this XML.',
   'cannot-write':
@@ -333,6 +337,19 @@ export const App = (): JSX.Element => {
         return false;
       }
 
+      if (result.kind === 'duplicate-ignored') {
+        setDuplicateState({
+          kind: 'ready',
+          libraryVersion: result.library.revision,
+          scan: result.scan,
+        });
+        setFeedback({
+          tone: 'success',
+          message: 'Group ignored. It will return when a new matching track is imported.',
+        });
+        return true;
+      }
+
       searchSequence.current += 1;
       setSearching(false);
       const maxOffset = Math.max(
@@ -340,18 +357,23 @@ export const App = (): JSX.Element => {
         Math.floor(Math.max(0, result.library.songCount - 1) / SONG_PAGE_SIZE) *
           SONG_PAGE_SIZE,
       );
-      const [page, loadedPlaylists] = await Promise.all([
+      const [page, loadedPlaylists, scan] = await Promise.all([
         window.djLibrary.searchSongs({
           offset: Math.min(view.page.offset, maxOffset),
           limit: SONG_PAGE_SIZE,
           query,
         }),
         window.djLibrary.listPlaylists(),
+        window.djLibrary.findDuplicates(duplicateMode),
       ]);
       setView({ library: result.library, page });
       setPlaylists(loadedPlaylists);
       setViewQuery(query);
-      setDuplicateState({ kind: 'empty' });
+      setDuplicateState({
+        kind: 'ready',
+        libraryVersion: result.library.revision,
+        scan,
+      });
       setFeedback(
         result.kind === 'song-removed'
           ? feedbackForRemoval(result)
@@ -460,9 +482,14 @@ export const App = (): JSX.Element => {
       case 'duplicates':
         return (
           <DuplicatesPage
-            key={libraryVersion}
             busy={busy}
             mode={duplicateMode}
+            onIgnore={(groupKey) => applyMutation((revision) => ({
+              kind: 'ignore-duplicate-group',
+              revision,
+              mode: duplicateMode,
+              groupKey,
+            }))}
             onImport={() => void importLibrary()}
             onModeChange={setDuplicateMode}
             onRemove={removeSong}

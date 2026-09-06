@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useState,
   type FormEvent,
   type JSX,
@@ -476,6 +477,12 @@ const DuplicateSong = ({
   const [removeLocalFile, setRemoveLocalFile] = useState(false);
   const song = candidate.song;
   const isPlaying = playback.song?.id === song.id && playback.playing;
+  const fileRemovalTooltipId = useId();
+  const fileRemovalDisabledReason = busy
+    ? 'Wait until the current action finishes.'
+    : song.audioUrl === null
+      ? 'The XML does not link this track to a supported local audio file.'
+      : null;
 
   return (
     <div className="duplicate-song-shell">
@@ -518,14 +525,24 @@ const DuplicateSong = ({
                 <div>
                   <strong>Remove this track from the XML?</strong>
                   <p>References to it will also be removed from playlists.</p>
-                  <label>
+                  <label
+                    className="file-removal-option"
+                    tabIndex={fileRemovalDisabledReason === null ? undefined : 0}
+                    aria-describedby={fileRemovalDisabledReason === null ? undefined : fileRemovalTooltipId}
+                  >
                     <input
                       type="checkbox"
                       checked={removeLocalFile}
                       onChange={(event) => setRemoveLocalFile(event.currentTarget.checked)}
-                      disabled={song.audioUrl === null || busy}
+                      disabled={fileRemovalDisabledReason !== null}
+                      aria-describedby={fileRemovalDisabledReason === null ? undefined : fileRemovalTooltipId}
                     />
                     Also move the local audio file to Trash
+                    {fileRemovalDisabledReason !== null && (
+                      <span className="file-removal-tooltip" id={fileRemovalTooltipId} role="tooltip">
+                        {fileRemovalDisabledReason}
+                      </span>
+                    )}
                   </label>
                 </div>
                 <span>
@@ -547,7 +564,7 @@ const DuplicateSong = ({
                 </span>
               </>
             ) : (
-              <button type="button" className="danger-text-button" onClick={() => setConfirming(true)}>
+              <button type="button" className="danger-text-button" onClick={() => setConfirming(true)} disabled={busy}>
                 Remove duplicate
               </button>
             )}
@@ -561,6 +578,7 @@ const DuplicateSong = ({
 export const DuplicatesPage = ({
   busy,
   mode,
+  onIgnore,
   onImport,
   onModeChange,
   onRemove,
@@ -570,11 +588,15 @@ export const DuplicatesPage = ({
 }: CommonPageProps &
   Readonly<{
     mode: DuplicateMatchMode;
+    onIgnore: (groupKey: string) => Promise<boolean>;
     onModeChange: (mode: DuplicateMatchMode) => void;
     onRemove: (songId: string, removeLocalFile: boolean) => Promise<boolean>;
     state: DuplicateViewState;
   }>): JSX.Element => {
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{ key: string | null; index: number }>({
+    key: null,
+    index: 0,
+  });
 
   if (view === null) {
     return (
@@ -610,8 +632,19 @@ export const DuplicatesPage = ({
     state.mode === mode;
   const groups = scan?.groups ?? [];
   const selectedGroup =
-    groups.find((group) => group.key === selectedKey) ?? groups[0] ?? null;
+    groups.find((group) => group.key === selection.key) ??
+    groups[Math.min(selection.index, groups.length - 1)] ?? null;
+  const selectedIndex = selectedGroup === null ? 0 : groups.indexOf(selectedGroup);
+  if (scan !== null && (selection.key !== (selectedGroup?.key ?? null) || selection.index !== selectedIndex)) {
+    setSelection({ key: selectedGroup?.key ?? null, index: selectedIndex });
+  }
   const copy = duplicateModeCopy[mode];
+  const emptyTitle = (scan?.ignoredGroupCount ?? 0) > 0
+    ? 'No groups left to review.'
+    : copy.emptyTitle;
+  const emptyDescription = (scan?.ignoredGroupCount ?? 0) > 0
+    ? 'Ignored groups return when a new matching track is imported.'
+    : copy.emptyDescription;
 
   return (
     <section className="workspace-page duplicates-page" aria-labelledby="duplicates-title">
@@ -638,7 +671,11 @@ export const DuplicatesPage = ({
               <button
                 className={option === mode ? 'is-active' : ''}
                 type="button"
-                onClick={() => onModeChange(option)}
+                onClick={() => {
+                  setSelection({ key: null, index: 0 });
+                  onModeChange(option);
+                }}
+                disabled={busy}
                 aria-pressed={option === mode}
                 key={option}
               >
@@ -665,8 +702,8 @@ export const DuplicatesPage = ({
             </div>
           ) : groups.length === 0 ? (
             <div className="panel-empty">
-              <strong>{copy.emptyTitle}</strong>
-              <p>{copy.emptyDescription}</p>
+              <strong>{emptyTitle}</strong>
+              <p>{emptyDescription}</p>
             </div>
           ) : (
             groups.map((group, index) => {
@@ -675,7 +712,7 @@ export const DuplicatesPage = ({
                 <button
                   className={isActive ? 'duplicate-group is-active' : 'duplicate-group'}
                   type="button"
-                  onClick={() => setSelectedKey(group.key)}
+                  onClick={() => setSelection({ key: group.key, index })}
                   aria-current={isActive ? 'true' : undefined}
                   key={group.key}
                 >
@@ -707,8 +744,8 @@ export const DuplicatesPage = ({
             <div className="detail-empty">
               <span className="empty-scan" aria-hidden />
               <p className="mono-label">Full library scan complete</p>
-              <h2>{copy.emptyTitle}</h2>
-              <p>{copy.emptyDescription}</p>
+              <h2>{emptyTitle}</h2>
+              <p>{emptyDescription}</p>
             </div>
           ) : (
             <>
@@ -716,6 +753,15 @@ export const DuplicatesPage = ({
                 <div>
                   <span className="accent-tag">{selectedGroup.candidates.length} tracks</span>
                   <p>{selectedGroup.matchReason}</p>
+                  <button
+                    className="quiet-button duplicate-ignore"
+                    type="button"
+                    disabled={busy}
+                    title={`Hide this group in ${copy.label} until a new matching track is imported`}
+                    onClick={() => void onIgnore(selectedGroup.key)}
+                  >
+                    Ignore group
+                  </button>
                 </div>
                 <h2>{selectedGroup.title}</h2>
                 <span>{selectedGroup.artist}</span>
@@ -727,7 +773,7 @@ export const DuplicatesPage = ({
                     candidate={candidate}
                     onRemove={onRemove}
                     playback={playback}
-                    key={candidate.song.id}
+                    key={`${view.library.revision}-${candidate.song.id}`}
                   />
                 ))}
               </div>

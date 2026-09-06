@@ -135,6 +135,22 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
   if (!isRecord(value) || typeof value.kind !== 'string') {
     throw new Error('Invalid library mutation');
   }
+  if (value.kind === 'ignore-duplicate-group') {
+    if (
+      typeof value.revision !== 'string' ||
+      value.revision.length === 0 ||
+      typeof value.groupKey !== 'string' ||
+      value.groupKey.length === 0
+    ) {
+      throw new Error('Invalid duplicate group');
+    }
+    return {
+      kind: 'ignore-duplicate-group',
+      revision: value.revision,
+      mode: readDuplicateMatchMode(value.mode),
+      groupKey: value.groupKey,
+    };
+  }
   if (value.kind === 'remove-song') {
     if (
       typeof value.revision !== 'string' ||

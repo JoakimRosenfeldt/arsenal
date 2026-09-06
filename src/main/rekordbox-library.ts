@@ -5,6 +5,7 @@ import { basename, isAbsolute } from 'node:path';
 import { dialog, shell, type BrowserWindow } from 'electron';
 
 import type {
+  DuplicateGroup,
   DuplicateMatchMode,
   DuplicateScan,
   ImportResult,
@@ -56,11 +57,13 @@ type CurrentCatalog = Readonly<{
   songs: readonly SongRow[];
   playlists: readonly RekordboxPlaylist[];
   duplicateScans: Map<DuplicateMatchMode, DuplicateScan>;
+  trackKeysBySongId: ReadonlyMap<string, string>;
   artwork: TrackArtworkStore;
 }>;
 
 type RememberedLibrary = Readonly<{
   rekordboxXmlPath: string;
+  ignoredDuplicateGroups: Readonly<Record<string, readonly string[]>>;
 }>;
 
 type ReloadResult =
@@ -70,9 +73,9 @@ type ReloadResult =
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
-const readRememberedPath = async (
+const readRememberedLibrary = async (
   stateFilePath: string,
-): Promise<string | null> => {
+): Promise<RememberedLibrary | null> => {
   try {
     const serialized = await readFile(stateFilePath, 'utf8');
     const stored: unknown = JSON.parse(serialized);
@@ -81,11 +84,22 @@ const readRememberedPath = async (
     }
 
     const rememberedPath = stored.rekordboxXmlPath;
-    return typeof rememberedPath === 'string' &&
-      rememberedPath.length > 0 &&
-      isAbsolute(rememberedPath)
-      ? rememberedPath
-      : null;
+    if (
+      typeof rememberedPath !== 'string' ||
+      rememberedPath.length === 0 ||
+      !isAbsolute(rememberedPath)
+    ) {
+      return null;
+    }
+    const ignoredDuplicateGroups: Record<string, readonly string[]> = {};
+    if (isRecord(stored.ignoredDuplicateGroups)) {
+      for (const [key, trackKeys] of Object.entries(stored.ignoredDuplicateGroups)) {
+        if (Array.isArray(trackKeys) && trackKeys.every((key) => typeof key === 'string')) {
+          ignoredDuplicateGroups[key] = trackKeys;
+        }
+      }
+    }
+    return { rekordboxXmlPath: rememberedPath, ignoredDuplicateGroups };
   } catch {
     return null;
   }
@@ -126,6 +140,27 @@ const summaryFor = (catalog: CurrentCatalog): LibrarySummary => ({
   songCount: catalog.songs.length,
   playlistCount: catalog.playlists.length,
 });
+
+const trackKeysFor = (catalog: CurrentCatalog, group: DuplicateGroup): string[] =>
+  group.candidates.map(({ song }) => {
+    const key = catalog.trackKeysBySongId.get(song.id);
+    if (key === undefined) {
+      throw new Error('Duplicate candidate is missing from the catalog');
+    }
+    return key;
+  });
+
+const hasNewTrack = (trackKeys: readonly string[], ignoredKeys: readonly string[]): boolean => {
+  const remaining = [...ignoredKeys];
+  return trackKeys.some((key) => {
+    const index = remaining.indexOf(key);
+    if (index === -1) {
+      return true;
+    }
+    remaining.splice(index, 1);
+    return false;
+  });
+};
 
 const firstSongBy = (
   tracks: readonly CatalogTrack[],
@@ -220,11 +255,15 @@ export class RekordboxLibrary {
 
   private rememberedPath: string | null = null;
 
+  private ignoredDuplicateGroups: RememberedLibrary['ignoredDuplicateGroups'] = {};
+
   private operationTail: Promise<void> = Promise.resolve();
 
   async initialize(stateFilePath: string): Promise<void> {
     this.stateFilePath = stateFilePath;
-    this.rememberedPath = await readRememberedPath(stateFilePath);
+    const remembered = await readRememberedLibrary(stateFilePath);
+    this.rememberedPath = remembered?.rekordboxXmlPath ?? null;
+    this.ignoredDuplicateGroups = remembered?.ignoredDuplicateGroups ?? {};
     if (this.rememberedPath === null) {
       return;
     }
@@ -277,7 +316,17 @@ export class RekordboxLibrary {
       return cached;
     }
 
-    const scan = findDuplicateScan(catalog.songs, mode);
+    const unfiltered = findDuplicateScan(catalog.songs, mode);
+    const groups = unfiltered.groups.filter((group) => {
+      const ignored = this.ignoredDuplicateGroups[JSON.stringify([catalog.sourcePath, group.key])];
+      return ignored === undefined || hasNewTrack(trackKeysFor(catalog, group), ignored);
+    });
+    const scan = {
+      mode,
+      groups,
+      ignoredGroupCount: unfiltered.groups.length - groups.length,
+      trackCount: groups.reduce((total, group) => total + group.candidates.length, 0),
+    };
     catalog.duplicateScans.set(mode, scan);
     return scan;
   }
@@ -368,6 +417,8 @@ export class RekordboxLibrary {
     }
 
     switch (change.kind) {
+      case 'ignore-duplicate-group':
+        return this.ignoreDuplicateGroup(catalog, change);
       case 'remove-song':
         return this.removeSong(catalog, change);
       case 'create-playlist':
@@ -377,6 +428,32 @@ export class RekordboxLibrary {
         return exhaustiveChange;
       }
     }
+  }
+
+  private async ignoreDuplicateGroup(
+    catalog: CurrentCatalog,
+    change: Extract<LibraryMutation, { kind: 'ignore-duplicate-group' }>,
+  ): Promise<LibraryMutationResult> {
+    const group = this.findDuplicates(change.mode).groups.find(
+      (candidate) => candidate.key === change.groupKey,
+    );
+    if (group === undefined) {
+      return { kind: 'rejected', reason: 'duplicate-not-found' };
+    }
+    const ignored = {
+      ...this.ignoredDuplicateGroups,
+      [JSON.stringify([catalog.sourcePath, group.key])]: trackKeysFor(catalog, group),
+    };
+    if (!await this.remember(catalog.sourcePath, ignored)) {
+      return { kind: 'rejected', reason: 'cannot-save-preferences' };
+    }
+    this.ignoredDuplicateGroups = ignored;
+    catalog.duplicateScans.clear();
+    return {
+      kind: 'duplicate-ignored',
+      library: summaryFor(catalog),
+      scan: this.findDuplicates(change.mode),
+    };
   }
 
   private async removeSong(
@@ -521,23 +598,37 @@ export class RekordboxLibrary {
       songs: tracks.map((track) => track.song),
       playlists: projectPlaylists(parsed.playlists, tracks),
       duplicateScans: new Map(),
+      trackKeysBySongId: new Map(tracks.map((track) => [
+        track.song.id,
+        JSON.stringify([
+          track.rekordboxId,
+          track.mediaPath ?? track.rawLocation,
+          ...(track.rekordboxId === null && track.rawLocation === null
+            ? [track.song.artist, track.song.title, track.song.mixName]
+            : []),
+        ]),
+      ])),
       artwork,
     };
   }
 
-  private async remember(rekordboxXmlPath: string): Promise<void> {
+  private async remember(
+    rekordboxXmlPath: string,
+    ignoredDuplicateGroups = this.ignoredDuplicateGroups,
+  ): Promise<boolean> {
     if (this.stateFilePath === null) {
-      return;
+      return false;
     }
 
-    const state: RememberedLibrary = { rekordboxXmlPath };
+    const state: RememberedLibrary = { rekordboxXmlPath, ignoredDuplicateGroups };
     try {
       await writeFile(this.stateFilePath, `${JSON.stringify(state)}\n`, {
         encoding: 'utf8',
         mode: 0o600,
       });
+      return true;
     } catch {
-      return;
+      return false;
     }
   }
 }

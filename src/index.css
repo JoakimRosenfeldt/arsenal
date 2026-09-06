@@ -1754,6 +1754,11 @@ input:disabled {
   letter-spacing: -0.025em;
 }
 
+.duplicate-ignore {
+  flex: none;
+  margin-left: auto;
+}
+
 .duplicate-list-heading > span {
   color: var(--muted);
   font-size: 13px;
@@ -1907,6 +1912,36 @@ input:disabled {
 .duplicate-remove > span {
   display: flex;
   gap: 7px;
+}
+
+.file-removal-option {
+  position: relative;
+}
+
+.file-removal-option input:disabled {
+  pointer-events: none;
+}
+
+.file-removal-tooltip {
+  position: absolute;
+  z-index: 2;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: 280px;
+  max-width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--text);
+  background: var(--panel);
+  font-size: 11px;
+  line-height: 1.4;
+  visibility: hidden;
+}
+
+.file-removal-option:hover .file-removal-tooltip,
+.file-removal-option:focus-within .file-removal-tooltip {
+  visibility: visible;
 }
 
 .danger-button {

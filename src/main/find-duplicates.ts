@@ -336,6 +336,7 @@ export const findDuplicateScan = (
   return {
     mode,
     groups,
+    ignoredGroupCount: 0,
     trackCount: groups.reduce(
       (total, group) => total + group.candidates.length,
       0,

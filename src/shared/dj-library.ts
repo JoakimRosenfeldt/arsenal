@@ -70,6 +70,7 @@ export type DuplicateGroup = Readonly<{
 export type DuplicateScan = Readonly<{
   mode: DuplicateMatchMode;
   groups: readonly DuplicateGroup[];
+  ignoredGroupCount: number;
   trackCount: number;
 }>;
 
@@ -130,6 +131,12 @@ export type SongSearchRequest = PageRequest & Readonly<{
 
 export type LibraryMutation =
   | Readonly<{
+      kind: 'ignore-duplicate-group';
+      revision: string;
+      mode: DuplicateMatchMode;
+      groupKey: string;
+    }>
+  | Readonly<{
       kind: 'remove-song';
       revision: string;
       songId: string;
@@ -154,10 +161,17 @@ export type MutationFailure =
   | 'stale-library'
   | 'source-changed'
   | 'song-not-found'
+  | 'duplicate-not-found'
+  | 'cannot-save-preferences'
   | 'invalid-playlist'
   | 'cannot-write';
 
 export type LibraryMutationResult =
+  | Readonly<{
+      kind: 'duplicate-ignored';
+      library: LibrarySummary;
+      scan: DuplicateScan;
+    }>
   | Readonly<{
       kind: 'song-removed';
       library: LibrarySummary;
