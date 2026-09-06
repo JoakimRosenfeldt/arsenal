@@ -1,4 +1,6 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+
+import { APP_UPDATE_CHANNELS, type AppUpdatesApi, type UpdateStatus } from './shared/app-updates';
 
 import {
   DJ_LIBRARY_CHANNELS,
@@ -22,3 +24,17 @@ const api: DjLibraryApi = Object.freeze({
 });
 
 contextBridge.exposeInMainWorld('djLibrary', api);
+
+const updates: AppUpdatesApi = Object.freeze({
+  status: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.status),
+  check: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.check),
+  download: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.download),
+  install: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.install),
+  onChange: (listener) => {
+    const handleChange = (_event: IpcRendererEvent, status: UpdateStatus): void => listener(status);
+    ipcRenderer.on(APP_UPDATE_CHANNELS.changed, handleChange);
+    return () => { ipcRenderer.removeListener(APP_UPDATE_CHANNELS.changed, handleChange); };
+  },
+});
+
+contextBridge.exposeInMainWorld('appUpdates', updates);

@@ -204,8 +204,38 @@ input:disabled {
 }
 
 .sidebar-navigation {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+.app-updates {
+  flex: none;
+  padding: 14px 16px;
+  border-top: 1px solid #1e1e24;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.app-updates p {
+  margin: 0 0 8px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.app-updates button {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px;
+  border: 1px solid #35353d;
+  border-radius: 5px;
+  background: var(--panel-raised);
+  color: var(--text);
+  font-size: inherit;
+}
+
+.app-updates button:hover:not(:disabled) {
+  border-color: var(--accent);
 }
 
 .sidebar-group {
@@ -2344,6 +2374,15 @@ input:disabled {
 }
 
 @media (max-width: 980px) {
+  .app-updates {
+    padding: 10px 5px;
+    font-size: 10px;
+  }
+
+  .app-updates p {
+    display: none;
+  }
+
   .cuebox-app {
     grid-template-columns: 78px minmax(0, 1fr);
   }

@@ -13,6 +13,8 @@ import {
 } from 'electron';
 
 import { RekordboxLibrary } from './main/rekordbox-library';
+import { AppUpdates } from './main/app-updates';
+import { APP_UPDATE_CHANNELS } from './shared/app-updates';
 import {
   TRACK_ARTWORK_SCHEME,
   TRACK_MEDIA_SCHEME,
@@ -205,8 +207,25 @@ const assertTrustedSender = (
   }
 };
 
-const installIpc = (owner: BrowserWindow): void => {
+const installIpc = (owner: BrowserWindow, updates: AppUpdates): void => {
   const ipc = owner.webContents.ipc;
+
+  ipc.handle(APP_UPDATE_CHANNELS.status, (event) => {
+    assertTrustedSender(event, owner);
+    return updates.status();
+  });
+  ipc.handle(APP_UPDATE_CHANNELS.check, (event) => {
+    assertTrustedSender(event, owner);
+    return updates.check();
+  });
+  ipc.handle(APP_UPDATE_CHANNELS.download, (event) => {
+    assertTrustedSender(event, owner);
+    return updates.download();
+  });
+  ipc.handle(APP_UPDATE_CHANNELS.install, (event) => {
+    assertTrustedSender(event, owner);
+    updates.install();
+  });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.status, (event) => {
     assertTrustedSender(event, owner);
@@ -394,7 +413,7 @@ const configureProtocols = (appSession: Session): void => {
   });
 };
 
-const createWindow = (): void => {
+const createWindow = (updates: AppUpdates): void => {
   const rendererUrl = app.isPackaged
     ? PACKAGED_RENDERER_URL
     : MAIN_WINDOW_WEBPACK_ENTRY;
@@ -422,7 +441,7 @@ const createWindow = (): void => {
     },
   });
 
-  installIpc(mainWindow);
+  installIpc(mainWindow, updates);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-attach-webview', (event) => {
     event.preventDefault();
@@ -459,11 +478,12 @@ void app.whenReady().then(async () => {
   const appSession = session.fromPartition(APP_SESSION_PARTITION);
   configureSession(appSession);
   configureProtocols(appSession);
-  createWindow();
+  const updates = new AppUpdates();
+  createWindow(updates);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+      createWindow(updates);
     }
   });
 });

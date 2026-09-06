@@ -1,5 +1,6 @@
 import type { JSX } from 'react';
 
+import { AppUpdates } from './AppUpdates';
 import type { RekordboxPlaylist } from './shared/dj-library';
 
 export type PageId =
@@ -261,6 +262,7 @@ export const CueboxSidebar = ({
           </div>
         </div>
       </nav>
+      <AppUpdates busy={busy} />
     </aside>
   );
 };
