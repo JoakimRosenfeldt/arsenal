@@ -1315,7 +1315,11 @@ input:disabled {
 /* Duplicates */
 .duplicates-page {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) 58px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.duplicates-page > .action-rail {
+  min-height: 58px;
 }
 
 .stacked-header {
@@ -1649,7 +1653,23 @@ input:disabled {
   position: absolute;
   z-index: 2;
   top: 15px;
+  left: 41px;
+}
+
+.duplicate-select {
+  position: absolute;
+  z-index: 2;
+  top: 24px;
   left: 12px;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.duplicate-song-shell.is-selected .duplicate-song {
+  border-color: var(--accent);
 }
 
 .duplicate-song-shell > .duplicate-play > span:last-child {
@@ -1786,7 +1806,7 @@ input:disabled {
 .duplicate-song summary {
   display: grid;
   min-height: 64px;
-  grid-template-columns: 34px minmax(150px, 1fr) 110px 18px;
+  grid-template-columns: 18px 34px minmax(0, 1fr) 110px 18px;
   align-items: center;
   gap: 11px;
   padding: 9px 12px;
@@ -1916,6 +1936,51 @@ input:disabled {
 
 .file-removal-option {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #9a9aa4;
+  font-size: 10.5px;
+}
+
+.duplicate-selection-actions {
+  min-height: 58px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.duplicate-selection-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.duplicate-selection-toolbar > span {
+  margin-right: auto;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.duplicate-selection-review {
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.duplicate-selection-review p {
+  margin: 6px 0;
+  color: var(--muted);
+}
+
+.duplicate-selection-review ul {
+  max-height: min(100px, 15vh);
+  overflow-y: auto;
+  margin: 8px 0 12px;
+  padding-left: 18px;
+  color: var(--text-soft);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .file-removal-option input:disabled {
@@ -2425,7 +2490,7 @@ input:disabled {
   }
 
   .duplicate-song summary {
-    grid-template-columns: 34px minmax(130px, 1fr) 18px;
+    grid-template-columns: 18px 34px minmax(0, 1fr) 18px;
   }
 
   .duplicate-song-facts {

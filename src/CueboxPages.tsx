@@ -462,30 +462,151 @@ const importantMetadataFor = (song: SongRow): readonly MetadataItem[] => [
     : [{ label: 'Comments', value: song.comments, wide: true }]),
 ];
 
+type RemoveSongs = (songIds: readonly string[], removeLocalFile: boolean) => Promise<boolean>;
+
+const FileRemovalOption = ({
+  busy,
+  checked,
+  onChange,
+  songs,
+}: Readonly<{
+  busy: boolean;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  songs: readonly SongRow[];
+}>): JSX.Element => {
+  const tooltipId = useId();
+  const disabledReason = busy
+    ? 'Wait until the current action finishes.'
+    : songs.some((song) => song.audioUrl === null)
+      ? songs.length === 1
+        ? 'The XML does not link this track to a supported local audio file.'
+        : 'At least one selected track is not linked to a supported local audio file in the XML.'
+      : null;
+
+  return (
+    <label
+      className="file-removal-option"
+      tabIndex={disabledReason === null ? undefined : 0}
+      aria-describedby={disabledReason === null ? undefined : tooltipId}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.currentTarget.checked)}
+        disabled={disabledReason !== null}
+        aria-describedby={disabledReason === null ? undefined : tooltipId}
+      />
+      {songs.length === 1
+        ? 'Also move the local audio file to Trash'
+        : 'Also move the selected local audio files to Trash'}
+      {disabledReason !== null && (
+        <span className="file-removal-tooltip" id={tooltipId} role="tooltip">
+          {disabledReason}
+        </span>
+      )}
+    </label>
+  );
+};
+
+const DuplicateSelectionActions = ({
+  busy,
+  onClear,
+  onRemove,
+  songs,
+}: Readonly<{
+  busy: boolean;
+  onClear: () => void;
+  onRemove: RemoveSongs;
+  songs: readonly SongRow[];
+}>): JSX.Element => {
+  const [confirming, setConfirming] = useState(false);
+  const [removeLocalFile, setRemoveLocalFile] = useState(false);
+
+  return (
+    <footer className="duplicate-selection-actions" aria-label="Selected tracks">
+      {confirming && (
+        <div className="duplicate-selection-review">
+          <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'} from the XML?</strong>
+          <p>References to these tracks will also be removed from playlists.</p>
+          <ul aria-label="Tracks to remove">
+            {songs.map((song) => (
+              <li key={song.id}>{song.title} · {song.artist ?? 'Unknown artist'}</li>
+            ))}
+          </ul>
+          <FileRemovalOption
+            busy={busy}
+            checked={removeLocalFile}
+            onChange={setRemoveLocalFile}
+            songs={songs}
+          />
+        </div>
+      )}
+      <div className="duplicate-selection-toolbar">
+        <span role="status">{songs.length} selected</span>
+        <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>
+          Clear selection
+        </button>
+        {confirming ? (
+          <>
+            <button className="quiet-button" type="button" onClick={() => setConfirming(false)} disabled={busy}>
+              Cancel
+            </button>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                void onRemove(songs.map((song) => song.id), removeLocalFile).then((removed) => {
+                  if (removed) {
+                    onClear();
+                  }
+                });
+              }}
+            >
+              {busy ? 'Removing' : `Remove ${songs.length} ${songs.length === 1 ? 'track' : 'tracks'}`}
+            </button>
+          </>
+        ) : (
+          <button className="danger-button" type="button" onClick={() => setConfirming(true)} disabled={busy}>
+            Remove selected
+          </button>
+        )}
+      </div>
+    </footer>
+  );
+};
+
 const DuplicateSong = ({
   busy,
   candidate,
   onRemove,
+  onSelect,
   playback,
+  selected,
 }: Readonly<{
   busy: boolean;
   candidate: DuplicateCandidate;
-  onRemove: (songId: string, removeLocalFile: boolean) => Promise<boolean>;
+  onRemove: RemoveSongs;
+  onSelect: (selected: boolean) => void;
   playback: PlaybackController;
+  selected: boolean;
 }>): JSX.Element => {
   const [confirming, setConfirming] = useState(false);
   const [removeLocalFile, setRemoveLocalFile] = useState(false);
   const song = candidate.song;
   const isPlaying = playback.song?.id === song.id && playback.playing;
-  const fileRemovalTooltipId = useId();
-  const fileRemovalDisabledReason = busy
-    ? 'Wait until the current action finishes.'
-    : song.audioUrl === null
-      ? 'The XML does not link this track to a supported local audio file.'
-      : null;
 
   return (
-    <div className="duplicate-song-shell">
+    <div className={selected ? 'duplicate-song-shell is-selected' : 'duplicate-song-shell'}>
+      <input
+        className="duplicate-select"
+        type="checkbox"
+        checked={selected}
+        onChange={(event) => onSelect(event.currentTarget.checked)}
+        disabled={busy}
+        aria-label={`Select ${song.title} by ${song.artist ?? 'Unknown artist'} for removal`}
+      />
       <button
         className={isPlaying ? 'track-play duplicate-play is-playing' : 'track-play duplicate-play'}
         type="button"
@@ -499,6 +620,7 @@ const DuplicateSong = ({
       </button>
       <details className="duplicate-song">
         <summary>
+          <span aria-hidden />
           <span aria-hidden />
           <span className="duplicate-song-identity">
             <strong>{song.title}</strong>
@@ -525,25 +647,12 @@ const DuplicateSong = ({
                 <div>
                   <strong>Remove this track from the XML?</strong>
                   <p>References to it will also be removed from playlists.</p>
-                  <label
-                    className="file-removal-option"
-                    tabIndex={fileRemovalDisabledReason === null ? undefined : 0}
-                    aria-describedby={fileRemovalDisabledReason === null ? undefined : fileRemovalTooltipId}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={removeLocalFile}
-                      onChange={(event) => setRemoveLocalFile(event.currentTarget.checked)}
-                      disabled={fileRemovalDisabledReason !== null}
-                      aria-describedby={fileRemovalDisabledReason === null ? undefined : fileRemovalTooltipId}
-                    />
-                    Also move the local audio file to Trash
-                    {fileRemovalDisabledReason !== null && (
-                      <span className="file-removal-tooltip" id={fileRemovalTooltipId} role="tooltip">
-                        {fileRemovalDisabledReason}
-                      </span>
-                    )}
-                  </label>
+                  <FileRemovalOption
+                    busy={busy}
+                    checked={removeLocalFile}
+                    onChange={setRemoveLocalFile}
+                    songs={[song]}
+                  />
                 </div>
                 <span>
                   <button type="button" className="quiet-button" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
@@ -551,7 +660,7 @@ const DuplicateSong = ({
                     type="button"
                     className="danger-button"
                     onClick={() => {
-                      void onRemove(song.id, removeLocalFile).then((removed) => {
+                      void onRemove([song.id], removeLocalFile).then((removed) => {
                         if (removed) {
                           setConfirming(false);
                         }
@@ -590,13 +699,20 @@ export const DuplicatesPage = ({
     mode: DuplicateMatchMode;
     onIgnore: (groupKey: string) => Promise<boolean>;
     onModeChange: (mode: DuplicateMatchMode) => void;
-    onRemove: (songId: string, removeLocalFile: boolean) => Promise<boolean>;
+    onRemove: RemoveSongs;
     state: DuplicateViewState;
   }>): JSX.Element => {
-  const [selection, setSelection] = useState<{ key: string | null; index: number }>({
+  const [selection, setSelection] = useState<{
+    key: string | null;
+    index: number;
+    groups: readonly DuplicateGroup[];
+  }>({
     key: null,
     index: 0,
+    groups: [],
   });
+  const [chosenIds, setChosenIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [selectionVersion, setSelectionVersion] = useState<string | null>(null);
 
   if (view === null) {
     return (
@@ -631,12 +747,25 @@ export const DuplicatesPage = ({
     state.libraryVersion === view.library.revision &&
     state.mode === mode;
   const groups = scan?.groups ?? [];
+  const currentSelectionVersion = JSON.stringify([view.library.revision, mode]);
+  if (selectionVersion !== currentSelectionVersion) {
+    setSelectionVersion(currentSelectionVersion);
+    setChosenIds(new Set());
+  }
+  const chosenSongs = groups.flatMap((group) => group.candidates)
+    .filter((candidate) => chosenIds.has(candidate.song.id))
+    .map((candidate) => candidate.song);
+  const remainingKeys = new Set(groups.map((group) => group.key));
+  const nearbyGroup = [
+    ...selection.groups.slice(selection.index),
+    ...selection.groups.slice(0, selection.index).reverse(),
+  ].find((group) => remainingKeys.has(group.key));
   const selectedGroup =
     groups.find((group) => group.key === selection.key) ??
-    groups[Math.min(selection.index, groups.length - 1)] ?? null;
+    groups.find((group) => group.key === nearbyGroup?.key) ?? groups[0] ?? null;
   const selectedIndex = selectedGroup === null ? 0 : groups.indexOf(selectedGroup);
-  if (scan !== null && (selection.key !== (selectedGroup?.key ?? null) || selection.index !== selectedIndex)) {
-    setSelection({ key: selectedGroup?.key ?? null, index: selectedIndex });
+  if (scan !== null && (selection.groups !== groups || selection.key !== (selectedGroup?.key ?? null) || selection.index !== selectedIndex)) {
+    setSelection({ key: selectedGroup?.key ?? null, index: selectedIndex, groups });
   }
   const copy = duplicateModeCopy[mode];
   const emptyTitle = (scan?.ignoredGroupCount ?? 0) > 0
@@ -672,7 +801,7 @@ export const DuplicatesPage = ({
                 className={option === mode ? 'is-active' : ''}
                 type="button"
                 onClick={() => {
-                  setSelection({ key: null, index: 0 });
+                  setSelection({ key: null, index: 0, groups: [] });
                   onModeChange(option);
                 }}
                 disabled={busy}
@@ -712,7 +841,7 @@ export const DuplicatesPage = ({
                 <button
                   className={isActive ? 'duplicate-group is-active' : 'duplicate-group'}
                   type="button"
-                  onClick={() => setSelection({ key: group.key, index })}
+                  onClick={() => setSelection({ key: group.key, index, groups })}
                   aria-current={isActive ? 'true' : undefined}
                   key={group.key}
                 >
@@ -772,7 +901,19 @@ export const DuplicatesPage = ({
                     busy={busy}
                     candidate={candidate}
                     onRemove={onRemove}
+                    onSelect={(selected) => {
+                      setChosenIds((previous) => {
+                        const next = new Set(previous);
+                        if (selected) {
+                          next.add(candidate.song.id);
+                        } else {
+                          next.delete(candidate.song.id);
+                        }
+                        return next;
+                      });
+                    }}
                     playback={playback}
+                    selected={chosenIds.has(candidate.song.id)}
                     key={`${view.library.revision}-${candidate.song.id}`}
                   />
                 ))}
@@ -781,10 +922,20 @@ export const DuplicatesPage = ({
           )}
         </div>
       </div>
-      <footer className="action-rail">
-        <span>REMOVAL ALSO CLEANS PLAYLIST REFERENCES</span>
-        <strong>{copy.label} · full library</strong>
-      </footer>
+      {chosenSongs.length > 0 ? (
+        <DuplicateSelectionActions
+          busy={busy}
+          onClear={() => setChosenIds(new Set())}
+          onRemove={onRemove}
+          songs={chosenSongs}
+          key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])}
+        />
+      ) : (
+        <footer className="action-rail">
+          <span>Select tracks to remove them together</span>
+          <strong>{copy.label} · full library</strong>
+        </footer>
+      )}
     </section>
   );
 };

@@ -72,41 +72,28 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
 };
 
 const feedbackForRemoval = (
-  result: Extract<LibraryMutationResult, { kind: 'song-removed' }>,
+  result: Extract<LibraryMutationResult, { kind: 'songs-removed' }>,
 ): Feedback => {
-  switch (result.fileAction) {
-    case 'kept':
-      return { tone: 'success', message: 'Removed from the Rekordbox XML.' };
-    case 'trashed':
-      return {
-        tone: 'success',
-        message: 'Removed from the Rekordbox XML and moved the local file to Trash.',
-      };
-    case 'shared':
-      return {
-        tone: 'warning',
-        message: 'Removed from the XML. The file was kept because another track uses it.',
-      };
-    case 'missing':
-      return {
-        tone: 'warning',
-        message: 'Removed from the XML. The local file could not be found.',
-      };
-    case 'unsupported':
-      return {
-        tone: 'warning',
-        message: 'Removed from the XML. Arsenal did not recognize the local file as audio.',
-      };
-    case 'failed':
-      return {
-        tone: 'warning',
-        message: 'Removed from the XML, but the local file could not be moved to Trash.',
-      };
-    default: {
-      const exhaustiveAction: never = result.fileAction;
-      return exhaustiveAction;
-    }
-  }
+  const warnings = {
+    shared: 'Files still used by other tracks were kept.',
+    missing: 'Some local files could not be found.',
+    unsupported: 'Files not recognized as audio were kept.',
+    failed: 'Some local files could not be moved to Trash.',
+  };
+  const problems = [...new Set(result.fileActions)].flatMap((action) =>
+    action === 'kept' || action === 'trashed' ? [] : [warnings[action]],
+  );
+  const trashedCount = result.fileActions.filter((action) => action === 'trashed').length;
+  return {
+    tone: problems.length === 0 ? 'success' : 'warning',
+    message: [
+      `Removed ${result.removedCount} ${result.removedCount === 1 ? 'track' : 'tracks'} from the Rekordbox XML.`,
+      ...(trashedCount === 0 ? [] : [
+        `Moved ${trashedCount} local ${trashedCount === 1 ? 'file' : 'files'} to Trash.`,
+      ]),
+      ...problems,
+    ].join(' '),
+  };
 };
 
 export const App = (): JSX.Element => {
@@ -375,7 +362,7 @@ export const App = (): JSX.Element => {
         scan,
       });
       setFeedback(
-        result.kind === 'song-removed'
+        result.kind === 'songs-removed'
           ? feedbackForRemoval(result)
           : { tone: 'success', message: 'Playlist written to the Rekordbox XML.' },
       );
@@ -388,17 +375,17 @@ export const App = (): JSX.Element => {
     }
   };
 
-  const removeSong = async (
-    songId: string,
+  const removeSongs = async (
+    songIds: readonly string[],
     removeLocalFile: boolean,
   ): Promise<boolean> => {
     const removed = await applyMutation((revision) => ({
-      kind: 'remove-song',
+      kind: 'remove-songs',
       revision,
-      songId,
+      songIds,
       removeLocalFile,
     }));
-    if (removed && playingSong?.id === songId) {
+    if (removed && playingSong !== null && songIds.includes(playingSong.id)) {
       stopPlayback();
     }
     return removed;
@@ -492,7 +479,7 @@ export const App = (): JSX.Element => {
             }))}
             onImport={() => void importLibrary()}
             onModeChange={setDuplicateMode}
-            onRemove={removeSong}
+            onRemove={removeSongs}
             playback={playback}
             state={duplicateState}
             view={view}

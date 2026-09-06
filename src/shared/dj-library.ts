@@ -137,9 +137,9 @@ export type LibraryMutation =
       groupKey: string;
     }>
   | Readonly<{
-      kind: 'remove-song';
+      kind: 'remove-songs';
       revision: string;
-      songId: string;
+      songIds: readonly string[];
       removeLocalFile: boolean;
     }>
   | Readonly<{
@@ -173,9 +173,10 @@ export type LibraryMutationResult =
       scan: DuplicateScan;
     }>
   | Readonly<{
-      kind: 'song-removed';
+      kind: 'songs-removed';
       library: LibrarySummary;
-      fileAction: LocalFileAction;
+      removedCount: number;
+      fileActions: readonly LocalFileAction[];
     }>
   | Readonly<{
       kind: 'playlist-created';

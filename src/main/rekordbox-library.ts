@@ -419,8 +419,8 @@ export class RekordboxLibrary {
     switch (change.kind) {
       case 'ignore-duplicate-group':
         return this.ignoreDuplicateGroup(catalog, change);
-      case 'remove-song':
-        return this.removeSong(catalog, change);
+      case 'remove-songs':
+        return this.removeSongs(catalog, change);
       case 'create-playlist':
         return this.createPlaylist(catalog, change);
       default: {
@@ -456,41 +456,54 @@ export class RekordboxLibrary {
     };
   }
 
-  private async removeSong(
+  private async removeSongs(
     catalog: CurrentCatalog,
-    change: Extract<LibraryMutation, { kind: 'remove-song' }>,
+    change: Extract<LibraryMutation, { kind: 'remove-songs' }>,
   ): Promise<LibraryMutationResult> {
-    const track = catalog.tracks.find(
-      (candidate) => candidate.song.id === change.songId,
-    );
-    if (track === undefined) {
+    const songIds = new Set(change.songIds);
+    const tracks = catalog.tracks.filter((track) => songIds.has(track.song.id));
+    if (tracks.length === 0 || tracks.length !== change.songIds.length) {
       return { kind: 'rejected', reason: 'song-not-found' };
     }
 
-    const sharedLocation =
-      track.rawLocation !== null &&
-      catalog.tracks.filter(
-        (candidate) => candidate.rawLocation === track.rawLocation,
-      ).length > 1;
+    const remaining = catalog.tracks.filter((track) => !songIds.has(track.song.id));
     const reload = await this.writeAndReload(catalog, {
-      kind: 'remove-track',
-      trackId: track.rekordboxId,
-      rawLocation: sharedLocation ? null : track.rawLocation,
+      kind: 'remove-tracks',
+      tracks: tracks.map((track) => ({
+        trackId: track.rekordboxId,
+        rawLocation: remaining.some((candidate) => candidate.rawLocation === track.rawLocation)
+          ? null
+          : track.rawLocation,
+      })),
     });
     if (reload.kind === 'rejected') {
       return reload;
     }
 
     this.catalog = reload.catalog;
-    const fileAction = await fileActionFor({
-      mediaPath: track.mediaPath,
-      removeLocalFile: change.removeLocalFile,
-      sharedLocation,
-    });
+    const handledPaths = new Set<string>();
+    const fileActions: LocalFileAction[] = [];
+    for (const track of tracks) {
+      if (track.mediaPath !== null) {
+        if (handledPaths.has(track.mediaPath)) {
+          continue;
+        }
+        handledPaths.add(track.mediaPath);
+      }
+      fileActions.push(await fileActionFor({
+        mediaPath: track.mediaPath,
+        removeLocalFile: change.removeLocalFile,
+        sharedLocation: remaining.some((candidate) =>
+          (track.mediaPath !== null && candidate.mediaPath === track.mediaPath) ||
+          (track.rawLocation !== null && candidate.rawLocation === track.rawLocation),
+        ),
+      }));
+    }
     return {
-      kind: 'song-removed',
+      kind: 'songs-removed',
       library: summaryFor(reload.catalog),
-      fileAction,
+      removedCount: tracks.length,
+      fileActions,
     };
   }
 

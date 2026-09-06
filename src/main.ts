@@ -151,20 +151,23 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
       groupKey: value.groupKey,
     };
   }
-  if (value.kind === 'remove-song') {
+  if (value.kind === 'remove-songs') {
     if (
       typeof value.revision !== 'string' ||
       value.revision.length === 0 ||
-      typeof value.songId !== 'string' ||
-      value.songId.length === 0 ||
+      !Array.isArray(value.songIds) ||
+      value.songIds.length === 0 ||
+      value.songIds.length > 10_000 ||
+      !value.songIds.every((songId) => typeof songId === 'string' && songId.length > 0) ||
+      new Set(value.songIds).size !== value.songIds.length ||
       typeof value.removeLocalFile !== 'boolean'
     ) {
       throw new Error('Invalid song removal');
     }
     return {
-      kind: 'remove-song',
+      kind: 'remove-songs',
       revision: value.revision,
-      songId: value.songId,
+      songIds: value.songIds,
       removeLocalFile: value.removeLocalFile,
     };
   }

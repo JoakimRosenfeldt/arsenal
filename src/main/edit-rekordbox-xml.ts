@@ -6,9 +6,11 @@ import { SaxesParser, type SaxesTagPlain } from 'saxes';
 
 export type RekordboxXmlEdit =
   | Readonly<{
-      kind: 'remove-track';
-      trackId: string | null;
-      rawLocation: string | null;
+      kind: 'remove-tracks';
+      tracks: readonly Readonly<{
+        trackId: string | null;
+        rawLocation: string | null;
+      }>[];
     }>
   | Readonly<{
       kind: 'create-root-playlist';
@@ -327,51 +329,55 @@ const applyReplacements = (
     );
 };
 
-const removeTrack = (
+const removeTracks = (
   source: string,
   index: XmlIndex,
-  edit: Extract<RekordboxXmlEdit, { kind: 'remove-track' }>,
+  edit: Extract<RekordboxXmlEdit, { kind: 'remove-tracks' }>,
 ): string => {
-  const matchingTracks = index.collectionTracks.filter((track) =>
-    edit.trackId !== null
-      ? track.attributes.TrackID === edit.trackId
-      : edit.rawLocation !== null &&
-        track.attributes.Location === edit.rawLocation,
-  );
-  if (matchingTracks.length !== 1) {
+  const targets = new Set<ElementSpan>();
+  for (const selected of edit.tracks) {
+    const matchingTracks = index.collectionTracks.filter((track) =>
+      selected.trackId !== null
+        ? track.attributes.TrackID === selected.trackId
+        : selected.rawLocation !== null && track.attributes.Location === selected.rawLocation,
+    );
+    const target = matchingTracks[0];
+    if (matchingTracks.length !== 1 || target === undefined || targets.has(target)) {
+      throw new RekordboxWriteError(
+        'target-not-found',
+        'A selected track no longer has one exact XML match',
+      );
+    }
+    targets.add(target);
+  }
+  if (targets.size === 0) {
     throw new RekordboxWriteError(
       'target-not-found',
-      'The selected track no longer has one exact XML match',
+      'No tracks were selected',
     );
   }
 
-  const target = matchingTracks[0];
-  if (target === undefined) {
-    throw new RekordboxWriteError('target-not-found', 'Track not found');
-  }
-
   const replacements: Replacement[] = [
-    removalReplacement(source, target),
+    ...[...targets].map((target) => removalReplacement(source, target)),
     openingReplacement(
       source,
       index.collection,
       'Entries',
-      String(index.collectionTracks.length - 1),
+      String(index.collectionTracks.length - targets.size),
     ),
   ];
 
   for (const playlist of index.playlistNodes) {
-    const key =
-      playlist.keyType === '0'
-        ? edit.trackId
+    const keys = new Set(edit.tracks.flatMap((track) => {
+      const key = playlist.keyType === '0'
+        ? track.trackId
         : playlist.keyType === '1'
-          ? edit.rawLocation
+          ? track.rawLocation
           : null;
-    if (key === null) {
-      continue;
-    }
+      return key === null ? [] : [key];
+    }));
     const references = playlist.trackReferences.filter(
-      (track) => track.attributes.Key === key,
+      (track) => keys.has(track.attributes.Key ?? ''),
     );
     if (references.length === 0) {
       continue;
@@ -471,8 +477,8 @@ const createRootPlaylist = (
 const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
   const index = scanXml(source);
   const edited =
-    edit.kind === 'remove-track'
-      ? removeTrack(source, index, edit)
+    edit.kind === 'remove-tracks'
+      ? removeTracks(source, index, edit)
       : createRootPlaylist(source, index, edit);
   scanXml(edited);
   return edited;
