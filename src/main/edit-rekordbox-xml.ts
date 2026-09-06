@@ -177,8 +177,7 @@ const scanXml = (source: string): XmlIndex => {
     if (
       span.kind === 'element' &&
       span.name === 'TRACK' &&
-      parent?.kind === 'playlist-node' &&
-      parent.nodeType === '1'
+      parent?.kind === 'playlist-node'
     ) {
       parent.trackReferences.push(span);
     }
@@ -362,9 +361,6 @@ const removeTrack = (
   ];
 
   for (const playlist of index.playlistNodes) {
-    if (playlist.nodeType !== '1') {
-      continue;
-    }
     const key =
       playlist.keyType === '0'
         ? edit.trackId

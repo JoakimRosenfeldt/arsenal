@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { SaxesParser } from 'saxes';
 
 import type { SongRow } from '../shared/dj-library';
+import type { SmartPlaylistRules } from './smart-playlists';
 
 export type ParsedTrack = Readonly<{
   song: SongRow;
@@ -25,6 +26,7 @@ export type ParsedPlaylist = Readonly<{
   folderPath: readonly string[];
   referenceKind: PlaylistReferenceKind;
   keys: readonly string[];
+  rules: SmartPlaylistRules;
 }>;
 
 export type ParsedRekordboxLibrary = Readonly<{
@@ -142,6 +144,10 @@ type MutablePlaylist = {
   folderPath: string[];
   referenceKind: PlaylistReferenceKind;
   keys: string[];
+  rules: {
+    logicalOperator: string | null;
+    conditions: Readonly<Record<string, string>>[];
+  };
 };
 
 type OpenPlaylistNode =
@@ -278,6 +284,7 @@ export const parseRekordboxXml = async (
           folderPath: folders.slice(1),
           referenceKind: referenceKindFor(tag.attributes.KeyType),
           keys: [],
+          rules: { logicalOperator: tag.attributes.LogicalOperator ?? null, conditions: [] },
         };
         playlists.push(playlist);
         playlistNodeStack.push({ kind: 'playlist', playlist });
@@ -292,6 +299,12 @@ export const parseRekordboxXml = async (
       (tag.name === 'CONDITION' || tag.name === 'SMARTLIST')
     ) {
       currentPlaylistNode.playlist.kind = 'smart';
+      if (tag.name === 'SMARTLIST') {
+        currentPlaylistNode.playlist.rules.logicalOperator =
+          tag.attributes.LogicalOperator ?? currentPlaylistNode.playlist.rules.logicalOperator;
+      } else {
+        currentPlaylistNode.playlist.rules.conditions.push({ ...tag.attributes });
+      }
     }
     const isPlaylistTrack =
       tag.name === 'TRACK' &&

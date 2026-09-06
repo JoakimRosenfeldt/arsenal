@@ -158,6 +158,7 @@ const PlaylistBranch = ({
 
 export const CueboxSidebar = ({
   activePage,
+  busy,
   duplicateCount,
   hasLibrary,
   onNavigate,
@@ -169,6 +170,7 @@ export const CueboxSidebar = ({
   songCount,
 }: Readonly<{
   activePage: PageId;
+  busy: boolean;
   duplicateCount: number | null;
   hasLibrary: boolean;
   onNavigate: (page: PageId) => void;
@@ -212,8 +214,9 @@ export const CueboxSidebar = ({
             type="search"
             value={query}
             onChange={(event) => onQueryChange(event.currentTarget.value)}
-            placeholder={hasLibrary ? 'Filter library page' : 'Import to search'}
-            disabled={!hasLibrary || activePage !== 'library'}
+            placeholder={hasLibrary ? 'Search collection' : 'Import to search'}
+            maxLength={200}
+            disabled={!hasLibrary || busy || activePage !== 'library'}
           />
           <span className="search-shortcut" aria-hidden>⌘K</span>
         </label>

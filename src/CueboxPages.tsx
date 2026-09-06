@@ -6,12 +6,14 @@ import {
 } from 'react';
 
 import type { DuplicateViewState } from './App';
+import { TrackWaveform } from './TrackWaveform';
 import {
   TrackArtwork,
   type PlaybackController,
 } from './CueboxPlayer';
 import {
   DUPLICATE_MATCH_MODES,
+  SONG_PAGE_SIZE,
   type DuplicateCandidate,
   type DuplicateGroup,
   type DuplicateMatchMode,
@@ -20,6 +22,7 @@ import {
   type RekordboxPlaylist,
   type SongPage,
   type SongRow,
+  type SongSearchRequest,
 } from './shared/dj-library';
 
 export type LibraryView = Readonly<{
@@ -90,12 +93,6 @@ const formatImportedAt = (importedAt: string): string =>
 const formatRowNumber = (offset: number, index: number): string =>
   String(offset + index + 1).padStart(3, '0');
 
-const trackSearchText = (song: SongRow): string =>
-  [song.title, song.artist, song.album, song.genre, song.musicalKey]
-    .filter((value): value is string => value !== null)
-    .join(' ')
-    .toLocaleLowerCase();
-
 const metadataGapCount = (song: SongRow): number =>
   [
     song.artist,
@@ -148,69 +145,19 @@ const NoLibrary = ({
   </section>
 );
 
-const waveformHeights = (song: SongRow, count: number): readonly number[] => {
-  const seed = [...`${song.id}${song.title}`].reduce(
-    (total, character) => total + character.charCodeAt(0),
-    0,
-  );
-  return Array.from({ length: count }, (_, index) => {
-    const first = Math.abs(Math.sin((index + seed) * 0.43));
-    const second = Math.abs(Math.sin((index + seed) * 0.17));
-    return 18 + Math.round((first * 0.68 + second * 0.32) * 78);
-  });
-};
-
-const InteractiveWaveform = ({
-  disabled,
-  duration,
-  onSeek,
-  position,
-  song,
-}: Readonly<{
-  disabled: boolean;
-  duration: number;
-  onSeek: (seconds: number) => void;
-  position: number;
-  song: SongRow;
-}>): JSX.Element => {
-  const bars = waveformHeights(song, 72);
-  const progress = duration <= 0 ? 0 : position / duration;
-  return (
-    <div className="interactive-waveform">
-      <div className="track-profile-bars" aria-hidden>
-        {bars.map((height, index) => (
-          <span
-            className={index / bars.length <= progress ? 'is-accent' : ''}
-            style={{ height: `${height}%` }}
-            key={`${height}-${index}`}
-          />
-        ))}
-      </div>
-      <input
-        type="range"
-        min="0"
-        max={Math.max(duration, 1)}
-        step="0.1"
-        value={Math.min(position, Math.max(duration, 1))}
-        onChange={(event) => onSeek(event.currentTarget.valueAsNumber)}
-        disabled={disabled}
-        aria-label={`Seek in ${song.title}`}
-      />
-    </div>
-  );
-};
-
 export const LibraryPage = ({
   busy,
   onImport,
   onPage,
   playback,
   query,
+  searching,
   view,
 }: CommonPageProps &
   Readonly<{
     onPage: (offset: number) => void;
     query: string;
+    searching: boolean;
   }>): JSX.Element => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
@@ -228,12 +175,7 @@ export const LibraryPage = ({
   }
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const visibleSongs =
-    normalizedQuery.length === 0
-      ? view.page.items
-      : view.page.items.filter((song) =>
-          trackSearchText(song).includes(normalizedQuery),
-        );
+  const visibleSongs = view.page.items;
   const selectedSong =
     visibleSongs.find((song) => song.id === selectedId) ??
     visibleSongs[0] ??
@@ -277,10 +219,10 @@ export const LibraryPage = ({
         <span className="filter-chip"><b>Source</b>{view.library.sourceName}</span>
         <span className="filter-chip"><b>Opened</b>{formatImportedAt(view.library.importedAt)}</span>
         {normalizedQuery.length > 0 && (
-          <span className="filter-chip is-accent"><b>Filter</b>{query}</span>
+          <span className="filter-chip is-accent"><b>Search</b>{query}</span>
         )}
         <span className="result-count">
-          {visibleSongs.length.toLocaleString()} shown · page {pageNumber} of {pageCount}
+          {searching ? 'Searching collection' : `${view.page.total.toLocaleString()} results · page ${pageNumber} of ${pageCount}`}
         </span>
       </div>
 
@@ -297,11 +239,13 @@ export const LibraryPage = ({
             <span role="columnheader">Genre</span>
             <span role="columnheader">Album</span>
           </div>
-          <div className="track-table-body" role="rowgroup" aria-busy={busy}>
-            {visibleSongs.length === 0 ? (
+          <div className="track-table-body" role="rowgroup" aria-busy={busy || searching}>
+            {searching ? (
+              <div className="inline-empty" role="status">Searching collection…</div>
+            ) : visibleSongs.length === 0 ? (
               <div className="inline-empty">
                 <strong>No tracks match "{query}".</strong>
-                <span>Clear the sidebar filter to show this page again.</span>
+                <span>Clear the search to show the collection.</span>
               </div>
             ) : (
               visibleSongs.map((song, index) => {
@@ -381,7 +325,7 @@ export const LibraryPage = ({
                 <span>{formatDuration(displayedPosition)}</span>
                 <span>{formatDuration(displayedDuration)}</span>
               </div>
-              <InteractiveWaveform
+              <TrackWaveform
                 disabled={!selectedIsActive || selectedSong.audioUrl === null}
                 duration={displayedDuration}
                 onSeek={playback.seek}
@@ -417,7 +361,7 @@ export const LibraryPage = ({
             </dl>
             <div className="inspector-note">
               <span className="mono-label">Local file</span>
-              <p>Playback stays on this Mac. Arsenal never sends the file or its path to the renderer.</p>
+              <p>Playback and waveform analysis stay on this Mac.</p>
             </div>
           </aside>
         )}
@@ -436,10 +380,10 @@ export const LibraryPage = ({
           </span>
         </p>
         <div>
-          <button type="button" onClick={() => onPage(view.page.offset - view.page.limit)} disabled={busy || view.page.offset === 0}>
+          <button type="button" onClick={() => onPage(view.page.offset - view.page.limit)} disabled={busy || searching || view.page.offset === 0}>
             ← Previous
           </button>
-          <button type="button" onClick={() => onPage(view.page.offset + view.page.limit)} disabled={busy || !view.page.hasNext}>
+          <button type="button" onClick={() => onPage(view.page.offset + view.page.limit)} disabled={busy || searching || !view.page.hasNext}>
             Next →
           </button>
         </div>
@@ -816,7 +760,10 @@ export const PlaylistsPage = ({
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<readonly SongRow[]>([]);
+  const [results, setResults] = useState<SongPage | null>(null);
+  const [searchRequest, setSearchRequest] = useState<SongSearchRequest>({
+    query: '', offset: 0, limit: SONG_PAGE_SIZE,
+  });
   const [chosenIds, setChosenIds] = useState<ReadonlySet<string>>(() => new Set());
   const [loadingSongs, setLoadingSongs] = useState(false);
   const [searchFailed, setSearchFailed] = useState(false);
@@ -826,7 +773,7 @@ export const PlaylistsPage = ({
       return;
     }
     let active = true;
-    void window.djLibrary.searchSongs({ query: '' }).then(
+    void window.djLibrary.searchSongs(searchRequest).then(
       (songs) => {
         if (active) {
           setResults(songs);
@@ -836,6 +783,7 @@ export const PlaylistsPage = ({
       },
       () => {
         if (active) {
+          setResults(null);
           setLoadingSongs(false);
           setSearchFailed(true);
         }
@@ -844,7 +792,7 @@ export const PlaylistsPage = ({
     return () => {
       active = false;
     };
-  }, [creating]);
+  }, [creating, searchRequest]);
 
   if (view === null) {
     return (
@@ -861,17 +809,11 @@ export const PlaylistsPage = ({
   const selectedPlaylist =
     playlists?.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
 
-  const search = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+  const search = (event: FormEvent<HTMLFormElement>): void => {
     event.preventDefault();
     setLoadingSongs(true);
     setSearchFailed(false);
-    try {
-      setResults(await window.djLibrary.searchSongs({ query }));
-    } catch {
-      setSearchFailed(true);
-    } finally {
-      setLoadingSongs(false);
-    }
+    setSearchRequest({ query, offset: 0, limit: SONG_PAGE_SIZE });
   };
 
   const toggleSong = (songId: string): void => {
@@ -896,6 +838,12 @@ export const PlaylistsPage = ({
         <div className="header-actions">
           <span className="status-pill"><i aria-hidden />Rekordbox XML</span>
           <button className="accent-button compact" type="button" onClick={() => {
+            setName('');
+            setQuery('');
+            setChosenIds(new Set());
+            setResults(null);
+            setSearchFailed(false);
+            setSearchRequest({ query: '', offset: 0, limit: SONG_PAGE_SIZE });
             setLoadingSongs(true);
             setCreating(true);
           }} disabled={busy}>
@@ -917,20 +865,22 @@ export const PlaylistsPage = ({
                 <span>Playlist name</span>
                 <input value={name} onChange={(event) => setName(event.currentTarget.value)} maxLength={100} autoFocus />
               </label>
-              <form className="playlist-search" onSubmit={(event) => void search(event)}>
+              <form className="playlist-search" onSubmit={search}>
                 <label htmlFor="playlist-track-search">Find tracks in the full collection</label>
                 <div>
-                  <input id="playlist-track-search" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Title, artist, album, genre, or key" />
+                  <input id="playlist-track-search" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} maxLength={200} placeholder="Title, artist, album, genre, or key" />
                   <button className="quiet-button" type="submit" disabled={loadingSongs}>{loadingSongs ? 'Searching' : 'Search'}</button>
                 </div>
               </form>
               {searchFailed && (
                 <p className="playlist-search-error" role="alert">Arsenal could not search this collection.</p>
               )}
-              <div className="playlist-track-options" aria-label="Tracks to add">
-                {results.length === 0 && !loadingSongs ? (
+              <div className="playlist-track-options" aria-label="Tracks to add" aria-busy={loadingSongs}>
+                {loadingSongs ? (
+                  <div className="inline-empty" role="status">Searching collection…</div>
+                ) : results?.total === 0 ? (
                   <div className="inline-empty"><strong>No tracks found.</strong></div>
-                ) : results.map((song) => (
+                ) : results?.items.map((song) => (
                   <label className="playlist-track-option" key={song.id}>
                     <input type="checkbox" checked={chosenIds.has(song.id)} onChange={() => toggleSong(song.id)} />
                     <span className="custom-check" aria-hidden>{chosenIds.has(song.id) ? '✓' : ''}</span>
@@ -941,6 +891,23 @@ export const PlaylistsPage = ({
                   </label>
                 ))}
               </div>
+              {results !== null && (
+                <nav className="page-pagination playlist-pagination" aria-label="Track search pages">
+                  <p aria-live="polite">
+                    {results.total === 0 ? '0' : `${results.offset + 1}-${results.offset + results.items.length}`} of {results.total.toLocaleString()} results
+                  </p>
+                  <div>
+                    <button type="button" disabled={loadingSongs || results.offset === 0} onClick={() => {
+                      setLoadingSongs(true);
+                      setSearchRequest({ ...searchRequest, offset: results.offset - results.limit });
+                    }}>Previous results</button>
+                    <button type="button" disabled={loadingSongs || !results.hasNext} onClick={() => {
+                      setLoadingSongs(true);
+                      setSearchRequest({ ...searchRequest, offset: results.offset + results.limit });
+                    }}>Next results</button>
+                  </div>
+                </nav>
+              )}
               <div className="playlist-create-actions">
                 <span>{chosenIds.size} tracks selected</span>
                 <button className="quiet-button" type="button" onClick={() => setCreating(false)} disabled={busy}>Cancel</button>
@@ -977,6 +944,23 @@ export const PlaylistsPage = ({
                 <h2>{selectedPlaylist.name}</h2>
                 <span>{selectedPlaylist.tracks.length} tracks</span>
               </div>
+              {selectedPlaylist.smartRules !== null && (
+                <div className="playlist-rules">
+                  <p role={selectedPlaylist.smartRules.kind === 'unavailable' ? 'status' : undefined}>
+                    {selectedPlaylist.smartRules.message}
+                  </p>
+                  {selectedPlaylist.smartRules.conditions.length > 0 && (
+                    <details>
+                      <summary>Smart playlist rules</summary>
+                      <ul>
+                        {selectedPlaylist.smartRules.conditions.map((condition, index) => (
+                          <li key={index}>{condition}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              )}
               <div className="playlist-track-list">
                 {selectedPlaylist.tracks.map((song, index) => {
                   const isPlaying = playback.song?.id === song.id && playback.playing;

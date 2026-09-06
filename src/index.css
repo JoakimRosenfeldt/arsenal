@@ -1670,6 +1670,15 @@ input:disabled {
   position: relative;
 }
 
+.waveform-status {
+  display: grid;
+  min-height: 68px;
+  margin: 0;
+  place-items: center;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
 .interactive-waveform input {
   position: absolute;
   z-index: 2;
@@ -2022,6 +2031,29 @@ input:disabled {
   display: flex;
   align-items: center;
   gap: 9px;
+}
+
+.playlist-rules {
+  width: min(860px, 100%);
+  margin: 16px auto 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.playlist-rules p {
+  margin: 0 0 8px;
+}
+
+.playlist-rules summary {
+  cursor: pointer;
+}
+
+.playlist-pagination {
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 0;
 }
 
 .smart-playlist-mark {

@@ -29,7 +29,7 @@ const config: ForgeConfig = {
       mainConfig,
       port: 3001,
       devContentSecurityPolicy:
-        "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:*; img-src 'self' data: cuebox-art:; media-src cuebox-media:; object-src 'none'; base-uri 'none'; form-action 'none'",
+        "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* cuebox-media:; img-src 'self' data: cuebox-art:; media-src cuebox-media:; object-src 'none'; base-uri 'none'; form-action 'none'",
       renderer: {
         config: rendererConfig,
         entryPoints: [

@@ -9,7 +9,6 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
 });
 
 export const SONG_PAGE_SIZE = 100;
-export const SONG_SEARCH_LIMIT = 100;
 
 export const DUPLICATE_MATCH_MODES = [
   'exact',
@@ -89,6 +88,13 @@ export type RekordboxPlaylist = Readonly<{
   folderPath: readonly string[];
   tracks: readonly SongRow[];
   missingTrackCount: number;
+  smartRules: SmartPlaylistStatus | null;
+}>;
+
+export type SmartPlaylistStatus = Readonly<{
+  kind: 'evaluated' | 'unavailable';
+  message: string;
+  conditions: readonly string[];
 }>;
 
 export type LibraryStatus =
@@ -118,7 +124,7 @@ export type SongPage = Readonly<{
   hasNext: boolean;
 }>;
 
-export type SongSearchRequest = Readonly<{
+export type SongSearchRequest = PageRequest & Readonly<{
   query: string;
 }>;
 
@@ -172,6 +178,6 @@ export type DjLibraryApi = Readonly<{
   listSongs(page: PageRequest): Promise<SongPage>;
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;
-  searchSongs(request: SongSearchRequest): Promise<readonly SongRow[]>;
+  searchSongs(request: SongSearchRequest): Promise<SongPage>;
   mutate(change: LibraryMutation): Promise<LibraryMutationResult>;
 }>;

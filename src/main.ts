@@ -21,7 +21,6 @@ import {
   DJ_LIBRARY_CHANNELS,
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
-  SONG_SEARCH_LIMIT,
   type DuplicateMatchMode,
   type LibraryMutation,
   type PageRequest,
@@ -49,7 +48,13 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: TRACK_MEDIA_SCHEME,
-    privileges: { secure: true, standard: true, stream: true },
+    privileges: {
+      secure: true,
+      standard: true,
+      stream: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
   },
 ]);
 
@@ -123,7 +128,7 @@ const readSongSearchRequest = (value: unknown): SongSearchRequest => {
   ) {
     throw new Error('Invalid song search');
   }
-  return { query: value.query };
+  return { ...readPageRequest(value), query: value.query };
 };
 
 const readLibraryMutation = (value: unknown): LibraryMutation => {
@@ -220,7 +225,7 @@ const installIpc = (owner: BrowserWindow): void => {
     (event, request: unknown) => {
       assertTrustedSender(event, owner);
       const search = readSongSearchRequest(request);
-      return library.searchSongs(search.query, SONG_SEARCH_LIMIT);
+      return library.searchSongs(search);
     },
   );
 
@@ -313,6 +318,10 @@ const configureProtocols = (appSession: Session): void => {
       bypassCustomProtocolHandlers: true,
     });
     const headers = new Headers(fetched.headers);
+    headers.set(
+      'Access-Control-Allow-Origin',
+      app.isPackaged ? 'arsenal://app' : new URL(MAIN_WINDOW_WEBPACK_ENTRY).origin,
+    );
     headers.set('Accept-Ranges', 'bytes');
     headers.set('Cache-Control', 'no-store');
     headers.set('X-Content-Type-Options', 'nosniff');

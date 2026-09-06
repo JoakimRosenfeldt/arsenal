@@ -115,6 +115,9 @@ export const App = (): JSX.Element => {
   const [error, setError] = useState<DisplayError | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [query, setQuery] = useState('');
+  const [viewQuery, setViewQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const searchSequence = useRef(0);
   const [duplicateMode, setDuplicateMode] =
     useState<DuplicateMatchMode>('versions');
   const [duplicateState, setDuplicateState] = useState<DuplicateViewState>({
@@ -289,6 +292,8 @@ export const App = (): JSX.Element => {
         return;
       }
 
+      searchSequence.current += 1;
+      setSearching(false);
       const [page, loadedPlaylists] = await Promise.all([
         window.djLibrary.listSongs({
           offset: 0,
@@ -301,6 +306,7 @@ export const App = (): JSX.Element => {
       setPlaylists(loadedPlaylists);
       setSelectedPlaylistId(null);
       setQuery('');
+      setViewQuery('');
     } catch {
       setError('unexpected');
     } finally {
@@ -327,21 +333,24 @@ export const App = (): JSX.Element => {
         return false;
       }
 
+      searchSequence.current += 1;
+      setSearching(false);
       const maxOffset = Math.max(
         0,
         Math.floor(Math.max(0, result.library.songCount - 1) / SONG_PAGE_SIZE) *
           SONG_PAGE_SIZE,
       );
       const [page, loadedPlaylists] = await Promise.all([
-        window.djLibrary.listSongs({
+        window.djLibrary.searchSongs({
           offset: Math.min(view.page.offset, maxOffset),
           limit: SONG_PAGE_SIZE,
+          query,
         }),
         window.djLibrary.listPlaylists(),
       ]);
       setView({ library: result.library, page });
       setPlaylists(loadedPlaylists);
-      setQuery('');
+      setViewQuery(query);
       setDuplicateState({ kind: 'empty' });
       setFeedback(
         result.kind === 'song-removed'
@@ -384,25 +393,33 @@ export const App = (): JSX.Element => {
       songIds,
     }));
 
-  const changePage = async (offset: number): Promise<void> => {
+  const changePage = async (offset: number, nextQuery = query): Promise<void> => {
     if (busy || view === null || offset < 0) {
       return;
     }
 
-    setBusy(true);
+    const sequence = ++searchSequence.current;
+    setSearching(true);
     setError(null);
 
     try {
-      const page = await window.djLibrary.listSongs({
+      const page = await window.djLibrary.searchSongs({
         offset,
         limit: SONG_PAGE_SIZE,
+        query: nextQuery,
       });
-      setView({ library: view.library, page });
-      setQuery('');
+      if (sequence === searchSequence.current) {
+        setView({ library: view.library, page });
+        setViewQuery(nextQuery);
+      }
     } catch {
-      setError('unexpected');
+      if (sequence === searchSequence.current) {
+        setError('unexpected');
+      }
     } finally {
-      setBusy(false);
+      if (sequence === searchSequence.current) {
+        setSearching(false);
+      }
     }
   };
 
@@ -435,7 +452,8 @@ export const App = (): JSX.Element => {
             onImport={() => void importLibrary()}
             onPage={(offset) => void changePage(offset)}
             playback={playback}
-            query={query}
+            query={viewQuery}
+            searching={searching}
             view={view}
           />
         );
@@ -477,11 +495,15 @@ export const App = (): JSX.Element => {
     <div className="cuebox-app">
       <CueboxSidebar
         activePage={activePage}
+        busy={busy}
         duplicateCount={duplicateCount}
         hasLibrary={view !== null}
         onNavigate={navigate}
         onPlaylistSelect={selectPlaylist}
-        onQueryChange={setQuery}
+        onQueryChange={(nextQuery) => {
+          setQuery(nextQuery);
+          void changePage(0, nextQuery);
+        }}
         playlists={playlists}
         query={query}
         selectedPlaylistId={selectedPlaylistId}

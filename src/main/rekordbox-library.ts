@@ -18,6 +18,7 @@ import type {
   RekordboxPlaylist,
   SongPage,
   SongRow,
+  SongSearchRequest,
 } from '../shared/dj-library';
 import {
   editRekordboxXml,
@@ -25,6 +26,7 @@ import {
   type RekordboxXmlEdit,
 } from './edit-rekordbox-xml';
 import { findDuplicateScan } from './find-duplicates';
+import { evaluateSmartPlaylist } from './smart-playlists';
 import {
   parseRekordboxXml,
   type ParsedPlaylist,
@@ -154,13 +156,18 @@ const projectPlaylists = (
           ? byLocation
           : null;
     const resolved = playlist.keys.map((key) => lookup?.get(key) ?? null);
+    const exportedTracks = resolved.filter((song): song is SongRow => song !== null);
+    const smart = playlist.kind === 'smart'
+      ? evaluateSmartPlaylist(playlist.rules, tracks, exportedTracks)
+      : null;
     return {
       id: playlist.id,
       name: playlist.name,
       kind: playlist.kind,
       folderPath: playlist.folderPath,
-      tracks: resolved.filter((song): song is SongRow => song !== null),
+      tracks: smart?.tracks ?? exportedTracks,
       missingTrackCount: resolved.filter((song) => song === null).length,
+      smartRules: smart?.status ?? null,
     };
   });
 };
@@ -235,10 +242,21 @@ export class RekordboxLibrary {
       : { kind: 'ready', library: summaryFor(this.catalog) };
   }
 
-  listSongs({ offset, limit }: PageRequest): SongPage {
-    const catalog = this.requireCatalog();
-    const items = catalog.songs.slice(offset, offset + limit);
-    const total = catalog.songs.length;
+  listSongs(page: PageRequest): SongPage {
+    return this.searchSongs({ ...page, query: '' });
+  }
+
+  searchSongs(request: SongSearchRequest): SongPage {
+    const songs = this.requireCatalog().songs;
+    const normalized = request.query.trim().toLocaleLowerCase();
+    const matches = normalized.length === 0
+      ? songs
+      : songs.filter((song) => searchTextFor(song).includes(normalized));
+    const total = matches.length;
+    const limit = request.limit;
+    const lastOffset = Math.floor(Math.max(0, total - 1) / limit) * limit;
+    const offset = Math.min(request.offset, lastOffset);
+    const items = matches.slice(offset, offset + limit);
     return {
       items,
       offset,
@@ -246,15 +264,6 @@ export class RekordboxLibrary {
       total,
       hasNext: offset + items.length < total,
     };
-  }
-
-  searchSongs(query: string, limit: number): readonly SongRow[] {
-    const songs = this.requireCatalog().songs;
-    const normalized = query.trim().toLocaleLowerCase();
-    return (normalized.length === 0
-      ? songs
-      : songs.filter((song) => searchTextFor(song).includes(normalized))
-    ).slice(0, limit);
   }
 
   listPlaylists(): readonly RekordboxPlaylist[] {
