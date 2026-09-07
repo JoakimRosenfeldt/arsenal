@@ -1,3 +1,5 @@
+import type { PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
+
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   importExport: 'dj-library:import-export',
@@ -5,6 +7,8 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   findDuplicates: 'dj-library:find-duplicates',
   listPlaylists: 'dj-library:list-playlists',
   searchSongs: 'dj-library:search-songs',
+  suggestPlaylist: 'dj-library:suggest-playlist',
+  cancelSuggestions: 'dj-library:cancel-suggestions',
   mutate: 'dj-library:mutate',
 });
 
@@ -213,5 +217,7 @@ export type DjLibraryApi = Readonly<{
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;
   searchSongs(request: SongSearchRequest): Promise<SongPage>;
+  suggestPlaylist(request: PlaylistSuggestionRequest): Promise<PlaylistSuggestionResult>;
+  cancelSuggestions(): Promise<void>;
   mutate(change: LibraryMutation): Promise<LibraryMutationResult>;
 }>;

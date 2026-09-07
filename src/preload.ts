@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 import { APP_UPDATE_CHANNELS, type AppUpdatesApi, type UpdateStatus } from './shared/app-updates';
+import { AI_MODEL_CHANNELS, type AiModelsApi } from './shared/ai-models';
 
 import {
   DJ_LIBRARY_CHANNELS,
@@ -19,11 +20,27 @@ const api: DjLibraryApi = Object.freeze({
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listPlaylists),
   searchSongs: (request) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.searchSongs, request),
+  suggestPlaylist: (request) =>
+    ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.suggestPlaylist, request),
+  cancelSuggestions: () =>
+    ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.cancelSuggestions),
   mutate: (change) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.mutate, change),
 });
 
 contextBridge.exposeInMainWorld('djLibrary', api);
+
+const aiModels: AiModelsApi = Object.freeze({
+  settings: () => ipcRenderer.invoke(AI_MODEL_CHANNELS.settings),
+  update: (change) => ipcRenderer.invoke(AI_MODEL_CHANNELS.update, change),
+  list: (provider) => ipcRenderer.invoke(AI_MODEL_CHANNELS.list, provider),
+  searchOllama: (query) => ipcRenderer.invoke(AI_MODEL_CHANNELS.searchOllama, query),
+  variants: (family) => ipcRenderer.invoke(AI_MODEL_CHANNELS.variants, family),
+  download: (model) => ipcRenderer.invoke(AI_MODEL_CHANNELS.download, model),
+  downloadStatus: () => ipcRenderer.invoke(AI_MODEL_CHANNELS.downloadStatus),
+  cancelDownload: () => ipcRenderer.invoke(AI_MODEL_CHANNELS.cancelDownload),
+});
+contextBridge.exposeInMainWorld('aiModels', aiModels);
 
 const updates: AppUpdatesApi = Object.freeze({
   status: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.status),

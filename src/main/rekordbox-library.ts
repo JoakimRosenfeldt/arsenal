@@ -28,6 +28,10 @@ import {
 } from './edit-rekordbox-xml';
 import { findDuplicateScan } from './find-duplicates';
 import { evaluateSmartPlaylist } from './smart-playlists';
+import { suggestPlaylist } from './playlist-suggestions';
+import type { PlaylistSuggestionRequest, PlaylistSuggestionResult } from '../shared/playlist-suggestions';
+import type { AiModels } from './ai-models';
+import { ModelError } from './ai-client';
 import {
   parseRekordboxXml,
   type ParsedPlaylist,
@@ -259,6 +263,8 @@ export class RekordboxLibrary {
 
   private operationTail: Promise<void> = Promise.resolve();
 
+  private suggestionController: AbortController | null = null;
+
   async initialize(stateFilePath: string): Promise<void> {
     this.stateFilePath = stateFilePath;
     const remembered = await readRememberedLibrary(stateFilePath);
@@ -307,6 +313,32 @@ export class RekordboxLibrary {
 
   listPlaylists(): readonly RekordboxPlaylist[] {
     return this.requireCatalog().playlists;
+  }
+
+  async suggestPlaylist(request: PlaylistSuggestionRequest, aiModels: AiModels): Promise<PlaylistSuggestionResult> {
+    const catalog = this.catalog;
+    if (catalog === null || request.revision !== catalog.revision) {
+      return { kind: 'rejected', reason: 'stale-library' };
+    }
+    this.cancelSuggestions();
+    const controller = new AbortController();
+    this.suggestionController = controller;
+    try {
+      const connection = await aiModels.connection(AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]));
+      const result = await suggestPlaylist(catalog.songs, request, controller.signal, connection);
+      return this.catalog === catalog ? result : { kind: 'rejected', reason: 'stale-library' };
+    } catch (error: unknown) {
+      return { kind: 'rejected', reason: controller.signal.aborted ? 'cancelled' : error instanceof ModelError ? error.reason : 'failed' };
+    } finally {
+      if (this.suggestionController === controller) {
+        this.suggestionController = null;
+      }
+    }
+  }
+
+  cancelSuggestions(): void {
+    this.suggestionController?.abort();
+    this.suggestionController = null;
   }
 
   findDuplicates(mode: DuplicateMatchMode): DuplicateScan {

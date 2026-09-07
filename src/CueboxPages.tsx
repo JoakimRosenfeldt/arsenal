@@ -8,6 +8,7 @@ import {
 
 import type { DuplicateViewState } from './App';
 import { TrackWaveform } from './TrackWaveform';
+import { PlaylistSuggestions } from './PlaylistSuggestions';
 import {
   TrackArtwork,
   type PlaybackController,
@@ -1025,7 +1026,7 @@ export const PlaylistsPage = ({
   const [searchRequest, setSearchRequest] = useState<SongSearchRequest>({
     query: '', offset: 0, limit: SONG_PAGE_SIZE,
   });
-  const [chosenIds, setChosenIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [chosenSongs, setChosenSongs] = useState<ReadonlyMap<string, SongRow>>(() => new Map());
   const [loadingSongs, setLoadingSongs] = useState(false);
   const [searchFailed, setSearchFailed] = useState(false);
 
@@ -1077,13 +1078,13 @@ export const PlaylistsPage = ({
     setSearchRequest({ query, offset: 0, limit: SONG_PAGE_SIZE });
   };
 
-  const toggleSong = (songId: string): void => {
-    setChosenIds((current) => {
-      const next = new Set(current);
-      if (next.has(songId)) {
-        next.delete(songId);
+  const toggleSong = (song: SongRow): void => {
+    setChosenSongs((current) => {
+      const next = new Map(current);
+      if (next.has(song.id)) {
+        next.delete(song.id);
       } else {
-        next.add(songId);
+        next.set(song.id, song);
       }
       return next;
     });
@@ -1101,13 +1102,13 @@ export const PlaylistsPage = ({
           <button className="accent-button compact" type="button" onClick={() => {
             setName('');
             setQuery('');
-            setChosenIds(new Set());
+            setChosenSongs(new Map());
             setResults(null);
             setSearchFailed(false);
             setSearchRequest({ query: '', offset: 0, limit: SONG_PAGE_SIZE });
             setLoadingSongs(true);
             setCreating(true);
-          }} disabled={busy}>
+          }} disabled={busy || creating}>
             New playlist
           </button>
         </div>
@@ -1120,12 +1121,19 @@ export const PlaylistsPage = ({
               <div className="playlist-creator-heading">
                 <p className="mono-label">New root playlist</p>
                 <h2>Choose a name and tracks.</h2>
-                <p>The track order follows your selection order in the results below.</p>
+                <p>Pick tracks yourself or get suggestions from your library. Tracks keep the order you add them.</p>
               </div>
               <label className="playlist-name-field">
                 <span>Playlist name</span>
-                <input value={name} onChange={(event) => setName(event.currentTarget.value)} maxLength={100} autoFocus />
+                <input value={name} onChange={(event) => setName(event.currentTarget.value)} maxLength={100} disabled={busy} autoFocus />
               </label>
+              <PlaylistSuggestions
+                busy={busy}
+                chosenSongs={chosenSongs}
+                onAdd={(song) => setChosenSongs((current) => new Map(current).set(song.id, song))}
+                playback={playback}
+                revision={view.library.revision}
+              />
               <form className="playlist-search" onSubmit={search}>
                 <label htmlFor="playlist-track-search">Find tracks in the full collection</label>
                 <div>
@@ -1143,8 +1151,8 @@ export const PlaylistsPage = ({
                   <div className="inline-empty"><strong>No tracks found.</strong></div>
                 ) : results?.items.map((song) => (
                   <label className="playlist-track-option" key={song.id}>
-                    <input type="checkbox" checked={chosenIds.has(song.id)} onChange={() => toggleSong(song.id)} />
-                    <span className="custom-check" aria-hidden>{chosenIds.has(song.id) ? '✓' : ''}</span>
+                    <input type="checkbox" checked={chosenSongs.has(song.id)} onChange={() => toggleSong(song)} disabled={busy} />
+                    <span className="custom-check" aria-hidden>{chosenSongs.has(song.id) ? '✓' : ''}</span>
                     <TrackArtwork song={song} />
                     <span className="track-identity"><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>
                     <span className="numeric">{formatBpm(song.bpm)}</span>
@@ -1169,13 +1177,26 @@ export const PlaylistsPage = ({
                   </div>
                 </nav>
               )}
+              {chosenSongs.size > 0 && (
+                <section className="playlist-draft" aria-labelledby="playlist-draft-title">
+                  <h3 id="playlist-draft-title">In your playlist <span>{chosenSongs.size}</span></h3>
+                  <ol>
+                    {[...chosenSongs.values()].map((song) => (
+                      <li key={song.id}>
+                        <span className="track-identity"><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>
+                        <button className="quiet-button" type="button" onClick={() => toggleSong(song)} disabled={busy} aria-label={`Remove ${song.title} from playlist`}>Remove</button>
+                      </li>
+                    ))}
+                  </ol>
+                </section>
+              )}
               <div className="playlist-create-actions">
-                <span>{chosenIds.size} tracks selected</span>
+                <span aria-live="polite">{chosenSongs.size} tracks selected</span>
                 <button className="quiet-button" type="button" onClick={() => setCreating(false)} disabled={busy}>Cancel</button>
                 <button
                   className="accent-button compact"
                   type="button"
-                  onClick={() => void onCreate(name, [...chosenIds])}
+                  onClick={() => void onCreate(name, [...chosenSongs.keys()])}
                   disabled={busy || name.trim().length === 0}
                 >
                   {busy ? 'Writing XML' : 'Create playlist'}
