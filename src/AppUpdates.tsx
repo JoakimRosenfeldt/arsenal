@@ -24,7 +24,7 @@ const messageFor = (status: UpdateStatus): string => {
   }
 };
 
-export const AppUpdates = ({ busy }: Readonly<{ busy: boolean }>): JSX.Element => {
+export const AppUpdates = (): JSX.Element => {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [requestFailed, setRequestFailed] = useState(false);
 
@@ -78,7 +78,7 @@ export const AppUpdates = ({ busy }: Readonly<{ busy: boolean }>): JSX.Element =
             ? 'Retry update check'
             : 'Check for updates';
   const message = requestFailed
-    ? 'Could not update Arsenal. Try again.'
+    ? status?.kind === 'downloaded' ? 'Could not restart Arsenal. Wait for library actions to finish, then try again.' : 'Could not update Arsenal. Try again.'
     : status === null ? 'App updates' : messageFor(status);
 
   return (
@@ -87,8 +87,8 @@ export const AppUpdates = ({ busy }: Readonly<{ busy: boolean }>): JSX.Element =
       <button
         type="button"
         onClick={() => void performAction()}
-        disabled={status?.kind === 'disabled' || status?.kind === 'checking' || status?.kind === 'downloading' || (busy && status?.kind === 'downloaded')}
-        title={busy && status?.kind === 'downloaded' ? 'Wait for the current library action to finish.' : message}
+        disabled={status?.kind === 'disabled' || status?.kind === 'checking' || status?.kind === 'downloading'}
+        title={message}
       >
         {label}
       </button>

@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App';
+import { Preferences } from './Preferences';
 import '@fontsource-variable/archivo/wght.css';
 import '@fontsource/ibm-plex-mono/latin-400.css';
 import '@fontsource/ibm-plex-mono/latin-500.css';
@@ -16,6 +17,6 @@ if (rootElement === null) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <App />
+    {new URL(window.location.href).searchParams.get('window') === 'preferences' ? <Preferences /> : <App />}
   </StrictMode>,
 );

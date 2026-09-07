@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 
-import { AppUpdates } from './AppUpdates';
+import { PreferencesButton } from './Preferences';
 import type { RekordboxPlaylist } from './shared/dj-library';
 
 export type PageId =
@@ -262,7 +262,7 @@ export const CueboxSidebar = ({
           </div>
         </div>
       </nav>
-      <AppUpdates busy={busy} />
+      <PreferencesButton className="sidebar-preferences" />
     </aside>
   );
 };

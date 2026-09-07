@@ -3,6 +3,8 @@ import type { AiProvider } from './ai-models';
 
 export const MAX_SEED_SONGS = 20;
 export const MAX_MOOD_LENGTH = 1_000;
+export const PLAYLIST_DEBUG_CHANNEL = 'playlist-suggestions:debug';
+export const PLAYLIST_DEBUG_PREFIX = '[playlist-ai]';
 
 export type PlaylistSuggestionRequest = Readonly<{
   revision: string;
@@ -22,6 +24,9 @@ export type PlaylistSuggestionFailure =
   | 'timed-out'
   | 'cancelled'
   | 'invalid-response'
+  | 'incomplete-response'
+  | 'empty-response'
+  | 'refused'
   | 'stale-library'
   | 'invalid-request'
   | 'unauthorized'

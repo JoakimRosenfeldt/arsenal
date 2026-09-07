@@ -2,24 +2,28 @@ import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
 import { TrackArtwork, type PlaybackController } from './CueboxPlayer';
 import type { SongRow } from './shared/dj-library';
-import { AiModelPicker } from './AiModelPicker';
+import { PreferencesButton } from './Preferences';
 import { AI_PROVIDER_LABELS, type AiSettings } from './shared/ai-models';
 import {
   MAX_MOOD_LENGTH,
   MAX_SEED_SONGS,
+  PLAYLIST_DEBUG_PREFIX,
   type PlaylistSuggestionFailure,
   type PlaylistSuggestionResult,
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
   unavailable: 'The model service is not reachable. Check your connection, or start Ollama for local models.',
-  'model-missing': 'Model not found. Choose an available model or download it in model settings.',
+  'model-missing': 'Model not found. Choose an available model or download it in Preferences.',
   'timed-out': 'The model took too long. Try again with fewer starting tracks or another model.',
   cancelled: 'Suggestions cancelled.',
-  'invalid-response': 'The model returned an unreadable suggestion list. Try again.',
+  'invalid-response': 'The model did not return the required song-list format. Try again or choose another model in Preferences.',
+  'incomplete-response': 'The model reached its output limit before finishing the list. Try fewer starting tracks or choose another model in Preferences.',
+  'empty-response': 'The model returned no final answer. Try again or choose another model in Preferences.',
+  refused: 'The model declined this request. Try a different mood description or another model.',
   'stale-library': 'The library changed. Reopen the playlist creator to use the current tracks.',
   'invalid-request': 'Describe a mood or select some tracks before requesting suggestions.',
-  unauthorized: 'Add a valid API key in model settings and check that it has access to the selected model.',
+  unauthorized: 'Add a valid API key in Preferences and check that it has access to the selected model.',
   'rate-limited': 'The provider quota or rate limit was reached. Check your account or try again later.',
   'insufficient-credit': 'The provider account needs more credits.',
   'context-too-large': 'The song metadata exceeds this model\'s context. Use fewer starting tracks or a model with a larger context.',
@@ -41,12 +45,28 @@ export const PlaylistSuggestions = ({
 }>): JSX.Element => {
   const [mood, setMood] = useState('');
   const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
+  const [settingsFailed, setSettingsFailed] = useState(false);
+  const [activeModel, setActiveModel] = useState('');
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<Extract<PlaylistSuggestionResult, { kind: 'ready' }> | null>(null);
   const [failure, setFailure] = useState<PlaylistSuggestionFailure | null>(null);
   const sequence = useRef(0);
   const pending = useRef(false);
   const configured = aiSettings !== null && (aiSettings.provider === 'ollama' || aiSettings.hasApiKey[aiSettings.provider]);
+
+  useEffect(() => {
+    let active = true;
+    let receivedChange = false;
+    const unsubscribe = window.aiModels.onChange((settings) => {
+      receivedChange = true;
+      setAiSettings(settings);
+      setSettingsFailed(false);
+    });
+    void window.aiModels.settings().then((settings) => {
+      if (active && !receivedChange) setAiSettings(settings);
+    }).catch(() => { if (active && !receivedChange) setSettingsFailed(true); });
+    return () => { active = false; unsubscribe(); };
+  }, []);
 
   useEffect(() => () => {
     sequence.current += 1;
@@ -62,6 +82,7 @@ export const PlaylistSuggestions = ({
     }
     const requestSequence = ++sequence.current;
     pending.current = true;
+    setActiveModel(aiSettings === null ? '' : aiSettings.models[aiSettings.provider]);
     setGenerating(true);
     setFailure(null);
     try {
@@ -71,6 +92,9 @@ export const PlaylistSuggestions = ({
         seedSongIds: [...chosenSongs.keys()].slice(0, MAX_SEED_SONGS),
         excludedSongIds: [...chosenSongs.keys()],
       });
+      console.info(`${PLAYLIST_DEBUG_PREFIX} suggestion result`, response.kind === 'ready'
+        ? { kind: response.kind, provider: response.provider, model: response.model, suggestionCount: response.suggestions.length }
+        : response);
       if (requestSequence !== sequence.current) {
         return;
       }
@@ -79,7 +103,8 @@ export const PlaylistSuggestions = ({
       } else {
         setFailure(response.reason);
       }
-    } catch {
+    } catch (error: unknown) {
+      console.error(`${PLAYLIST_DEBUG_PREFIX} renderer request failed`, error);
       if (requestSequence === sequence.current) {
         setFailure('failed');
       }
@@ -105,13 +130,13 @@ export const PlaylistSuggestions = ({
         <h3 id="playlist-helper-title">Find the next tracks</h3>
         <span className="mono-label">Playlist helper</span>
       </div>
-      <p>Select tracks below, describe a mood, or do both. Suggestions use your library's metadata.</p>
-      <AiModelPicker disabled={busy || generating} onChange={setAiSettings} />
-      <details className="ai-context-details">
-        <summary>Song information sent to the model</summary>
-        <p>Every available metadata field is included for each starting track and candidate: title, artist, BPM, musical key, duration, genre, album, mix, remixer, composer, label, year, comments, rating, play count, date added, track and disc numbers, cue counts, source, and file quality.</p>
-        <p>Complete song records are fitted into the model's context. Missing values stay unknown. Audio, artwork, and local file paths are excluded.</p>
-      </details>
+      <p>Select tracks below, describe a mood, or do both.</p>
+      <div className="playlist-ai-summary">
+        <span>{aiSettings === null ? 'Loading AI preferences...' : `${AI_PROVIDER_LABELS[aiSettings.provider]} · ${aiSettings.models[aiSettings.provider]}`}</span>
+        <PreferencesButton />
+      </div>
+      {settingsFailed && <p role="alert">Could not load AI preferences. Reopen the playlist creator to try again.</p>}
+      {aiSettings !== null && !configured && <p role="status">Add your {AI_PROVIDER_LABELS[aiSettings.provider]} API key in Preferences to get suggestions.</p>}
       <form onSubmit={(event) => void generate(event)}>
         <label className="playlist-mood-field" htmlFor="playlist-mood">Describe the mood</label>
         <textarea
@@ -138,7 +163,7 @@ export const PlaylistSuggestions = ({
           )}
         </div>
       </form>
-      {generating && <p className="playlist-helper-status" role="status">Finding tracks with {aiSettings === null ? 'the selected model' : aiSettings.models[aiSettings.provider]}. This may take a few minutes.</p>}
+      {generating && <p className="playlist-helper-status" role="status">Finding tracks with {activeModel}. This may take a few minutes.</p>}
       {failure !== null && <p className="playlist-search-error" role={failure === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure]}</p>}
       {result !== null && (
         <div className="playlist-suggestions" aria-busy={generating}>

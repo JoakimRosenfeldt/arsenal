@@ -34,6 +34,7 @@ export type ModelDownload =
   | Readonly<{ kind: 'error'; model: string; message: string }>;
 
 export const AI_MODEL_CHANNELS = Object.freeze({
+  changed: 'ai-models:changed',
   settings: 'ai-models:settings', update: 'ai-models:update', list: 'ai-models:list',
   searchOllama: 'ai-models:search-ollama', variants: 'ai-models:variants',
   download: 'ai-models:download', downloadStatus: 'ai-models:download-status',
@@ -41,6 +42,7 @@ export const AI_MODEL_CHANNELS = Object.freeze({
 });
 
 export type AiModelsApi = Readonly<{
+  onChange(listener: (settings: AiSettings) => void): () => void;
   settings(): Promise<AiSettings>;
   update(change: AiSettingsChange): Promise<AiResult<AiSettings>>;
   list(provider: AiProvider): Promise<AiResult<readonly AiModel[]>>;

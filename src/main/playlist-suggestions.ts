@@ -7,7 +7,8 @@ import {
   type PlaylistSuggestionRequest,
   type PlaylistSuggestionResult,
 } from '../shared/playlist-suggestions';
-import { askModel, ModelError, type ModelConnection } from './ai-client';
+import { askModel, ModelError, MODEL_OUTPUT_TOKENS, type ModelConnection } from './ai-client';
+import { logPlaylistDebug } from './playlist-debug';
 
 const MAX_CANDIDATES = 80;
 const SUGGESTION_COUNT = 12;
@@ -96,6 +97,10 @@ const shortlistSongs = async (
     !Array.isArray(profile.terms) || !profile.terms.every((term: unknown) => typeof term === 'string') ||
     !(profile.bpm === null || (typeof profile.bpm === 'number' && Number.isFinite(profile.bpm) && profile.bpm >= 40 && profile.bpm <= 240))
   ) {
+    logPlaylistDebug('validation failed', {
+      stage: 'mood interpretation', provider: connection.provider, model: connection.model,
+      expected: 'genres and terms must be string arrays; bpm must be null or a number between 40 and 240',
+    });
     throw new SuggestionError('invalid-response');
   }
 
@@ -144,6 +149,7 @@ export const suggestPlaylist = async (
 ): Promise<PlaylistSuggestionResult> => {
   const timeout = AbortSignal.timeout(180_000);
   const signal = AbortSignal.any([cancellation, timeout]);
+  logPlaylistDebug('playlist started', { provider: connection.provider, model: connection.model, mood: request.mood, seedCount: request.seedSongIds.length, librarySongCount: songs.length });
   try {
     const byId = new Map(songs.map((song) => [song.id, song]));
     const seeds: SongRow[] = [];
@@ -163,7 +169,7 @@ export const suggestPlaylist = async (
     const candidates: SongRow[] = [];
     for (const song of shortlist) {
       const size = Buffer.byteLength(JSON.stringify({ id: candidates.length, ...metadataFor(song) }), 'utf8') + 1;
-      if (bytes + size <= connection.contextTokens - 7_168) {
+      if (bytes + size <= connection.contextTokens - MODEL_OUTPUT_TOKENS[connection.provider] - 3_072) {
         candidates.push(song);
         bytes += size;
       }
@@ -198,16 +204,19 @@ export const suggestPlaylist = async (
       signal,
     );
     if (!isRecord(answer) || !Array.isArray(answer.suggestions)) {
+      logPlaylistDebug('validation failed', { stage: 'track selection', expected: 'an object containing a suggestions array' });
       throw new SuggestionError('invalid-response');
     }
     const suggestions: PlaylistSuggestion[] = [];
     const seen = new Set<string>();
     for (const item of answer.suggestions) {
       if (!isRecord(item) || typeof item.id !== 'number' || !Number.isSafeInteger(item.id) || typeof item.reason !== 'string') {
+        logPlaylistDebug('validation failed', { stage: 'track selection', expected: 'each suggestion must have an integer id and a string reason' });
         throw new SuggestionError('invalid-response');
       }
       const song = candidates[item.id];
       if (song === undefined) {
+        logPlaylistDebug('validation failed', { stage: 'track selection', candidateId: item.id, candidateCount: candidates.length, expected: 'an id from the supplied candidates' });
         throw new SuggestionError('invalid-response');
       }
       if (!seen.has(song.id) && suggestions.length < SUGGESTION_COUNT) {
@@ -215,8 +224,13 @@ export const suggestPlaylist = async (
         suggestions.push({ song, reason: item.reason.trim().slice(0, 160) });
       }
     }
+    logPlaylistDebug('playlist complete', { provider: connection.provider, model: connection.model, suggestionCount: suggestions.length, candidateCount: candidates.length });
     return { kind: 'ready', suggestions, candidateCount: candidates.length, librarySongCount: songs.length, provider: connection.provider, model: connection.model };
   } catch (error: unknown) {
+    logPlaylistDebug('playlist failed', {
+      provider: connection.provider, model: connection.model,
+      reason: cancellation.aborted ? 'cancelled' : timeout.aborted ? 'timed-out' : error instanceof SuggestionError || error instanceof ModelError ? error.reason : 'failed',
+    });
     return {
       kind: 'rejected',
       reason: cancellation.aborted ? 'cancelled'

@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
+  Menu,
   type IpcMainInvokeEvent,
   net,
   protocol,
@@ -19,6 +20,7 @@ import { AiModels } from './main/ai-models';
 import { ModelError } from './main/ai-client';
 import { AI_MODEL_CHANNELS, type AiResult } from './shared/ai-models';
 import { APP_UPDATE_CHANNELS } from './shared/app-updates';
+import { PREFERENCES_CHANNELS } from './shared/preferences';
 import {
   TRACK_ARTWORK_SCHEME,
   TRACK_MEDIA_SCHEME,
@@ -44,6 +46,9 @@ const APP_ICON_PATH = app.isPackaged
   : join(app.getAppPath(), 'assets', 'icon.png');
 const library = new RekordboxLibrary();
 const aiModels = new AiModels();
+let mainWindow: BrowserWindow | null = null;
+let preferencesWindow: BrowserWindow | null = null;
+let libraryActions = 0;
 
 app.setName('Arsenal');
 
@@ -215,8 +220,13 @@ const assertTrustedSender = (
   }
 };
 
-const installIpc = (owner: BrowserWindow, updates: AppUpdates): void => {
+const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: boolean): void => {
   const ipc = owner.webContents.ipc;
+
+  ipc.handle(PREFERENCES_CHANNELS.open, (event) => {
+    assertTrustedSender(event, owner);
+    openPreferences(updates);
+  });
 
   const modelAction = async <T,>(action: () => T | Promise<T>): Promise<AiResult<T>> => {
     try {
@@ -231,7 +241,13 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates): void => {
   });
   ipc.handle(AI_MODEL_CHANNELS.update, (event, change: unknown) => {
     assertTrustedSender(event, owner);
-    return modelAction(() => aiModels.update(change));
+    return modelAction(async () => {
+      const settings = await aiModels.update(change);
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send(AI_MODEL_CHANNELS.changed, settings);
+      }
+      return settings;
+    });
   });
   ipc.handle(AI_MODEL_CHANNELS.list, (event, provider: unknown) => {
     assertTrustedSender(event, owner);
@@ -272,8 +288,13 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates): void => {
   });
   ipc.handle(APP_UPDATE_CHANNELS.install, (event) => {
     assertTrustedSender(event, owner);
+    if (libraryActions > 0) {
+      throw new Error('Wait for library actions to finish before restarting.');
+    }
     updates.install();
   });
+
+  if (preferences) return;
 
   ipc.handle(DJ_LIBRARY_CHANNELS.status, (event) => {
     assertTrustedSender(event, owner);
@@ -282,7 +303,12 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates): void => {
 
   ipc.handle(DJ_LIBRARY_CHANNELS.importExport, async (event) => {
     assertTrustedSender(event, owner);
-    return library.importExport(owner);
+    libraryActions += 1;
+    try {
+      return await library.importExport(owner);
+    } finally {
+      libraryActions -= 1;
+    }
   });
 
   ipc.handle(
@@ -315,9 +341,14 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates): void => {
     },
   );
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.mutate, (event, change: unknown) => {
+  ipc.handle(DJ_LIBRARY_CHANNELS.mutate, async (event, change: unknown) => {
     assertTrustedSender(event, owner);
-    return library.mutate(readLibraryMutation(change));
+    libraryActions += 1;
+    try {
+      return await library.mutate(readLibraryMutation(change));
+    } finally {
+      libraryActions -= 1;
+    }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.suggestPlaylist, (event, value: unknown) => {
@@ -475,15 +506,20 @@ const configureProtocols = (appSession: Session): void => {
   });
 };
 
-const createWindow = (updates: AppUpdates): void => {
-  const rendererUrl = app.isPackaged
+const createWindow = (updates: AppUpdates, preferences = false): BrowserWindow => {
+  const entry = app.isPackaged
     ? PACKAGED_RENDERER_URL
     : MAIN_WINDOW_WEBPACK_ENTRY;
-  const mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
-    minWidth: 760,
+  const renderer = new URL(entry);
+  if (preferences) renderer.searchParams.set('window', 'preferences');
+  const rendererUrl = renderer.href;
+  const window = new BrowserWindow({
+    title: preferences ? 'Arsenal Preferences' : 'Arsenal',
+    width: preferences ? 760 : 1280,
+    height: preferences ? 740 : 800,
+    minWidth: preferences ? 560 : 760,
     minHeight: 560,
+    autoHideMenuBar: preferences,
     show: false,
     icon: APP_ICON_PATH,
     backgroundColor: '#0b0b0d',
@@ -504,34 +540,50 @@ const createWindow = (updates: AppUpdates): void => {
     },
   });
 
-  installIpc(mainWindow, updates);
-  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  mainWindow.webContents.on('will-attach-webview', (event) => {
+  installIpc(window, updates, preferences);
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.on('page-title-updated', (event) => event.preventDefault());
+  window.webContents.on('will-attach-webview', (event) => {
     event.preventDefault();
   });
-  mainWindow.webContents.on('will-frame-navigate', (details) => {
+  window.webContents.on('will-frame-navigate', (details) => {
     if (
       details.url !== rendererUrl ||
-      details.frame !== mainWindow.webContents.mainFrame
+      details.frame !== window.webContents.mainFrame
     ) {
       details.preventDefault();
     }
   });
-  mainWindow.webContents.on('will-navigate', (event, url) => {
+  window.webContents.on('will-navigate', (event, url) => {
     if (url !== rendererUrl) {
       event.preventDefault();
     }
   });
-  mainWindow.webContents.on('will-redirect', (event, url) => {
+  window.webContents.on('will-redirect', (event, url) => {
     if (url !== rendererUrl) {
       event.preventDefault();
     }
   });
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
+  window.once('ready-to-show', () => {
+    window.show();
   });
 
-  void mainWindow.loadURL(rendererUrl);
+  window.on('closed', () => {
+    if (preferences) preferencesWindow = null;
+    else mainWindow = null;
+  });
+  void window.loadURL(rendererUrl);
+  return window;
+};
+
+const openPreferences = (updates: AppUpdates): void => {
+  if (preferencesWindow === null) {
+    preferencesWindow = createWindow(updates, true);
+  } else {
+    if (preferencesWindow.isMinimized()) preferencesWindow.restore();
+    preferencesWindow.show();
+    preferencesWindow.focus();
+  }
 };
 
 void app.whenReady().then(async () => {
@@ -544,11 +596,32 @@ void app.whenReady().then(async () => {
   configureSession(appSession);
   configureProtocols(appSession);
   const updates = new AppUpdates();
-  createWindow(updates);
+  mainWindow = createWindow(updates);
+  const preferencesItem = {
+    label: 'Preferences...',
+    accelerator: 'CmdOrCtrl+,',
+    click: () => openPreferences(updates),
+  };
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === 'darwin' ? [{
+      label: 'Arsenal', submenu: [
+        { role: 'about' as const }, { type: 'separator' as const }, preferencesItem,
+        { type: 'separator' as const }, { role: 'services' as const },
+        { type: 'separator' as const }, { role: 'hide' as const }, { role: 'hideOthers' as const }, { role: 'unhide' as const },
+        { type: 'separator' as const }, { role: 'quit' as const },
+      ],
+    }] : []),
+    { label: 'File', submenu: [
+      ...(process.platform === 'darwin' ? [] : [preferencesItem, { type: 'separator' as const }]),
+      { role: 'close' },
+      ...(process.platform === 'darwin' ? [] : [{ role: 'quit' as const }]),
+    ] },
+    { role: 'editMenu' }, { role: 'viewMenu' }, { role: 'windowMenu' },
+  ]));
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow(updates);
+    if (mainWindow === null) {
+      mainWindow = createWindow(updates);
     }
   });
 });

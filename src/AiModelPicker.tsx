@@ -9,10 +9,7 @@ type ModelList =
   | { kind: 'ready'; provider: AiProvider; items: readonly AiModel[] }
   | { kind: 'error'; provider: AiProvider; message: string };
 
-export const AiModelPicker = ({ disabled, onChange }: Readonly<{
-  disabled: boolean;
-  onChange: (settings: AiSettings | null) => void;
-}>): JSX.Element => {
+export const AiModelPicker = (): JSX.Element => {
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,12 +32,11 @@ export const AiModelPicker = ({ disabled, onChange }: Readonly<{
       if (active) {
         setSettings(value);
         setModelName(value.models[value.provider]);
-        onChange(value);
       }
-    }).catch(() => { if (active) setError('Could not load AI settings. Reopen the playlist creator to try again.'); });
+    }).catch(() => { if (active) setError('Could not load AI settings. Reopen Preferences to try again.'); });
     void window.aiModels.downloadStatus().then((value) => { if (active) setDownload(value); }).catch(() => undefined);
     return () => { active = false; };
-  }, [onChange]);
+  }, []);
 
   useEffect(() => {
     if (provider === undefined) return;
@@ -71,18 +67,15 @@ export const AiModelPicker = ({ disabled, onChange }: Readonly<{
   }, [download.kind, downloadModel]);
 
   const update = async (change: AiSettingsChange): Promise<void> => {
-    if (saving || disabled || settings === null) return;
+    if (saving || settings === null) return;
     setSaving(true);
     setError(null);
-    onChange(null);
     try {
       const result = await window.aiModels.update(change);
       if (result.kind === 'error') {
         setError(result.message);
-        onChange(settings);
       } else {
         setSettings(result.value);
-        onChange(result.value);
         setModelName(result.value.models[result.value.provider]);
         if (change.kind === 'api-key') {
           setApiKey('');
@@ -97,7 +90,6 @@ export const AiModelPicker = ({ disabled, onChange }: Readonly<{
       }
     } catch {
       setError('Could not save the AI settings. Try again.');
-      onChange(settings);
     } finally {
       setSaving(false);
     }
@@ -146,7 +138,7 @@ export const AiModelPicker = ({ disabled, onChange }: Readonly<{
   const available = models.kind === 'ready' && models.provider === selectedProvider ? models.items : [];
   const filtered = available.filter((model) => `${model.name} ${model.id}`.toLocaleLowerCase().includes(filter.toLocaleLowerCase()));
   const loadingModels = models.kind === 'loading' || models.provider !== selectedProvider;
-  const locked = disabled || saving;
+  const locked = saving;
 
   return (
     <div className="ai-model-picker">
@@ -170,13 +162,10 @@ export const AiModelPicker = ({ disabled, onChange }: Readonly<{
         </div>
         <p className="ai-data-notice">
           {selectedProvider === 'ollama'
-            ? 'Suggestions run on this computer. Install Ollama from ollama.com and keep it running.'
-            : `Suggest tracks sends your mood and song metadata to ${AI_PROVIDER_LABELS[selectedProvider]}. Your provider's API charges apply.`}
-          {' '}Audio files and artwork are not sent.
+            ? 'Install Ollama from ollama.com and keep it running to use local models.'
+            : `Usage is billed to your ${AI_PROVIDER_LABELS[selectedProvider]} account.`}
         </p>
-        {selectedProvider !== 'ollama' && !hasApiKey && <p className="playlist-search-error">Add your {AI_PROVIDER_LABELS[selectedProvider]} API key in model settings to get suggestions.</p>}
-        <details className="ai-model-management">
-          <summary>Model settings{selectedProvider === 'ollama' ? ' and downloads' : ' and API key'}</summary>
+        <div className="ai-model-management">
           {selectedProvider !== 'ollama' && (
             <form className="ai-key-form" onSubmit={(event) => {
               event.preventDefault();
@@ -224,7 +213,7 @@ export const AiModelPicker = ({ disabled, onChange }: Readonly<{
                   <ul className="ai-model-results" aria-label="Downloadable model sizes">
                     {variants.map((item) => <li key={item.id}>
                       <div><strong>{item.name}</strong><small>{item.detail}</small></div>
-                      <button className="quiet-button" type="button" disabled={download.kind === 'downloading'} onClick={() => void startDownload(item.id)}>Download</button>
+                      <button className="quiet-button" type="button" aria-label={`Download ${item.name}`} disabled={download.kind === 'downloading'} onClick={() => void startDownload(item.id)}>Download</button>
                     </li>)}
                   </ul>
                 </>
@@ -233,13 +222,13 @@ export const AiModelPicker = ({ disabled, onChange }: Readonly<{
                   <ul className="ai-model-results" aria-label="Ollama catalog models">
                     {catalog.map((item) => <li key={item.id}>
                       <div><strong>{item.name}</strong><small>{item.detail}</small></div>
-                      <button className="quiet-button" type="button" disabled={catalogBusy} onClick={() => void loadVariants(item.id)}>Choose size</button>
+                      <button className="quiet-button" type="button" aria-label={`Choose size for ${item.name}`} disabled={catalogBusy} onClick={() => void loadVariants(item.id)}>Choose size</button>
                     </li>)}
                   </ul>
               )}
             </div>
           )}
-        </details>
+        </div>
       </fieldset>
       {download.kind !== 'idle' && (
         <div className="ai-download" aria-live="polite">

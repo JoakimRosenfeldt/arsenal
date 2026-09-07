@@ -1,7 +1,14 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 import { APP_UPDATE_CHANNELS, type AppUpdatesApi, type UpdateStatus } from './shared/app-updates';
-import { AI_MODEL_CHANNELS, type AiModelsApi } from './shared/ai-models';
+import { AI_MODEL_CHANNELS, type AiModelsApi, type AiSettings } from './shared/ai-models';
+import { PREFERENCES_CHANNELS, type PreferencesApi } from './shared/preferences';
+import { PLAYLIST_DEBUG_CHANNEL, PLAYLIST_DEBUG_PREFIX } from './shared/playlist-suggestions';
+
+ipcRenderer.on(PLAYLIST_DEBUG_CHANNEL, (_event: IpcRendererEvent, message: string, details: Record<string, unknown>) => {
+  console.info(message, details);
+});
+console.info(`${PLAYLIST_DEBUG_PREFIX} Response debugging enabled`);
 
 import {
   DJ_LIBRARY_CHANNELS,
@@ -31,6 +38,11 @@ const api: DjLibraryApi = Object.freeze({
 contextBridge.exposeInMainWorld('djLibrary', api);
 
 const aiModels: AiModelsApi = Object.freeze({
+  onChange: (listener) => {
+    const handleChange = (_event: IpcRendererEvent, settings: AiSettings): void => listener(settings);
+    ipcRenderer.on(AI_MODEL_CHANNELS.changed, handleChange);
+    return () => { ipcRenderer.removeListener(AI_MODEL_CHANNELS.changed, handleChange); };
+  },
   settings: () => ipcRenderer.invoke(AI_MODEL_CHANNELS.settings),
   update: (change) => ipcRenderer.invoke(AI_MODEL_CHANNELS.update, change),
   list: (provider) => ipcRenderer.invoke(AI_MODEL_CHANNELS.list, provider),
@@ -41,6 +53,11 @@ const aiModels: AiModelsApi = Object.freeze({
   cancelDownload: () => ipcRenderer.invoke(AI_MODEL_CHANNELS.cancelDownload),
 });
 contextBridge.exposeInMainWorld('aiModels', aiModels);
+
+const preferences: PreferencesApi = Object.freeze({
+  open: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.open),
+});
+contextBridge.exposeInMainWorld('preferences', preferences);
 
 const updates: AppUpdatesApi = Object.freeze({
   status: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.status),
