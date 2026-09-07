@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { SaxesParser } from 'saxes';
 
-import type { SongRow } from '../shared/dj-library';
+import type { SongRow, SongSource } from '../shared/dj-library';
 import type { SmartPlaylistRules } from './smart-playlists';
 
 export type ParsedTrack = Readonly<{
@@ -84,6 +84,57 @@ const parseMediaPath = (value: string | undefined): string | null => {
   }
 };
 
+const parseSongSource = (value: string | undefined): SongSource => {
+  const location = cleanText(value);
+  if (location === null) {
+    return 'unknown';
+  }
+
+  let serviceLocation = location.replace(/^file:\/\/localhost\/?/i, '');
+  try {
+    serviceLocation = decodeURIComponent(serviceLocation);
+  } catch {
+    return 'unknown';
+  }
+
+  const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(serviceLocation)?.[1]?.toLowerCase();
+  switch (scheme) {
+    case 'tidal':
+    case 'beatport':
+    case 'beatsource':
+    case 'soundcloud':
+    case 'spotify':
+      return scheme;
+    case 'applemusic':
+    case 'apple-music':
+      return 'apple-music';
+  }
+
+  try {
+    const url = new URL(serviceLocation);
+    if (url.protocol === 'https:' || url.protocol === 'http:') {
+      const services = [
+        ['tidal.com', 'tidal'],
+        ['beatport.com', 'beatport'],
+        ['beatsource.com', 'beatsource'],
+        ['soundcloud.com', 'soundcloud'],
+        ['spotify.com', 'spotify'],
+        ['music.apple.com', 'apple-music'],
+      ] satisfies [string, SongSource][];
+      for (const [host, source] of services) {
+        if (url.hostname === host || url.hostname.endsWith(`.${host}`)) {
+          return source;
+        }
+      }
+      return 'streaming';
+    }
+  } catch {
+    // Local file locations need not contain a service URI.
+  }
+
+  return parseMediaPath(location) !== null ? 'local' : 'unknown';
+};
+
 const makeSong = ({
   attributes,
   rowNumber,
@@ -91,6 +142,7 @@ const makeSong = ({
   attributes: Readonly<Record<string, string>>;
   rowNumber: number;
 }>): ParsedTrack => {
+  const source = parseSongSource(attributes.Location);
   return {
     song: {
       id: String(rowNumber),
@@ -130,8 +182,11 @@ const makeSong = ({
       comments: cleanText(attributes.Comments),
       artworkUrl: null,
       audioUrl: null,
+      source,
+      cuePointCount: 0,
+      hotCueCount: 0,
     },
-    mediaPath: parseMediaPath(attributes.Location),
+    mediaPath: source === 'local' ? parseMediaPath(attributes.Location) : null,
     rekordboxId: cleanText(attributes.TrackID),
     rawLocation: cleanText(attributes.Location),
   };
@@ -259,6 +314,37 @@ export const parseRekordboxXml = async (
           rowNumber: tracks.length + 1,
         }),
       );
+    }
+
+    const isPositionMark =
+      tag.name === 'POSITION_MARK' &&
+      elementStack.length === 3 &&
+      elementStack[0] === 'DJ_PLAYLISTS' &&
+      elementStack[1] === 'COLLECTION' &&
+      elementStack[2] === 'TRACK';
+
+    if (isPositionMark) {
+      const track = tracks.at(-1);
+      const type = cleanText(tag.attributes.Type);
+      const num = cleanText(tag.attributes.Num);
+      const slot = num !== null && /^-?\d+$/.test(num) ? Number(num) : NaN;
+      const start = parseNumber({ value: tag.attributes.Start, allowZero: true });
+      const end = parseNumber({ value: tag.attributes.End, allowZero: true });
+      if (
+        track &&
+        (type === '0' || (type === '4' && end !== null && start !== null && end > start)) &&
+        Number.isInteger(slot) && slot >= -1 && slot <= 2147483647 &&
+        start !== null
+      ) {
+        tracks[tracks.length - 1] = {
+          ...track,
+          song: {
+            ...track.song,
+            cuePointCount: track.song.cuePointCount + 1,
+            hotCueCount: track.song.hotCueCount + (slot >= 0 ? 1 : 0),
+          },
+        };
+      }
     }
 
     const isPlaylistNode =

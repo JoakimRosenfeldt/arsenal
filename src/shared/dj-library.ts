@@ -11,6 +11,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
 export const SONG_PAGE_SIZE = 100;
 
 export const DUPLICATE_MATCH_MODES = [
+  'smart',
   'exact',
   'versions',
   'dj-edits',
@@ -24,6 +25,20 @@ export type DuplicateVariantKind =
   | 'alternate'
   | 'dj-edit'
   | 'remix';
+
+export const SONG_SOURCE_LABELS = Object.freeze({
+  local: 'Local file',
+  tidal: 'TIDAL',
+  beatport: 'Beatport',
+  beatsource: 'Beatsource',
+  soundcloud: 'SoundCloud',
+  spotify: 'Spotify',
+  'apple-music': 'Apple Music',
+  streaming: 'Streaming',
+  unknown: 'Unknown source',
+});
+
+export type SongSource = keyof typeof SONG_SOURCE_LABELS;
 
 export type SongRow = Readonly<{
   id: string;
@@ -51,6 +66,9 @@ export type SongRow = Readonly<{
   comments: string | null;
   artworkUrl: string | null;
   audioUrl: string | null;
+  source: SongSource;
+  cuePointCount: number;
+  hotCueCount: number;
 }>;
 
 export type DuplicateCandidate = Readonly<{
@@ -65,6 +83,7 @@ export type DuplicateGroup = Readonly<{
   artist: string;
   matchReason: string;
   candidates: readonly DuplicateCandidate[];
+  recommendedKeepSongId: string | null;
 }>;
 
 export type DuplicateScan = Readonly<{

@@ -211,13 +211,38 @@ const compareGroups = (left: DuplicateGroup, right: DuplicateGroup): number =>
   collator.compare(left.artist, right.artist) ||
   collator.compare(left.title, right.title);
 
-const exactGroupsFor = (songs: readonly SongRow[]): readonly DuplicateGroup[] => {
+const exactGroupsFor = (
+  songs: readonly SongRow[],
+  mode: 'exact' | 'smart',
+): readonly DuplicateGroup[] => {
   const byIdentity = new Map<string, SongRow[]>();
 
   for (const song of songs) {
+    const artist = normalizeExact(song.artist);
+    const title = normalizeExact(song.title);
+    if (
+      mode === 'smart' &&
+      (!artist ||
+        !title ||
+        title === 'untitled track' ||
+        song.durationSeconds === null ||
+        !Number.isFinite(song.durationSeconds) ||
+        song.durationSeconds <= 0 ||
+        song.source === 'unknown')
+    ) {
+      continue;
+    }
+
     const key = JSON.stringify([
-      normalizeExact(song.artist),
-      normalizeExact(song.title),
+      artist,
+      title,
+      ...(mode === 'smart'
+        ? [
+            song.durationSeconds,
+            normalizeExact(song.mixName),
+            normalizeExact(song.remixer),
+          ]
+        : []),
     ]);
     const existing = byIdentity.get(key);
     if (existing === undefined) {
@@ -236,11 +261,32 @@ const exactGroupsFor = (songs: readonly SongRow[]): readonly DuplicateGroup[] =>
         throw new Error('Duplicate group unexpectedly has no candidates');
       }
 
+      let recommended = first.song;
+      if (mode === 'smart') {
+        for (const { song } of candidates) {
+          const localPriority =
+            Number(song.source === 'local') -
+            Number(recommended.source === 'local');
+          if (
+            localPriority > 0 ||
+            (localPriority === 0 &&
+              song.hotCueCount > 0 &&
+              recommended.hotCueCount === 0)
+          ) {
+            recommended = song;
+          }
+        }
+      }
+
       return {
-        key: JSON.stringify(['exact', identity]),
+        key: JSON.stringify([mode, identity]),
         title: first.song.title,
         artist: first.song.artist ?? 'Unknown artist',
-        matchReason: 'Same title and artist metadata',
+        matchReason:
+          mode === 'smart'
+            ? 'Same full title, artist, duration, mix and remixer metadata'
+            : 'Same title and artist metadata',
+        recommendedKeepSongId: mode === 'smart' ? recommended.id : null,
         candidates,
       };
     })
@@ -248,7 +294,7 @@ const exactGroupsFor = (songs: readonly SongRow[]): readonly DuplicateGroup[] =>
 };
 
 const familyReason: Readonly<
-  Record<Exclude<DuplicateMatchMode, 'exact'>, string>
+  Record<Exclude<DuplicateMatchMode, 'exact' | 'smart'>, string>
 > = {
   versions: 'Same artist and base title with recognized version tags',
   'dj-edits': 'Same artist and base title with a DJ edit tag',
@@ -257,7 +303,7 @@ const familyReason: Readonly<
 
 const familyGroupsFor = (
   songs: readonly SongRow[],
-  mode: Exclude<DuplicateMatchMode, 'exact'>,
+  mode: Exclude<DuplicateMatchMode, 'exact' | 'smart'>,
 ): readonly DuplicateGroup[] => {
   const byFamily = new Map<string, ParsedTitle[]>();
 
@@ -319,6 +365,7 @@ const familyGroupsFor = (
       title: original?.candidate.song.title ?? firstIndexed.baseTitle,
       artist: firstCandidate.song.artist ?? 'Unknown artist',
       matchReason: familyReason[mode],
+      recommendedKeepSongId: null,
       candidates,
     });
   }
@@ -331,7 +378,9 @@ export const findDuplicateScan = (
   mode: DuplicateMatchMode,
 ): DuplicateScan => {
   const groups =
-    mode === 'exact' ? exactGroupsFor(songs) : familyGroupsFor(songs, mode);
+    mode === 'exact' || mode === 'smart'
+      ? exactGroupsFor(songs, mode)
+      : familyGroupsFor(songs, mode);
 
   return {
     mode,

@@ -35,6 +35,9 @@ declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 const APP_SESSION_PARTITION = 'arsenal';
 const APP_SCHEME = 'arsenal';
 const PACKAGED_RENDERER_URL = `${APP_SCHEME}://app/main_window/index.html`;
+const APP_ICON_PATH = app.isPackaged
+  ? join(process.resourcesPath, 'icon.png')
+  : join(app.getAppPath(), 'assets', 'icon.png');
 const library = new RekordboxLibrary();
 
 app.setName('Arsenal');
@@ -423,6 +426,7 @@ const createWindow = (updates: AppUpdates): void => {
     minWidth: 760,
     minHeight: 560,
     show: false,
+    icon: APP_ICON_PATH,
     backgroundColor: '#0b0b0d',
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -472,6 +476,7 @@ const createWindow = (updates: AppUpdates): void => {
 };
 
 void app.whenReady().then(async () => {
+  app.dock?.setIcon(APP_ICON_PATH);
   await library.initialize(
     join(app.getPath('userData'), 'last-library.json'),
   );

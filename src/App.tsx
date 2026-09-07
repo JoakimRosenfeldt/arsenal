@@ -110,7 +110,7 @@ export const App = (): JSX.Element => {
   const [searching, setSearching] = useState(false);
   const searchSequence = useRef(0);
   const [duplicateMode, setDuplicateMode] =
-    useState<DuplicateMatchMode>('versions');
+    useState<DuplicateMatchMode>('smart');
   const [duplicateState, setDuplicateState] = useState<DuplicateViewState>({
     kind: 'empty',
   });

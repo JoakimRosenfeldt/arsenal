@@ -1090,6 +1090,21 @@ input:disabled {
   white-space: nowrap;
 }
 
+.song-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  color: var(--text-soft);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.song-labels > span {
+  padding: 1px 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+}
+
 .track-identity strong {
   color: #eceae7;
   font-size: 12.5px;
@@ -1399,14 +1414,27 @@ input:disabled {
 }
 
 .duplicate-controls > p {
-  overflow: hidden;
   margin: 0;
   color: #71717b;
-  font: 500 9px/1 "IBM Plex Mono", monospace;
+  font: 500 9px/1.5 "IBM Plex Mono", monospace;
   letter-spacing: 0.05em;
-  text-overflow: ellipsis;
   text-transform: uppercase;
-  white-space: nowrap;
+}
+
+.duplicate-smart-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 10px;
+}
+
+.duplicate-smart-actions > span {
+  flex: 1 1 260px;
+  color: var(--text-soft);
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .duplicates-body {
@@ -1871,6 +1899,15 @@ input:disabled {
   color: #eceae7;
   font-size: 12.5px;
   font-weight: 600;
+}
+
+.duplicate-recommendation {
+  color: var(--text-soft);
+  font-size: 10px;
+}
+
+.duplicate-recommendation.is-keep {
+  color: var(--accent);
 }
 
 .duplicate-song-identity small,

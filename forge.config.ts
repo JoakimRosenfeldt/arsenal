@@ -10,6 +10,8 @@ import { rendererConfig } from './webpack.renderer.config';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    icon: './assets/icon',
+    extraResource: ['./assets/icon.png'],
     osxSign: {
       identity: '-',
       identityValidation: false,

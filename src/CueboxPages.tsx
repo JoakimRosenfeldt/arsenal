@@ -15,6 +15,7 @@ import {
 import {
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
+  SONG_SOURCE_LABELS,
   type DuplicateCandidate,
   type DuplicateGroup,
   type DuplicateMatchMode,
@@ -93,6 +94,20 @@ const formatImportedAt = (importedAt: string): string =>
 
 const formatRowNumber = (offset: number, index: number): string =>
   String(offset + index + 1).padStart(3, '0');
+
+const formatCues = (song: SongRow): string =>
+  song.cuePointCount === 0
+    ? 'No cues'
+    : `${song.cuePointCount} ${song.cuePointCount === 1 ? 'cue' : 'cues'} · ${song.hotCueCount} hot`;
+
+const SongLabels = ({ song }: Readonly<{ song: SongRow }>): JSX.Element => (
+  <span className="song-labels">
+    <span>{SONG_SOURCE_LABELS[song.source]}</span>
+    <span title={`${song.hotCueCount} hot cues · ${Math.max(0, song.cuePointCount - song.hotCueCount)} memory cues`}>
+      {formatCues(song)}
+    </span>
+  </span>
+);
 
 const metadataGapCount = (song: SongRow): number =>
   [
@@ -297,6 +312,7 @@ export const LibraryPage = ({
                     <span className="track-identity" role="cell">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}</small>
+                      <SongLabels song={song} />
                     </span>
                     <span className="numeric" role="cell">{formatBpm(song.bpm)}</span>
                     <span className="numeric is-muted" role="cell">{song.musicalKey ?? '—'}</span>
@@ -318,7 +334,7 @@ export const LibraryPage = ({
               <div>
                 <h2>{selectedSong.title}</h2>
                 <p>{selectedSong.artist ?? 'Unknown artist'}</p>
-                <small>LOCAL TRACK OVERVIEW</small>
+                <SongLabels song={selectedSong} />
               </div>
             </div>
             <div className="inspector-profile">
@@ -401,6 +417,12 @@ type DuplicateModeCopy = Readonly<{
 }>;
 
 const duplicateModeCopy: Readonly<Record<DuplicateMatchMode, DuplicateModeCopy>> = {
+  smart: {
+    label: 'Smart',
+    description: 'Matching title, artist, duration, mix, and remixer metadata. Keep local tracks first, then tracks with hot cues.',
+    emptyTitle: 'No smart matches found.',
+    emptyDescription: 'No tracks share the required metadata and a known duration. Audio files are not fingerprinted.',
+  },
   exact: {
     label: 'Exact',
     description: 'Same title and artist metadata',
@@ -442,6 +464,8 @@ type MetadataItem = Readonly<{
 }>;
 
 const importantMetadataFor = (song: SongRow): readonly MetadataItem[] => [
+  { label: 'Source', value: SONG_SOURCE_LABELS[song.source] },
+  { label: 'Cue points', value: formatCues(song) },
   { label: 'Album', value: song.album ?? 'Not set' },
   { label: 'Mix', value: song.mixName ?? 'Not set' },
   { label: 'BPM', value: formatBpm(song.bpm) },
@@ -531,7 +555,10 @@ const DuplicateSelectionActions = ({
           <p>References to these tracks will also be removed from playlists.</p>
           <ul aria-label="Tracks to remove">
             {songs.map((song) => (
-              <li key={song.id}>{song.title} · {song.artist ?? 'Unknown artist'}</li>
+              <li key={song.id}>
+                {song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}
+                <SongLabels song={song} />
+              </li>
             ))}
           </ul>
           <FileRemovalOption
@@ -543,7 +570,9 @@ const DuplicateSelectionActions = ({
         </div>
       )}
       <div className="duplicate-selection-toolbar">
-        <span role="status">{songs.length} selected</span>
+        <span role="status">
+          {songs.length} selected{songs.length > 10_000 ? ' · Select at most 10,000 tracks per removal' : ''}
+        </span>
         <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>
           Clear selection
         </button>
@@ -568,7 +597,7 @@ const DuplicateSelectionActions = ({
             </button>
           </>
         ) : (
-          <button className="danger-button" type="button" onClick={() => setConfirming(true)} disabled={busy}>
+          <button className="danger-button" type="button" onClick={() => setConfirming(true)} disabled={busy || songs.length > 10_000}>
             Remove selected
           </button>
         )}
@@ -583,6 +612,7 @@ const DuplicateSong = ({
   onRemove,
   onSelect,
   playback,
+  recommendation,
   selected,
 }: Readonly<{
   busy: boolean;
@@ -590,6 +620,7 @@ const DuplicateSong = ({
   onRemove: RemoveSongs;
   onSelect: (selected: boolean) => void;
   playback: PlaybackController;
+  recommendation: 'keep' | 'remove' | null;
   selected: boolean;
 }>): JSX.Element => {
   const [confirming, setConfirming] = useState(false);
@@ -625,6 +656,12 @@ const DuplicateSong = ({
           <span className="duplicate-song-identity">
             <strong>{song.title}</strong>
             <small>{song.artist ?? 'Unknown artist'} · {candidate.variantLabel}</small>
+            <SongLabels song={song} />
+            {recommendation !== null && (
+              <span className={`duplicate-recommendation is-${recommendation}`}>
+                {recommendation === 'keep' ? 'Suggested keeper' : 'Suggested duplicate'}
+              </span>
+            )}
           </span>
           <span className="duplicate-song-facts">
             <b>{formatBpm(song.bpm)}</b>
@@ -747,6 +784,13 @@ export const DuplicatesPage = ({
     state.libraryVersion === view.library.revision &&
     state.mode === mode;
   const groups = scan?.groups ?? [];
+  const suggestedIds = groups.flatMap((group) =>
+    group.recommendedKeepSongId === null
+      ? []
+      : group.candidates
+        .filter((candidate) => candidate.song.id !== group.recommendedKeepSongId)
+        .map((candidate) => candidate.song.id),
+  );
   const currentSelectionVersion = JSON.stringify([view.library.revision, mode]);
   if (selectionVersion !== currentSelectionVersion) {
     setSelectionVersion(currentSelectionVersion);
@@ -814,6 +858,23 @@ export const DuplicatesPage = ({
           </div>
           <p>{copy.description}</p>
         </div>
+        {mode === 'smart' && (
+          <div className="duplicate-smart-actions">
+            <button
+              className="quiet-button"
+              type="button"
+              disabled={busy || scanning || suggestedIds.length === 0}
+              onClick={() => setChosenIds(new Set(suggestedIds.slice(0, 10_000)))}
+            >
+              Select suggested duplicates
+            </button>
+            <span>
+              {suggestedIds.length} suggested across all groups.
+              {suggestedIds.length > 10_000 ? ' Selects the first 10,000. Remove those, then select the remaining suggestions.' : ' Review before removal.'}
+              {' '}Audio files are not fingerprinted.
+            </span>
+          </div>
+        )}
       </header>
 
       <div className="duplicates-body">
@@ -860,7 +921,7 @@ export const DuplicatesPage = ({
               <span className="loading-mark" aria-hidden />
               <p className="mono-label">Full library scan</p>
               <h2>Finding {copy.label.toLocaleLowerCase()}.</h2>
-              <p>This scan uses imported artist and title metadata. Audio files are not fingerprinted.</p>
+              <p>This scan uses imported track metadata. Audio files are not fingerprinted.</p>
             </div>
           ) : scanFailed ? (
             <div className="detail-empty" role="alert">
@@ -913,6 +974,9 @@ export const DuplicatesPage = ({
                       });
                     }}
                     playback={playback}
+                    recommendation={selectedGroup.recommendedKeepSongId === null
+                      ? null
+                      : selectedGroup.recommendedKeepSongId === candidate.song.id ? 'keep' : 'remove'}
                     selected={chosenIds.has(candidate.song.id)}
                     key={`${view.library.revision}-${candidate.song.id}`}
                   />

@@ -12,6 +12,7 @@ module.exports = {
     '!node_modules/**/*',
   ],
   asar: true,
+  extraResources: [{ from: 'assets/icon.png', to: 'icon.png' }],
   npmRebuild: false,
   electronFuses: {
     runAsNode: false,
@@ -30,6 +31,7 @@ module.exports = {
     channel: `latest-${process.arch}`,
   },
   mac: {
+    icon: 'assets/icon.icns',
     target: ['dmg', 'zip'],
     category: 'public.app-category.music',
     identity: signedMac ? undefined : '-',
@@ -37,7 +39,11 @@ module.exports = {
     notarize: signedMac,
     forceCodeSigning: process.env.ARSENAL_RELEASE === 'true',
   },
-  win: { target: ['nsis'] },
+  win: { target: ['nsis'], icon: 'assets/icon.ico' },
   nsis: { oneClick: true, perMachine: false },
-  linux: { target: ['AppImage'], category: 'AudioVideo' },
+  linux: {
+    target: ['AppImage'],
+    category: 'AudioVideo',
+    icon: 'assets/icon.png',
+  },
 };
