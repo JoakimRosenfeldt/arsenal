@@ -7,6 +7,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   findDuplicates: 'dj-library:find-duplicates',
   listPlaylists: 'dj-library:list-playlists',
   searchSongs: 'dj-library:search-songs',
+  trackMenu: 'dj-library:track-menu',
   suggestPlaylist: 'dj-library:suggest-playlist',
   cancelSuggestions: 'dj-library:cancel-suggestions',
   mutate: 'dj-library:mutate',
@@ -43,6 +44,32 @@ export const SONG_SOURCE_LABELS = Object.freeze({
 });
 
 export type SongSource = keyof typeof SONG_SOURCE_LABELS;
+
+export const SONG_METADATA_FILTERS = Object.freeze({
+  all: 'All metadata',
+  incomplete: 'Missing metadata',
+  complete: 'Complete metadata',
+  'no-cues': 'No cue points',
+});
+
+export type SongFilters = Readonly<{
+  source: SongSource | 'all';
+  metadata: keyof typeof SONG_METADATA_FILTERS;
+}>;
+
+export const DEFAULT_SONG_FILTERS: SongFilters = Object.freeze({ source: 'all', metadata: 'all' });
+
+export const songMetadataGapCount = (song: SongRow): number =>
+  [song.artist, song.album, song.genre, song.bpm, song.musicalKey, song.durationSeconds]
+    .filter((value) => value === null || value === '').length;
+
+export type TrackMenuRequest = Readonly<{
+  count: number;
+  playable: boolean;
+  playing: boolean;
+}>;
+
+export type TrackMenuAction = 'play' | 'inspect' | 'create-playlist' | 'remove-songs' | 'clear-selection';
 
 export type SongRow = Readonly<{
   id: string;
@@ -150,6 +177,7 @@ export type SongPage = Readonly<{
 
 export type SongSearchRequest = PageRequest & Readonly<{
   query: string;
+  filters?: SongFilters;
 }>;
 
 export type LibraryMutation =
@@ -217,6 +245,7 @@ export type DjLibraryApi = Readonly<{
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;
   searchSongs(request: SongSearchRequest): Promise<SongPage>;
+  trackMenu(request: TrackMenuRequest): Promise<TrackMenuAction | null>;
   suggestPlaylist(request: PlaylistSuggestionRequest): Promise<PlaylistSuggestionResult>;
   cancelSuggestions(): Promise<void>;
   mutate(change: LibraryMutation): Promise<LibraryMutationResult>;

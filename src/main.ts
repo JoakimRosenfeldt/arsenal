@@ -11,6 +11,7 @@ import {
   protocol,
   type Session,
   session,
+  shell,
 } from 'electron';
 
 import { RekordboxLibrary } from './main/rekordbox-library';
@@ -29,10 +30,13 @@ import {
   DJ_LIBRARY_CHANNELS,
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
+  SONG_SOURCE_LABELS,
+  SONG_METADATA_FILTERS,
   type DuplicateMatchMode,
   type LibraryMutation,
   type PageRequest,
   type SongSearchRequest,
+  type TrackMenuAction,
 } from './shared/dj-library';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
@@ -143,7 +147,16 @@ const readSongSearchRequest = (value: unknown): SongSearchRequest => {
   ) {
     throw new Error('Invalid song search');
   }
-  return { ...readPageRequest(value), query: value.query };
+  const request = { ...readPageRequest(value), query: value.query };
+  if (value.filters === undefined) return request;
+  if (!isRecord(value.filters)) throw new Error('Invalid song filters');
+  const { source: sourceValue, metadata: metadataValue } = value.filters;
+  const source = sourceValue === 'all' ? 'all' : Object.keys(SONG_SOURCE_LABELS)
+    .find((key): key is keyof typeof SONG_SOURCE_LABELS => key === sourceValue);
+  const metadata = Object.keys(SONG_METADATA_FILTERS)
+    .find((key): key is keyof typeof SONG_METADATA_FILTERS => key === metadataValue);
+  if (source === undefined || metadata === undefined) throw new Error('Invalid song filters');
+  return { ...request, filters: { source, metadata } };
 };
 
 const readLibraryMutation = (value: unknown): LibraryMutation => {
@@ -340,6 +353,32 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: bool
       return library.searchSongs(search);
     },
   );
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.trackMenu, (event, request: unknown) => {
+    assertTrustedSender(event, owner);
+    if (!isRecord(request) || typeof request.count !== 'number' ||
+      !Number.isSafeInteger(request.count) || request.count < 1 ||
+      typeof request.playable !== 'boolean' || typeof request.playing !== 'boolean') {
+      throw new Error('Invalid track menu request');
+    }
+    const { count, playable, playing } = request;
+    const single = count === 1;
+    return new Promise<TrackMenuAction | null>((resolve) => {
+      const menu = Menu.buildFromTemplate([
+        { label: playing ? 'Pause' : 'Play', visible: single, enabled: playable,
+          click: () => resolve('play') },
+        { label: 'Inspect track', visible: single, click: () => resolve('inspect') },
+        { type: 'separator', visible: single },
+        { label: `Create playlist from ${count === 1 ? 'track' : `${count} tracks`}…`,
+          enabled: count <= 10_000, click: () => resolve('create-playlist') },
+        { label: `Remove ${count === 1 ? 'track' : `${count} tracks`}…`,
+          enabled: count <= 10_000, click: () => resolve('remove-songs') },
+        { type: 'separator' },
+        { label: 'Clear selection', click: () => resolve('clear-selection') },
+      ]);
+      menu.popup({ window: owner, callback: () => resolve(null) });
+    });
+  });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.mutate, async (event, change: unknown) => {
     assertTrustedSender(event, owner);
@@ -541,7 +580,14 @@ const createWindow = (updates: AppUpdates, preferences = false): BrowserWindow =
   });
 
   installIpc(window, updates, preferences);
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (url === 'https://www.buymeacoffee.com/joakim_mellonn') {
+      void shell.openExternal(url).catch((error: unknown) => {
+        console.error('Could not open Buy me a coffee in the browser.', error);
+      });
+    }
+    return { action: 'deny' };
+  });
   window.webContents.on('page-title-updated', (event) => event.preventDefault());
   window.webContents.on('will-attach-webview', (event) => {
     event.preventDefault();

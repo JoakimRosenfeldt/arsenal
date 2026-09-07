@@ -12,7 +12,7 @@ export const rendererConfig: Configuration = {
         use: [{ loader: 'style-loader' }, { loader: 'css-loader' }],
       },
       {
-        test: /\.(woff2?|ttf|otf)$/i,
+        test: /\.(woff2?|ttf|otf|svg)$/i,
         type: 'asset/resource',
       },
     ],

@@ -3,6 +3,7 @@ import { readFile, stat, writeFile } from 'node:fs/promises';
 import { basename, isAbsolute } from 'node:path';
 
 import { dialog, shell, type BrowserWindow } from 'electron';
+import { DEFAULT_SONG_FILTERS, songMetadataGapCount } from '../shared/dj-library';
 
 import type {
   DuplicateGroup,
@@ -294,9 +295,17 @@ export class RekordboxLibrary {
   searchSongs(request: SongSearchRequest): SongPage {
     const songs = this.requireCatalog().songs;
     const normalized = request.query.trim().toLocaleLowerCase();
-    const matches = normalized.length === 0
-      ? songs
-      : songs.filter((song) => searchTextFor(song).includes(normalized));
+    const filters = request.filters ?? DEFAULT_SONG_FILTERS;
+    const terms = normalized.split(/\s+/).filter(Boolean);
+    const matches = songs.filter((song) => {
+      if (filters.source !== 'all' && song.source !== filters.source) return false;
+      if (filters.metadata === 'incomplete' && songMetadataGapCount(song) === 0) return false;
+      if (filters.metadata === 'complete' && songMetadataGapCount(song) > 0) return false;
+      if (filters.metadata === 'no-cues' && song.cuePointCount > 0) return false;
+      if (terms.length === 0) return true;
+      const text = searchTextFor(song);
+      return terms.every((term) => text.includes(term));
+    });
     const total = matches.length;
     const limit = request.limit;
     const lastOffset = Math.floor(Math.max(0, total - 1) / limit) * limit;

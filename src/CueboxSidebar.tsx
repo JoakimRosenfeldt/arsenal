@@ -1,6 +1,6 @@
 import type { JSX } from 'react';
 
-import { PreferencesButton } from './Preferences';
+import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
 import type { RekordboxPlaylist } from './shared/dj-library';
 
 export type PageId =
@@ -164,9 +164,7 @@ export const CueboxSidebar = ({
   hasLibrary,
   onNavigate,
   onPlaylistSelect,
-  onQueryChange,
   playlists,
-  query,
   selectedPlaylistId,
   songCount,
 }: Readonly<{
@@ -176,9 +174,7 @@ export const CueboxSidebar = ({
   hasLibrary: boolean;
   onNavigate: (page: PageId) => void;
   onPlaylistSelect: (playlistId: string) => void;
-  onQueryChange: (query: string) => void;
   playlists: readonly RekordboxPlaylist[] | null;
-  query: string;
   selectedPlaylistId: string | null;
   songCount: number;
 }>): JSX.Element => {
@@ -208,19 +204,16 @@ export const CueboxSidebar = ({
           <span className="sidebar-version">LOCAL</span>
         </div>
 
-        <label className="sidebar-search" htmlFor="library-search">
+        <button className="sidebar-search" type="button" aria-label="Search collection"
+          disabled={!hasLibrary || busy}
+          onClick={() => {
+            onNavigate('library');
+            requestAnimationFrame(() => document.getElementById('library-search')?.focus());
+          }}>
           <span className="search-icon" aria-hidden />
-          <input
-            id="library-search"
-            type="search"
-            value={query}
-            onChange={(event) => onQueryChange(event.currentTarget.value)}
-            placeholder={hasLibrary ? 'Search collection' : 'Import to search'}
-            maxLength={200}
-            disabled={!hasLibrary || busy || activePage !== 'library'}
-          />
+          <span className="sidebar-search-label">Search collection</span>
           <span className="search-shortcut" aria-hidden>⌘K</span>
-        </label>
+        </button>
       </div>
 
       <nav className="sidebar-navigation" aria-label="Pages">
@@ -262,7 +255,13 @@ export const CueboxSidebar = ({
           </div>
         </div>
       </nav>
-      <PreferencesButton className="sidebar-preferences" />
+      <div className="sidebar-support-footer">
+        <a className="sidebar-support" href="https://www.buymeacoffee.com/joakim_mellonn"
+          target="_blank" rel="noopener noreferrer" aria-label="Buy me a coffee" title="Buy me a coffee, opens in your browser">
+          <img src={coffeeIconUrl} alt="" width={18} height={26} />
+          <span>Buy me a coffee</span>
+        </a>
+      </div>
     </aside>
   );
 };

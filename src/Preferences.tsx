@@ -3,11 +3,11 @@ import { useState, type JSX } from 'react';
 import { AiModelPicker } from './AiModelPicker';
 import { AppUpdates } from './AppUpdates';
 
-export const PreferencesButton = ({ className = 'quiet-button' }: Readonly<{ className?: string }>): JSX.Element => {
+export const PreferencesButton = (): JSX.Element => {
   const [failed, setFailed] = useState(false);
   return (
-    <div className={className === 'sidebar-preferences' ? 'sidebar-preferences-footer' : 'preferences-link'}>
-      <button className={className} type="button" onClick={() => {
+    <div className="preferences-link">
+      <button className="quiet-button" type="button" onClick={() => {
         setFailed(false);
         void window.preferences.open().catch(() => setFailed(true));
       }}>Preferences</button>

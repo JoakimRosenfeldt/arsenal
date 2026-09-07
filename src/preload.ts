@@ -27,6 +27,8 @@ const api: DjLibraryApi = Object.freeze({
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listPlaylists),
   searchSongs: (request) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.searchSongs, request),
+  trackMenu: (request) =>
+    ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.trackMenu, request),
   suggestPlaylist: (request) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.suggestPlaylist, request),
   cancelSuggestions: () =>

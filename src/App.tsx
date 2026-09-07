@@ -16,6 +16,7 @@ import {
 } from './CueboxPages';
 import {
   SONG_PAGE_SIZE,
+  DEFAULT_SONG_FILTERS,
   type DuplicateMatchMode,
   type DuplicateScan,
   type ImportFailure,
@@ -24,6 +25,7 @@ import {
   type MutationFailure,
   type RekordboxPlaylist,
   type SongRow,
+  type SongFilters,
 } from './shared/dj-library';
 
 type DisplayError = ImportFailure | MutationFailure | 'unexpected';
@@ -106,7 +108,9 @@ export const App = (): JSX.Element => {
   const [error, setError] = useState<DisplayError | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [query, setQuery] = useState('');
+  const [filters, setFilters] = useState(DEFAULT_SONG_FILTERS);
   const [viewQuery, setViewQuery] = useState('');
+  const [viewFilters, setViewFilters] = useState(DEFAULT_SONG_FILTERS);
   const [searching, setSearching] = useState(false);
   const searchSequence = useRef(0);
   const [duplicateMode, setDuplicateMode] =
@@ -270,6 +274,10 @@ export const App = (): JSX.Element => {
     }
 
     setBusy(true);
+    searchSequence.current += 1;
+    setSearching(false);
+    setQuery(viewQuery);
+    setFilters(viewFilters);
     setError(null);
     setFeedback(null);
 
@@ -298,6 +306,8 @@ export const App = (): JSX.Element => {
       setSelectedPlaylistId(null);
       setQuery('');
       setViewQuery('');
+      setFilters(DEFAULT_SONG_FILTERS);
+      setViewFilters(DEFAULT_SONG_FILTERS);
     } catch {
       setError('unexpected');
     } finally {
@@ -313,6 +323,8 @@ export const App = (): JSX.Element => {
     }
 
     setBusy(true);
+    searchSequence.current += 1;
+    setSearching(false);
     setError(null);
     setFeedback(null);
     try {
@@ -349,6 +361,7 @@ export const App = (): JSX.Element => {
           offset: Math.min(view.page.offset, maxOffset),
           limit: SONG_PAGE_SIZE,
           query,
+          filters,
         }),
         window.djLibrary.listPlaylists(),
         window.djLibrary.findDuplicates(duplicateMode),
@@ -356,6 +369,7 @@ export const App = (): JSX.Element => {
       setView({ library: result.library, page });
       setPlaylists(loadedPlaylists);
       setViewQuery(query);
+      setViewFilters(filters);
       setDuplicateState({
         kind: 'ready',
         libraryVersion: result.library.revision,
@@ -402,7 +416,7 @@ export const App = (): JSX.Element => {
       songIds,
     }));
 
-  const changePage = async (offset: number, nextQuery = query): Promise<void> => {
+  const changePage = async (offset: number, nextQuery = query, nextFilters: SongFilters = filters): Promise<void> => {
     if (busy || view === null || offset < 0) {
       return;
     }
@@ -416,14 +430,18 @@ export const App = (): JSX.Element => {
         offset,
         limit: SONG_PAGE_SIZE,
         query: nextQuery,
+        filters: nextFilters,
       });
       if (sequence === searchSequence.current) {
         setView({ library: view.library, page });
         setViewQuery(nextQuery);
+        setViewFilters(nextFilters);
       }
     } catch {
       if (sequence === searchSequence.current) {
         setError('unexpected');
+        setQuery(viewQuery);
+        setFilters(viewFilters);
       }
     } finally {
       if (sequence === searchSequence.current) {
@@ -458,10 +476,19 @@ export const App = (): JSX.Element => {
           <LibraryPage
             key={libraryVersion}
             busy={busy}
+            filters={filters}
+            onSearch={(nextQuery, nextFilters) => {
+              setQuery(nextQuery);
+              setFilters(nextFilters);
+              void changePage(0, nextQuery, nextFilters);
+            }}
+            onCreate={createPlaylist}
+            onRemove={removeSongs}
             onImport={() => void importLibrary()}
             onPage={(offset) => void changePage(offset)}
             playback={playback}
-            query={viewQuery}
+            query={query}
+            resultQuery={viewQuery}
             searching={searching}
             view={view}
           />
@@ -514,12 +541,7 @@ export const App = (): JSX.Element => {
         hasLibrary={view !== null}
         onNavigate={navigate}
         onPlaylistSelect={selectPlaylist}
-        onQueryChange={(nextQuery) => {
-          setQuery(nextQuery);
-          void changePage(0, nextQuery);
-        }}
         playlists={playlists}
-        query={query}
         selectedPlaylistId={selectedPlaylistId}
         songCount={view?.library.songCount ?? 0}
       />

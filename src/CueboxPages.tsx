@@ -1,6 +1,7 @@
 import {
   useEffect,
   useId,
+  useRef,
   useState,
   type FormEvent,
   type JSX,
@@ -17,6 +18,9 @@ import {
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
   SONG_SOURCE_LABELS,
+  SONG_METADATA_FILTERS,
+  DEFAULT_SONG_FILTERS,
+  songMetadataGapCount,
   type DuplicateCandidate,
   type DuplicateGroup,
   type DuplicateMatchMode,
@@ -26,6 +30,7 @@ import {
   type SongPage,
   type SongRow,
   type SongSearchRequest,
+  type SongFilters,
 } from './shared/dj-library';
 
 export type LibraryView = Readonly<{
@@ -110,20 +115,10 @@ const SongLabels = ({ song }: Readonly<{ song: SongRow }>): JSX.Element => (
   </span>
 );
 
-const metadataGapCount = (song: SongRow): number =>
-  [
-    song.artist,
-    song.album,
-    song.genre,
-    song.bpm,
-    song.musicalKey,
-    song.durationSeconds,
-  ].filter((value) => value === null).length;
-
 const statusForSong = (
   song: SongRow,
 ): Readonly<{ label: string; tone: string }> => {
-  const gaps = metadataGapCount(song);
+  const gaps = songMetadataGapCount(song);
   if (gaps === 0) {
     return { label: 'Metadata complete', tone: 'complete' };
   }
@@ -164,20 +159,34 @@ const NoLibrary = ({
 
 export const LibraryPage = ({
   busy,
+  filters,
+  onCreate,
   onImport,
   onPage,
+  onRemove,
+  onSearch,
   playback,
   query,
+  resultQuery,
   searching,
   view,
 }: CommonPageProps &
   Readonly<{
     onPage: (offset: number) => void;
+    onCreate: (name: string, songIds: readonly string[]) => Promise<boolean>;
+    onRemove: RemoveSongs;
+    onSearch: (query: string, filters: SongFilters) => void;
+    filters: SongFilters;
     query: string;
+    resultQuery: string;
     searching: boolean;
   }>): JSX.Element => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [selection, setSelection] = useState<ReadonlyMap<string, SongRow>>(new Map());
+  const [action, setAction] = useState<'create' | 'remove' | null>(null);
+  const [menuError, setMenuError] = useState(false);
+  const anchorId = useRef<string | null>(null);
 
   if (view === null) {
     return (
@@ -191,8 +200,12 @@ export const LibraryPage = ({
     );
   }
 
-  const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleSongs = view.page.items;
+  const selectedSongs = [...selection.values()];
+  const selectedOnPage = visibleSongs.filter((song) => selection.has(song.id)).length;
+  const allOnPageSelected = visibleSongs.length > 0 && selectedOnPage === visibleSongs.length;
+  const selectionLocked = busy || searching || action !== null;
+  const filtered = query.length > 0 || filters.source !== 'all' || filters.metadata !== 'all';
   const selectedSong =
     visibleSongs.find((song) => song.id === selectedId) ??
     visibleSongs[0] ??
@@ -210,6 +223,56 @@ export const LibraryPage = ({
     : selectedSong?.durationSeconds ?? 0;
   const displayedPosition = selectedIsActive ? playback.position : 0;
 
+  const selectSong = (song: SongRow, toggle: boolean, range: boolean): void => {
+    if (selectionLocked) return;
+    setSelectedId(song.id);
+    const anchorIndex = visibleSongs.findIndex((candidate) => candidate.id === anchorId.current);
+    const index = visibleSongs.indexOf(song);
+    const next = new Map(toggle || range ? selection : []);
+    if (range && anchorIndex >= 0) {
+      for (const candidate of visibleSongs.slice(Math.min(anchorIndex, index), Math.max(anchorIndex, index) + 1)) {
+        next.set(candidate.id, candidate);
+      }
+    } else if (toggle && next.has(song.id)) {
+      next.delete(song.id);
+    } else {
+      next.set(song.id, song);
+    }
+    if (!range || anchorIndex < 0) anchorId.current = song.id;
+    setSelection(next);
+  };
+
+  const selectPage = (): void => {
+    const next = new Map(selection);
+    for (const song of visibleSongs) {
+      if (allOnPageSelected) next.delete(song.id);
+      else next.set(song.id, song);
+    }
+    setSelection(next);
+  };
+
+  const openTrackMenu = async (song: SongRow): Promise<void> => {
+    if (selectionLocked) return;
+    const songs = selection.has(song.id) ? selectedSongs : [song];
+    setSelection(new Map(songs.map((item) => [item.id, item])));
+    setSelectedId(song.id);
+    setMenuError(false);
+    try {
+      const choice = await window.djLibrary.trackMenu({
+        count: songs.length,
+        playable: song.audioUrl !== null,
+        playing: song.id === playback.song?.id && playback.playing,
+      });
+      if (choice === 'play') playback.play(song);
+      if (choice === 'inspect') setInspectorOpen(true);
+      if (choice === 'create-playlist') setAction('create');
+      if (choice === 'remove-songs') setAction('remove');
+      if (choice === 'clear-selection') setSelection(new Map());
+    } catch {
+      setMenuError(true);
+    }
+  };
+
   return (
     <section className="workspace-page library-page" aria-labelledby="library-title">
       <header className="page-header library-header">
@@ -222,7 +285,7 @@ export const LibraryPage = ({
           </p>
         </div>
         <div className="header-actions">
-          <span className="status-pill"><i aria-hidden />Local XML</span>
+          <span className="status-pill" title={`${view.library.sourceName} · Opened ${formatImportedAt(view.library.importedAt)}`}><i aria-hidden />Local XML</span>
           <button className="quiet-button inspector-toggle" type="button" onClick={() => setInspectorOpen((open) => !open)} aria-expanded={inspectorOpen}>
             Inspector
           </button>
@@ -232,21 +295,59 @@ export const LibraryPage = ({
         </div>
       </header>
 
-      <div className="filter-bar">
-        <span className="filter-chip"><b>Source</b>{view.library.sourceName}</span>
-        <span className="filter-chip"><b>Opened</b>{formatImportedAt(view.library.importedAt)}</span>
-        {normalizedQuery.length > 0 && (
-          <span className="filter-chip is-accent"><b>Search</b>{query}</span>
-        )}
-        <span className="result-count">
-          {searching ? 'Searching collection' : `${view.page.total.toLocaleString()} results · page ${pageNumber} of ${pageCount}`}
-        </span>
+      <div className="library-tools">
+        <label className="library-search">
+          <span className="search-icon" aria-hidden />
+          <span className="visually-hidden">Search tracks</span>
+          <input id="library-search" type="search" placeholder="Search title, artist, album, genre, key…"
+            value={query} maxLength={200} disabled={busy || action !== null}
+            onChange={(event) => onSearch(event.currentTarget.value, filters)} />
+          <kbd aria-hidden>⌘K</kbd>
+        </label>
+        <select aria-label="Filter by source" value={filters.source} disabled={busy || action !== null}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            const source = value === 'all' ? 'all' : Object.keys(SONG_SOURCE_LABELS)
+              .find((key): key is keyof typeof SONG_SOURCE_LABELS => key === value);
+            if (source !== undefined) onSearch(query, { ...filters, source });
+          }}>
+          <option value="all">All sources</option>
+          {Object.entries(SONG_SOURCE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select>
+        <select aria-label="Filter by metadata" value={filters.metadata} disabled={busy || action !== null}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            const metadata = Object.keys(SONG_METADATA_FILTERS)
+              .find((key): key is keyof typeof SONG_METADATA_FILTERS => key === value);
+            if (metadata !== undefined) onSearch(query, { ...filters, metadata });
+          }}>
+          {Object.entries(SONG_METADATA_FILTERS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+        </select>
+        {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
+          onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Reset</button>}
+        <span className="library-result-count" role="status">{searching ? 'Searching…' : `${view.page.total.toLocaleString()} ${view.page.total === 1 ? 'result' : 'results'}`}</span>
       </div>
 
+      {menuError && <p className="library-menu-error" role="alert">Could not open the menu. Use the selection actions below.</p>}
+
       <div className="library-body">
-        <div className="track-table" role="table" aria-label="Songs in the Rekordbox Collection export">
+        <div className="track-table" role="table" aria-label="Songs in the Rekordbox Collection export"
+          onKeyDown={(event) => {
+            if (selectionLocked) return;
+            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
+              event.preventDefault();
+              const next = new Map(selection);
+              for (const song of visibleSongs) next.set(song.id, song);
+              setSelection(next);
+            }
+            if (event.key === 'Escape') setSelection(new Map());
+          }}>
           <div className="track-table-head" role="row">
-            <span role="columnheader"><span className="visually-hidden">Status</span></span>
+            <span role="columnheader">
+              <input type="checkbox" aria-label="Select all tracks on this page" checked={allOnPageSelected}
+                ref={(input) => { if (input) input.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
+                onChange={selectPage} disabled={selectionLocked || visibleSongs.length === 0} />
+            </span>
             <span role="columnheader">#</span>
             <span role="columnheader"><span className="visually-hidden">Play</span></span>
             <span role="columnheader">Title / artist</span>
@@ -255,61 +356,74 @@ export const LibraryPage = ({
             <span role="columnheader">Time</span>
             <span role="columnheader">Genre</span>
             <span role="columnheader">Album</span>
+            <span role="columnheader"><span className="visually-hidden">Actions</span></span>
           </div>
           <div className="track-table-body" role="rowgroup" aria-busy={busy || searching}>
             {searching ? (
               <div className="inline-empty" role="status">Searching collection…</div>
             ) : visibleSongs.length === 0 ? (
               <div className="inline-empty">
-                <strong>No tracks match "{query}".</strong>
-                <span>Clear the search to show the collection.</span>
+                <strong>{view.library.songCount === 0 ? 'Your collection has no tracks.' : 'No tracks match your search and filters.'}</strong>
+                {resultQuery && <span>Search: "{resultQuery}"</span>}
+                {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
+                  onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Clear search and filters</button>}
               </div>
             ) : (
               visibleSongs.map((song, index) => {
                 const status = statusForSong(song);
-                const isSelected = song.id === selectedSong?.id;
+                const isSelected = selection.has(song.id);
                 const isPlaying = song.id === playback.song?.id && playback.playing;
                 return (
                   <div
                     className={isSelected ? 'track-row is-selected' : 'track-row'}
                     role="row"
-                    aria-selected={isSelected}
                     tabIndex={0}
-                    onClick={() => {
-                      setSelectedId(song.id);
-                      setInspectorOpen(true);
-                    }}
+                    onClick={(event) => selectSong(song, event.metaKey || event.ctrlKey, event.shiftKey)}
+                    onDoubleClick={() => { if (!selectionLocked) playback.play(song); }}
+                    onContextMenu={(event) => { event.preventDefault(); void openTrackMenu(song); }}
                     onKeyDown={(event) => {
-                      if (
-                        event.target === event.currentTarget &&
-                        (event.key === 'Enter' || event.key === ' ')
-                      ) {
+                      if (event.target !== event.currentTarget || selectionLocked) return;
+                      if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+                        event.preventDefault();
+                        void openTrackMenu(song);
+                      } else if (event.key === 'Enter') {
                         event.preventDefault();
                         setSelectedId(song.id);
                         setInspectorOpen(true);
+                      } else if (event.key === ' ') {
+                        event.preventDefault();
+                        selectSong(song, true, event.shiftKey);
                       }
                     }}
                     title={`${song.title} by ${song.artist ?? 'Unknown artist'}`}
                     key={song.id}
                   >
-                    <span className={`track-status is-${status.tone}`} role="cell">
-                      <span className="visually-hidden">{status.label}</span>
+                    <span role="cell">
+                      <input type="checkbox" aria-label={`Select ${song.title} by ${song.artist ?? 'Unknown artist'}`}
+                        checked={isSelected} disabled={selectionLocked}
+                        onClick={(event) => event.stopPropagation()}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onChange={(event) => selectSong(song, true, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)} />
                     </span>
-                    <span className="track-index" role="cell">{formatRowNumber(view.page.offset, index)}</span>
-                    <button
-                      className={isPlaying ? 'track-play is-playing' : 'track-play'}
-                      type="button"
-                      role="cell"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        playback.play(song);
-                      }}
-                      disabled={song.audioUrl === null}
-                      aria-label={isPlaying ? `Pause ${song.title}` : `Play ${song.title}`}
-                    >
-                      <TrackArtwork song={song} />
-                      <span aria-hidden>{isPlaying ? 'Ⅱ' : '▶'}</span>
-                    </button>
+                    <span className="track-index" role="cell" title={status.label}>
+                      <span className={`track-status is-${status.tone}`} aria-hidden />{formatRowNumber(view.page.offset, index)}
+                    </span>
+                    <span role="cell">
+                      <button
+                        className={isPlaying ? 'track-play is-playing' : 'track-play'}
+                        type="button"
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          playback.play(song);
+                        }}
+                        disabled={song.audioUrl === null}
+                        aria-label={isPlaying ? `Pause ${song.title}` : `Play ${song.title}`}
+                      >
+                        <TrackArtwork song={song} />
+                        <span aria-hidden>{isPlaying ? 'Ⅱ' : '▶'}</span>
+                      </button>
+                    </span>
                     <span className="track-identity" role="cell">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}</small>
@@ -320,6 +434,12 @@ export const LibraryPage = ({
                     <span className="numeric is-muted" role="cell">{formatDuration(song.durationSeconds)}</span>
                     <span className="truncate is-muted" role="cell">{song.genre ?? 'Not set'}</span>
                     <span className="truncate is-muted" role="cell">{song.album ?? 'Not set'}</span>
+                    <span role="cell">
+                      <button className="track-menu-button" type="button" aria-label={`Actions for ${song.title}`} aria-haspopup="menu"
+                        disabled={selectionLocked}
+                        onDoubleClick={(event) => event.stopPropagation()}
+                        onClick={(event) => { event.stopPropagation(); void openTrackMenu(song); }}>⋯</button>
+                    </span>
                   </div>
                 );
               })
@@ -375,7 +495,7 @@ export const LibraryPage = ({
               <div><dt>Time</dt><dd>{formatDuration(selectedSong.durationSeconds)}</dd></div>
               <div><dt>Genre</dt><dd>{selectedSong.genre ?? 'Not set'}</dd></div>
               <div><dt>Album</dt><dd>{selectedSong.album ?? 'Not set'}</dd></div>
-              <div><dt>Gaps</dt><dd>{metadataGapCount(selectedSong)}</dd></div>
+              <div><dt>Gaps</dt><dd>{songMetadataGapCount(selectedSong)}</dd></div>
             </dl>
             <div className="inspector-note">
               <span className="mono-label">Local file</span>
@@ -384,6 +504,13 @@ export const LibraryPage = ({
           </aside>
         )}
       </div>
+
+      {selectedSongs.length > 0 && (
+        <LibrarySelectionActions busy={busy || searching} action={action} onAction={setAction}
+          onClear={() => { setSelection(new Map()); setAction(null); }}
+          onCreate={onCreate} onRemove={onRemove} songs={selectedSongs}
+          hiddenCount={selection.size - selectedOnPage} />
+      )}
 
       <nav className="page-pagination" aria-label="Song pages">
         <p>
@@ -531,6 +658,78 @@ const FileRemovalOption = ({
         </span>
       )}
     </label>
+  );
+};
+
+const LibrarySelectionActions = ({
+  action, busy, hiddenCount, onAction, onClear, onCreate, onRemove, songs,
+}: Readonly<{
+  action: 'create' | 'remove' | null;
+  busy: boolean;
+  hiddenCount: number;
+  onAction: (action: 'create' | 'remove' | null) => void;
+  onClear: () => void;
+  onCreate: (name: string, songIds: readonly string[]) => Promise<boolean>;
+  onRemove: RemoveSongs;
+  songs: readonly SongRow[];
+}>): JSX.Element => {
+  const [name, setName] = useState('');
+  const [removeLocalFile, setRemoveLocalFile] = useState(false);
+  const actionRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (action !== null) actionRef.current?.focus();
+  }, [action]);
+  const tooMany = songs.length > 10_000;
+
+  const submit = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (busy || tooMany) return;
+    const ids = songs.map((song) => song.id);
+    const saved = action === 'create'
+      ? await onCreate(name.trim(), ids)
+      : action === 'remove' && await onRemove(ids, removeLocalFile);
+    if (saved) onClear();
+  };
+
+  return (
+    <form className="library-selection-actions" onSubmit={(event) => void submit(event)} aria-label="Selected track actions">
+      {action !== null && (
+        <div className="duplicate-selection-review" ref={actionRef} tabIndex={-1}>
+          <strong>{action === 'remove' ? `Remove ${songs.length} selected ${songs.length === 1 ? 'track' : 'tracks'}?` : 'Create playlist from selection'}</strong>
+          <p>{action === 'remove'
+            ? 'This removes the tracks from the XML collection and its playlists. Local audio files are kept unless you choose below.'
+            : 'The playlist will be saved in your Rekordbox XML.'}</p>
+          <ul aria-label={action === 'remove' ? 'Tracks to remove' : 'Tracks in new playlist'}>
+            {songs.map((song) => <li key={song.id}>{song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}</li>)}
+          </ul>
+          {action === 'create' ? (
+            <label className="library-playlist-name">Playlist name
+              <input type="text" value={name} onChange={(event) => setName(event.currentTarget.value)}
+                maxLength={100} required disabled={busy} placeholder="Name your playlist" />
+            </label>
+          ) : (
+            <FileRemovalOption busy={busy} checked={removeLocalFile} onChange={setRemoveLocalFile} songs={songs} />
+          )}
+        </div>
+      )}
+      <div className="duplicate-selection-toolbar">
+        <span role="status">{songs.length.toLocaleString()} selected
+          {hiddenCount > 0 && <small> · {hiddenCount.toLocaleString()} on other pages or outside filters</small>}
+          {tooMany && <small> · Select at most 10,000 tracks per action</small>}
+        </span>
+        {action === null ? <>
+          <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>Clear selection</button>
+          <button className="quiet-button" type="button" onClick={() => onAction('create')} disabled={busy || tooMany}>Create playlist</button>
+          <button className="danger-button" type="button" onClick={() => onAction('remove')} disabled={busy || tooMany}>Remove selected</button>
+        </> : <>
+          <button className="quiet-button" type="button" onClick={() => { setRemoveLocalFile(false); onAction(null); }} disabled={busy}>Cancel</button>
+          <button className={action === 'remove' ? 'danger-button' : 'accent-button compact'} type="submit"
+            disabled={busy || tooMany || (action === 'create' && name.trim().length === 0)}>
+            {busy ? 'Saving…' : action === 'remove' ? `Remove ${songs.length} ${songs.length === 1 ? 'track' : 'tracks'}` : 'Create playlist'}
+          </button>
+        </>}
+      </div>
+    </form>
   );
 };
 
