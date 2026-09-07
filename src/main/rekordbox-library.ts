@@ -484,6 +484,9 @@ export class RekordboxLibrary {
     const handledPaths = new Set<string>();
     const fileActions: LocalFileAction[] = [];
     for (const track of tracks) {
+      if (track.mediaPath === null && track.song.source !== 'local') {
+        continue;
+      }
       if (track.mediaPath !== null) {
         if (handledPaths.has(track.mediaPath)) {
           continue;

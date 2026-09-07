@@ -502,10 +502,10 @@ const FileRemovalOption = ({
   const tooltipId = useId();
   const disabledReason = busy
     ? 'Wait until the current action finishes.'
-    : songs.some((song) => song.audioUrl === null)
+    : !songs.some((song) => song.audioUrl !== null)
       ? songs.length === 1
         ? 'The XML does not link this track to a supported local audio file.'
-        : 'At least one selected track is not linked to a supported local audio file in the XML.'
+        : 'None of the selected tracks are linked to a supported local audio file in the XML.'
       : null;
 
   return (
@@ -523,7 +523,7 @@ const FileRemovalOption = ({
       />
       {songs.length === 1
         ? 'Also move the local audio file to Trash'
-        : 'Also move the selected local audio files to Trash'}
+        : 'Also move the linked local audio files to Trash'}
       {disabledReason !== null && (
         <span className="file-removal-tooltip" id={tooltipId} role="tooltip">
           {disabledReason}
