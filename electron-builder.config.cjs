@@ -12,6 +12,7 @@ module.exports = {
     '!node_modules/**/*',
   ],
   asar: true,
+  asarUnpack: ['**/node_modules/onnxruntime-node/bin/**', '**/node_modules/@img/**'],
   extraResources: [{ from: 'assets/icon.png', to: 'icon.png' }],
   npmRebuild: false,
   electronFuses: {

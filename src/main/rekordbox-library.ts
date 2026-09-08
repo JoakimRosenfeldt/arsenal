@@ -30,9 +30,7 @@ import {
 import { findDuplicateScan } from './find-duplicates';
 import { evaluateSmartPlaylist } from './smart-playlists';
 import { suggestPlaylist } from './playlist-suggestions';
-import type { PlaylistSuggestionRequest, PlaylistSuggestionResult } from '../shared/playlist-suggestions';
-import type { AiModels } from './ai-models';
-import { ModelError } from './ai-client';
+import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from '../shared/playlist-suggestions';
 import {
   parseRekordboxXml,
   type ParsedPlaylist,
@@ -324,7 +322,7 @@ export class RekordboxLibrary {
     return this.requireCatalog().playlists;
   }
 
-  async suggestPlaylist(request: PlaylistSuggestionRequest, aiModels: AiModels): Promise<PlaylistSuggestionResult> {
+  async suggestPlaylist(request: PlaylistSuggestionRequest, onProgress: (progress: PlaylistSuggestionProgress) => void): Promise<PlaylistSuggestionResult> {
     const catalog = this.catalog;
     if (catalog === null || request.revision !== catalog.revision) {
       return { kind: 'rejected', reason: 'stale-library' };
@@ -333,11 +331,10 @@ export class RekordboxLibrary {
     const controller = new AbortController();
     this.suggestionController = controller;
     try {
-      const connection = await aiModels.connection(AbortSignal.any([controller.signal, AbortSignal.timeout(20_000)]));
-      const result = await suggestPlaylist(catalog.songs, request, controller.signal, connection);
+      const result = await suggestPlaylist(catalog.tracks, request, controller.signal, onProgress);
       return this.catalog === catalog ? result : { kind: 'rejected', reason: 'stale-library' };
-    } catch (error: unknown) {
-      return { kind: 'rejected', reason: controller.signal.aborted ? 'cancelled' : error instanceof ModelError ? error.reason : 'failed' };
+    } catch {
+      return { kind: 'rejected', reason: controller.signal.aborted ? 'cancelled' : 'failed' };
     } finally {
       if (this.suggestionController === controller) {
         this.suggestionController = null;
@@ -437,6 +434,7 @@ export class RekordboxLibrary {
 
     try {
       const nextCatalog = await this.catalogFor(selectedPath);
+      this.cancelSuggestions();
       this.catalog = nextCatalog;
       this.rememberedPath = selectedPath;
       await this.remember(selectedPath);
@@ -521,6 +519,7 @@ export class RekordboxLibrary {
       return reload;
     }
 
+    this.cancelSuggestions();
     this.catalog = reload.catalog;
     const handledPaths = new Set<string>();
     const fileActions: LocalFileAction[] = [];
@@ -592,6 +591,7 @@ export class RekordboxLibrary {
     if (reload.kind === 'rejected') {
       return reload;
     }
+    this.cancelSuggestions();
     this.catalog = reload.catalog;
     return {
       kind: 'playlist-created',

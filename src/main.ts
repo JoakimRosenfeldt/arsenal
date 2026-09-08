@@ -17,9 +17,7 @@ import {
 import { RekordboxLibrary } from './main/rekordbox-library';
 import { readPlaylistSuggestionRequest } from './main/playlist-suggestions';
 import { AppUpdates } from './main/app-updates';
-import { AiModels } from './main/ai-models';
-import { ModelError } from './main/ai-client';
-import { AI_MODEL_CHANNELS, type AiResult } from './shared/ai-models';
+import { PLAYLIST_PROGRESS_CHANNEL } from './shared/playlist-suggestions';
 import { APP_UPDATE_CHANNELS } from './shared/app-updates';
 import { PREFERENCES_CHANNELS } from './shared/preferences';
 import {
@@ -49,7 +47,6 @@ const APP_ICON_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(app.getAppPath(), 'assets', 'icon.png');
 const library = new RekordboxLibrary();
-const aiModels = new AiModels();
 let mainWindow: BrowserWindow | null = null;
 let preferencesWindow: BrowserWindow | null = null;
 let libraryActions = 0;
@@ -241,52 +238,6 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: bool
     openPreferences(updates);
   });
 
-  const modelAction = async <T,>(action: () => T | Promise<T>): Promise<AiResult<T>> => {
-    try {
-      return { kind: 'ready', value: await action() };
-    } catch (error: unknown) {
-      return { kind: 'error', message: error instanceof ModelError ? error.message : 'Could not complete the model request. Try again.' };
-    }
-  };
-  ipc.handle(AI_MODEL_CHANNELS.settings, (event) => {
-    assertTrustedSender(event, owner);
-    return aiModels.settings();
-  });
-  ipc.handle(AI_MODEL_CHANNELS.update, (event, change: unknown) => {
-    assertTrustedSender(event, owner);
-    return modelAction(async () => {
-      const settings = await aiModels.update(change);
-      for (const window of BrowserWindow.getAllWindows()) {
-        window.webContents.send(AI_MODEL_CHANNELS.changed, settings);
-      }
-      return settings;
-    });
-  });
-  ipc.handle(AI_MODEL_CHANNELS.list, (event, provider: unknown) => {
-    assertTrustedSender(event, owner);
-    return modelAction(() => aiModels.list(provider));
-  });
-  ipc.handle(AI_MODEL_CHANNELS.searchOllama, (event, query: unknown) => {
-    assertTrustedSender(event, owner);
-    return modelAction(() => aiModels.searchOllama(query));
-  });
-  ipc.handle(AI_MODEL_CHANNELS.variants, (event, family: unknown) => {
-    assertTrustedSender(event, owner);
-    return modelAction(() => aiModels.variants(family));
-  });
-  ipc.handle(AI_MODEL_CHANNELS.download, (event, model: unknown) => {
-    assertTrustedSender(event, owner);
-    return modelAction(() => aiModels.startDownload(model));
-  });
-  ipc.handle(AI_MODEL_CHANNELS.downloadStatus, (event) => {
-    assertTrustedSender(event, owner);
-    return aiModels.downloadStatus();
-  });
-  ipc.handle(AI_MODEL_CHANNELS.cancelDownload, (event) => {
-    assertTrustedSender(event, owner);
-    return aiModels.cancelDownload();
-  });
-
   ipc.handle(APP_UPDATE_CHANNELS.status, (event) => {
     assertTrustedSender(event, owner);
     return updates.status();
@@ -395,7 +346,9 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: bool
     const request = readPlaylistSuggestionRequest(value);
     return request === null
       ? { kind: 'rejected', reason: 'invalid-request' }
-      : library.suggestPlaylist(request, aiModels);
+      : library.suggestPlaylist(request, (progress) => {
+        if (!owner.webContents.isDestroyed()) owner.webContents.send(PLAYLIST_PROGRESS_CHANNEL, progress);
+      });
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.cancelSuggestions, (event) => {
@@ -634,7 +587,6 @@ const openPreferences = (updates: AppUpdates): void => {
 
 void app.whenReady().then(async () => {
   app.dock?.setIcon(APP_ICON_PATH);
-  await aiModels.initialize(join(app.getPath('userData'), 'ai-settings.json'));
   await library.initialize(
     join(app.getPath('userData'), 'last-library.json'),
   );
@@ -678,4 +630,4 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => aiModels.cancelDownload());
+app.on('before-quit', () => library.cancelSuggestions());

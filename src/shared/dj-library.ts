@@ -1,4 +1,4 @@
-import type { PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
+import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
@@ -247,6 +247,7 @@ export type DjLibraryApi = Readonly<{
   searchSongs(request: SongSearchRequest): Promise<SongPage>;
   trackMenu(request: TrackMenuRequest): Promise<TrackMenuAction | null>;
   suggestPlaylist(request: PlaylistSuggestionRequest): Promise<PlaylistSuggestionResult>;
+  onSuggestionProgress(listener: (progress: PlaylistSuggestionProgress) => void): () => void;
   cancelSuggestions(): Promise<void>;
   mutate(change: LibraryMutation): Promise<LibraryMutationResult>;
 }>;

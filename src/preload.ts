@@ -1,9 +1,8 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 import { APP_UPDATE_CHANNELS, type AppUpdatesApi, type UpdateStatus } from './shared/app-updates';
-import { AI_MODEL_CHANNELS, type AiModelsApi, type AiSettings } from './shared/ai-models';
 import { PREFERENCES_CHANNELS, type PreferencesApi } from './shared/preferences';
-import { PLAYLIST_DEBUG_CHANNEL, PLAYLIST_DEBUG_PREFIX } from './shared/playlist-suggestions';
+import { PLAYLIST_DEBUG_CHANNEL, PLAYLIST_DEBUG_PREFIX, PLAYLIST_PROGRESS_CHANNEL, type PlaylistSuggestionProgress } from './shared/playlist-suggestions';
 
 ipcRenderer.on(PLAYLIST_DEBUG_CHANNEL, (_event: IpcRendererEvent, message: string, details: Record<string, unknown>) => {
   console.info(message, details);
@@ -31,6 +30,11 @@ const api: DjLibraryApi = Object.freeze({
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.trackMenu, request),
   suggestPlaylist: (request) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.suggestPlaylist, request),
+  onSuggestionProgress: (listener) => {
+    const handleProgress = (_event: IpcRendererEvent, progress: PlaylistSuggestionProgress): void => listener(progress);
+    ipcRenderer.on(PLAYLIST_PROGRESS_CHANNEL, handleProgress);
+    return () => { ipcRenderer.removeListener(PLAYLIST_PROGRESS_CHANNEL, handleProgress); };
+  },
   cancelSuggestions: () =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.cancelSuggestions),
   mutate: (change) =>
@@ -38,23 +42,6 @@ const api: DjLibraryApi = Object.freeze({
 });
 
 contextBridge.exposeInMainWorld('djLibrary', api);
-
-const aiModels: AiModelsApi = Object.freeze({
-  onChange: (listener) => {
-    const handleChange = (_event: IpcRendererEvent, settings: AiSettings): void => listener(settings);
-    ipcRenderer.on(AI_MODEL_CHANNELS.changed, handleChange);
-    return () => { ipcRenderer.removeListener(AI_MODEL_CHANNELS.changed, handleChange); };
-  },
-  settings: () => ipcRenderer.invoke(AI_MODEL_CHANNELS.settings),
-  update: (change) => ipcRenderer.invoke(AI_MODEL_CHANNELS.update, change),
-  list: (provider) => ipcRenderer.invoke(AI_MODEL_CHANNELS.list, provider),
-  searchOllama: (query) => ipcRenderer.invoke(AI_MODEL_CHANNELS.searchOllama, query),
-  variants: (family) => ipcRenderer.invoke(AI_MODEL_CHANNELS.variants, family),
-  download: (model) => ipcRenderer.invoke(AI_MODEL_CHANNELS.download, model),
-  downloadStatus: () => ipcRenderer.invoke(AI_MODEL_CHANNELS.downloadStatus),
-  cancelDownload: () => ipcRenderer.invoke(AI_MODEL_CHANNELS.cancelDownload),
-});
-contextBridge.exposeInMainWorld('aiModels', aiModels);
 
 const preferences: PreferencesApi = Object.freeze({
   open: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.open),

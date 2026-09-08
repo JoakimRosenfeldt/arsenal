@@ -1,10 +1,11 @@
 import type { SongRow } from './dj-library';
-import type { AiProvider } from './ai-models';
 
-export const MAX_SEED_SONGS = 20;
 export const MAX_MOOD_LENGTH = 1_000;
+export const MAX_SEED_SONGS = 20;
 export const PLAYLIST_DEBUG_CHANNEL = 'playlist-suggestions:debug';
 export const PLAYLIST_DEBUG_PREFIX = '[playlist-ai]';
+export const PLAYLIST_PROGRESS_CHANNEL = 'playlist-suggestions:progress';
+export const CLAP_MODEL = 'Xenova/larger_clap_music_and_speech';
 
 export type PlaylistSuggestionRequest = Readonly<{
   revision: string;
@@ -18,21 +19,21 @@ export type PlaylistSuggestion = Readonly<{
   reason: string;
 }>;
 
+export type PlaylistSuggestionProgress =
+  | Readonly<{ phase: 'model'; percent: number | null }>
+  | Readonly<{ phase: 'analyzing'; completed: number; total: number; title: string }>
+  | Readonly<{ phase: 'ranking' }>;
+
 export type PlaylistSuggestionFailure =
-  | 'unavailable'
-  | 'model-missing'
+  | 'model-unavailable'
+  | 'description-too-long'
+  | 'no-local-audio'
+  | 'seed-audio-unavailable'
+  | 'invalid-tempo'
   | 'timed-out'
   | 'cancelled'
-  | 'invalid-response'
-  | 'incomplete-response'
-  | 'empty-response'
-  | 'refused'
   | 'stale-library'
   | 'invalid-request'
-  | 'unauthorized'
-  | 'rate-limited'
-  | 'insufficient-credit'
-  | 'context-too-large'
   | 'failed';
 
 export type PlaylistSuggestionResult =
@@ -41,7 +42,8 @@ export type PlaylistSuggestionResult =
       suggestions: readonly PlaylistSuggestion[];
       candidateCount: number;
       librarySongCount: number;
-      provider: AiProvider;
+      skippedCount: number;
+      cachedCount: number;
       model: string;
     }>
   | Readonly<{ kind: 'rejected'; reason: PlaylistSuggestionFailure }>;

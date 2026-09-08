@@ -2,32 +2,35 @@ import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
 import { TrackArtwork, type PlaybackController } from './CueboxPlayer';
 import type { SongRow } from './shared/dj-library';
-import { PreferencesButton } from './Preferences';
-import { AI_PROVIDER_LABELS, type AiSettings } from './shared/ai-models';
 import {
   MAX_MOOD_LENGTH,
   MAX_SEED_SONGS,
   PLAYLIST_DEBUG_PREFIX,
   type PlaylistSuggestionFailure,
+  type PlaylistSuggestionProgress,
   type PlaylistSuggestionResult,
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
-  unavailable: 'The model service is not reachable. Check your connection, or start Ollama for local models.',
-  'model-missing': 'Model not found. Choose an available model or download it in Preferences.',
-  'timed-out': 'The model took too long. Try again with fewer starting tracks or another model.',
-  cancelled: 'Suggestions cancelled.',
-  'invalid-response': 'The model did not return the required song-list format. Try again or choose another model in Preferences.',
-  'incomplete-response': 'The model reached its output limit before finishing the list. Try fewer starting tracks or choose another model in Preferences.',
-  'empty-response': 'The model returned no final answer. Try again or choose another model in Preferences.',
-  refused: 'The model declined this request. Try a different mood description or another model.',
+  'model-unavailable': 'CLAP could not load. Connect to the internet for the first download, check free disk space, then try again.',
+  'description-too-long': 'Keep the description under about 50 words. Focus on the sound, instruments and mood.',
+  'no-local-audio': 'No readable local audio was found. Make sure the files are available on this computer.',
+  'seed-audio-unavailable': 'A starting track could not be analyzed. Use starting tracks with readable local audio.',
+  'invalid-tempo': 'Use a tempo from 30 to 300 BPM, with the lower number first in a range.',
+  'timed-out': 'Audio analysis stopped responding. Try again. Completed analysis has been saved.',
+  cancelled: 'Suggestions stopped. Completed analysis has been saved.',
   'stale-library': 'The library changed. Reopen the playlist creator to use the current tracks.',
   'invalid-request': 'Describe a mood or select some tracks before requesting suggestions.',
-  unauthorized: 'Add a valid API key in Preferences and check that it has access to the selected model.',
-  'rate-limited': 'The provider quota or rate limit was reached. Check your account or try again later.',
-  'insufficient-credit': 'The provider account needs more credits.',
-  'context-too-large': 'The song metadata exceeds this model\'s context. Use fewer starting tracks or a model with a larger context.',
-  failed: 'The model could not generate suggestions. Check the model service or try another model.',
+  failed: 'Audio analysis could not finish. Try again. Completed analysis has been saved.',
+};
+
+const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
+  if (progress === null) return 'Preparing music analysis...';
+  switch (progress.phase) {
+    case 'model': return progress.percent === null ? 'Loading CLAP. The first download is about 210 MB.' : `Downloading CLAP model: ${progress.percent}%.`;
+    case 'analyzing': return `Analyzing ${progress.completed + 1} of ${progress.total}: ${progress.title}`;
+    case 'ranking': return 'Choosing tracks and checking tempo and key...';
+  }
 };
 
 export const PlaylistSuggestions = ({
@@ -44,29 +47,15 @@ export const PlaylistSuggestions = ({
   revision: string;
 }>): JSX.Element => {
   const [mood, setMood] = useState('');
-  const [aiSettings, setAiSettings] = useState<AiSettings | null>(null);
-  const [settingsFailed, setSettingsFailed] = useState(false);
-  const [activeModel, setActiveModel] = useState('');
+  const [progress, setProgress] = useState<PlaylistSuggestionProgress | null>(null);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<Extract<PlaylistSuggestionResult, { kind: 'ready' }> | null>(null);
   const [failure, setFailure] = useState<PlaylistSuggestionFailure | null>(null);
   const sequence = useRef(0);
   const pending = useRef(false);
-  const configured = aiSettings !== null && (aiSettings.provider === 'ollama' || aiSettings.hasApiKey[aiSettings.provider]);
-
-  useEffect(() => {
-    let active = true;
-    let receivedChange = false;
-    const unsubscribe = window.aiModels.onChange((settings) => {
-      receivedChange = true;
-      setAiSettings(settings);
-      setSettingsFailed(false);
-    });
-    void window.aiModels.settings().then((settings) => {
-      if (active && !receivedChange) setAiSettings(settings);
-    }).catch(() => { if (active && !receivedChange) setSettingsFailed(true); });
-    return () => { active = false; unsubscribe(); };
-  }, []);
+  useEffect(() => window.djLibrary.onSuggestionProgress((next) => {
+    if (pending.current) setProgress(next);
+  }), []);
 
   useEffect(() => () => {
     sequence.current += 1;
@@ -77,12 +66,13 @@ export const PlaylistSuggestions = ({
 
   const generate = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (pending.current || busy || !configured || (mood.trim().length === 0 && chosenSongs.size === 0)) {
+    if (pending.current || busy || (mood.trim().length === 0 && chosenSongs.size === 0)) {
       return;
     }
     const requestSequence = ++sequence.current;
     pending.current = true;
-    setActiveModel(aiSettings === null ? '' : aiSettings.models[aiSettings.provider]);
+    setProgress(null);
+    setResult(null);
     setGenerating(true);
     setFailure(null);
     try {
@@ -93,7 +83,7 @@ export const PlaylistSuggestions = ({
         excludedSongIds: [...chosenSongs.keys()],
       });
       console.info(`${PLAYLIST_DEBUG_PREFIX} suggestion result`, response.kind === 'ready'
-        ? { kind: response.kind, provider: response.provider, model: response.model, suggestionCount: response.suggestions.length }
+        ? { kind: response.kind, model: response.model, suggestionCount: response.suggestions.length }
         : response);
       if (requestSequence !== sequence.current) {
         return;
@@ -131,12 +121,7 @@ export const PlaylistSuggestions = ({
         <span className="mono-label">Playlist helper</span>
       </div>
       <p>Select tracks below, describe a mood, or do both.</p>
-      <div className="playlist-ai-summary">
-        <span>{aiSettings === null ? 'Loading AI preferences...' : `${AI_PROVIDER_LABELS[aiSettings.provider]} · ${aiSettings.models[aiSettings.provider]}`}</span>
-        <PreferencesButton />
-      </div>
-      {settingsFailed && <p role="alert">Could not load AI preferences. Reopen the playlist creator to try again.</p>}
-      {aiSettings !== null && !configured && <p role="status">Add your {AI_PROVIDER_LABELS[aiSettings.provider]} API key in Preferences to get suggestions.</p>}
+      <p className="playlist-ai-summary">CLAP · Local audio matching. First use downloads about 210 MB and analyzes your tracks.</p>
       <form onSubmit={(event) => void generate(event)}>
         <label className="playlist-mood-field" htmlFor="playlist-mood">Describe the mood</label>
         <textarea
@@ -157,13 +142,13 @@ export const PlaylistSuggestions = ({
           {generating ? (
             <button className="quiet-button" type="button" onClick={cancel}>Stop</button>
           ) : (
-            <button className="accent-button compact" type="submit" disabled={busy || !configured || (mood.trim().length === 0 && chosenSongs.size === 0)}>
+            <button className="accent-button compact" type="submit" disabled={busy || (mood.trim().length === 0 && chosenSongs.size === 0)}>
               {result === null ? 'Suggest tracks' : 'Suggest again'}
             </button>
           )}
         </div>
       </form>
-      {generating && <p className="playlist-helper-status" role="status">Finding tracks with {activeModel}. This may take a few minutes.</p>}
+      {generating && <p className="playlist-helper-status" role="status">{progressMessage(progress)}</p>}
       {failure !== null && <p className="playlist-search-error" role={failure === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure]}</p>}
       {result !== null && (
         <div className="playlist-suggestions" aria-busy={generating}>
@@ -171,7 +156,8 @@ export const PlaylistSuggestions = ({
             <h4>Suggested tracks</h4>
             <span role="status">{result.suggestions.length} suggestions</span>
           </div>
-          <p>{AI_PROVIDER_LABELS[result.provider]} · {result.model}. Reviewed {result.candidateCount} candidates from {result.librarySongCount.toLocaleString()} library tracks. Add the ones you want.</p>
+          <p>Matched {result.candidateCount.toLocaleString()} local tracks. Reused analysis for {result.cachedCount.toLocaleString()} tracks. Add the ones you want.</p>
+          {result.skippedCount > 0 && <p>{result.skippedCount.toLocaleString()} tracks skipped because local audio was unavailable or could not be analyzed.</p>}
           {result.suggestions.length === 0 ? (
             <p>No matching tracks found. Try a different mood or starting tracks.</p>
           ) : (
