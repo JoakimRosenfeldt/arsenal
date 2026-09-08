@@ -3,6 +3,8 @@ import { open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { SaxesParser, type SaxesTagPlain } from 'saxes';
+import type { SmartPlaylistDefinition } from '../shared/smart-playlists';
+import { isSmartPlaylistNode } from './parse-rekordbox-xml';
 
 export type RekordboxXmlEdit =
   | Readonly<{
@@ -13,9 +15,23 @@ export type RekordboxXmlEdit =
       }>[];
     }>
   | Readonly<{
-      kind: 'create-root-playlist';
+      kind: 'create-playlist';
       name: string;
       trackIds: readonly string[];
+      parentFolderId: string | null;
+      smartDefinition: SmartPlaylistDefinition | null;
+    }>
+  | Readonly<{
+      kind: 'create-folder';
+      name: string;
+      parentFolderId: string | null;
+    }>
+  | Readonly<{
+      kind: 'update-smart-playlist';
+      playlistId: string;
+      name: string;
+      trackIds: readonly string[];
+      smartDefinition: SmartPlaylistDefinition;
     }>;
 
 export type RekordboxWriteFailure =
@@ -45,6 +61,7 @@ type ElementSpan = {
 
 type PlaylistNodeSpan = Omit<ElementSpan, 'kind'> & {
   kind: 'playlist-node';
+  id: string;
   nodeType: string | null;
   keyType: string | null;
   childNodeCount: number;
@@ -108,6 +125,8 @@ const scanXml = (source: string): XmlIndex => {
   let playlists: ElementSpan | null = null;
   let rootPlaylistNode: PlaylistNodeSpan | null = null;
   let parseError: Error | null = null;
+  let folderCount = 0;
+  let playlistCount = 0;
 
   parser.on('error', (error) => {
     parseError = error;
@@ -132,6 +151,9 @@ const scanXml = (source: string): XmlIndex => {
       tag.name === 'NODE' && isPlaylistNodePath(stack)
         ? {
             kind: 'playlist-node',
+            id: tag.attributes.Type === '1' || isSmartPlaylistNode(tag.attributes)
+              ? `playlist-${++playlistCount}`
+              : parent === playlists ? 'root' : `folder-${++folderCount}`,
             ...common,
             nodeType: tag.attributes.Type ?? null,
             keyType: tag.attributes.KeyType ?? null,
@@ -407,37 +429,42 @@ const playlistMarkup = ({
   name,
   newline,
   trackIds,
+  smartDefinition,
 }: Readonly<{
   indent: string;
   name: string;
   newline: string;
   trackIds: readonly string[];
+  smartDefinition: SmartPlaylistDefinition | null;
 }>): string => {
   const opening = `<NODE Name="${escapeXmlAttribute(name)}" Type="1" KeyType="0" Entries="${trackIds.length}">`;
-  if (trackIds.length === 0) {
+  if (trackIds.length === 0 && smartDefinition === null) {
     return opening.replace(/>$/, '/>');
   }
   const trackIndent = `${indent}  `;
   const tracks = trackIds
     .map((trackId) => `${trackIndent}<TRACK Key="${escapeXmlAttribute(trackId)}"/>`)
     .join(newline);
-  return `${opening}${newline}${tracks}${newline}${indent}</NODE>`;
+  const rules = smartDefinition === null ? '' : `${trackIndent}<!--arsenal-smart-playlist:${Buffer.from(JSON.stringify(smartDefinition)).toString('base64')}-->${newline}`;
+  return `${opening}${newline}${rules}${tracks}${newline}${indent}</NODE>`;
 };
 
-const createRootPlaylist = (
+const createNode = (
   source: string,
   index: XmlIndex,
-  edit: Extract<RekordboxXmlEdit, { kind: 'create-root-playlist' }>,
+  edit: Extract<RekordboxXmlEdit, { kind: 'create-playlist' | 'create-folder' }>,
 ): string => {
-  const root = index.rootPlaylistNode;
+  const root = edit.parentFolderId === null ? index.rootPlaylistNode : index.playlistNodes.find((node) => node.id === edit.parentFolderId && node.id.startsWith('folder-'));
+  if (root === undefined) throw new RekordboxWriteError('target-not-found', 'The destination folder no longer exists');
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
   const rootIndent = lineIndentAt(source, root.start);
   const childIndent = `${rootIndent}  `;
-  const markup = playlistMarkup({
+  const markup = edit.kind === 'create-folder' ? `<NODE Name="${escapeXmlAttribute(edit.name)}" Type="0" Count="0"/>` : playlistMarkup({
     indent: childIndent,
     name: edit.name,
     newline,
     trackIds: edit.trackIds,
+    smartDefinition: edit.smartDefinition,
   });
   const nextCount = String(root.childNodeCount + 1);
 
@@ -476,10 +503,19 @@ const createRootPlaylist = (
 
 const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
   const index = scanXml(source);
-  const edited =
-    edit.kind === 'remove-tracks'
-      ? removeTracks(source, index, edit)
-      : createRootPlaylist(source, index, edit);
+  let edited: string;
+  if (edit.kind === 'remove-tracks') {
+    edited = removeTracks(source, index, edit);
+  } else if (edit.kind === 'update-smart-playlist') {
+    const node = index.playlistNodes.find((candidate) => candidate.id === edit.playlistId);
+    if (node === undefined) throw new RekordboxWriteError('target-not-found', 'The playlist no longer exists');
+    edited = applyReplacements(source, [{ start: node.start, end: node.end, text: playlistMarkup({
+      indent: lineIndentAt(source, node.start), name: edit.name, newline: source.includes('\r\n') ? '\r\n' : '\n',
+      trackIds: edit.trackIds, smartDefinition: edit.smartDefinition,
+    }) }]);
+  } else {
+    edited = createNode(source, index, edit);
+  }
   scanXml(edited);
   return edited;
 };

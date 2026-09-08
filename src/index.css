@@ -450,7 +450,30 @@ input:disabled {
 
 .sidebar-playlist-tree {
   margin-top: 5px;
+  min-height: 80px;
 }
+
+.sidebar-playlist-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 4px;
+}
+
+.sidebar-playlist-title .sidebar-section-label { margin-bottom: 0; padding-bottom: 0; }
+
+.sidebar-add {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  color: var(--text-soft);
+  background: transparent;
+  font-size: 21px;
+  cursor: pointer;
+}
+
+.sidebar-add:hover { background: var(--panel-raised); color: var(--accent); }
+.sidebar-add:disabled { opacity: 0.35; cursor: default; }
 
 .sidebar-playlist-branch {
   display: flex;
@@ -577,6 +600,28 @@ input:disabled {
   overflow: hidden;
   grid-column: 2;
   grid-row: 1;
+  background: var(--canvas);
+}
+
+.playlist-action-window {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 72px;
+  background: var(--canvas);
+}
+
+.playlist-action-window.is-folder { grid-template-rows: minmax(0, 1fr); }
+.playlist-action-window .workspace { grid-column: 1; }
+.playlist-action-window .page-header { padding: 20px; }
+.playlist-action-window .playlist-create-actions {
+  position: sticky;
+  bottom: -20px;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
   background: var(--canvas);
 }
 
@@ -1114,22 +1159,6 @@ input:disabled {
 .library-selection-actions small {
   color: var(--muted);
   font-size: 11px;
-}
-
-.library-playlist-name {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.library-playlist-name input {
-  width: min(320px, 65%);
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: 5px;
-  background: var(--canvas);
 }
 
 .library-menu-error {
@@ -2488,6 +2517,82 @@ button.sidebar-search {
   border-bottom: 1px solid var(--line);
 }
 
+.playlist-name-field select,
+.smart-playlist-editor select,
+.smart-playlist-editor input {
+  min-width: 0;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text-soft);
+  background: var(--canvas);
+  font: inherit;
+  font-size: 12px;
+  color-scheme: dark;
+}
+
+.playlist-name-field + .playlist-name-field { margin-top: 16px; }
+.playlist-name-field select:focus-visible,
+.smart-playlist-editor select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.smart-editor-fields { min-width: 0; margin: 0; padding: 0; border: 0; }
+.smart-editor-fields:disabled { opacity: 0.6; }
+
+.smart-playlist-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(160px, 0.7fr);
+  gap: 16px;
+}
+
+.smart-playlist-identity .playlist-name-field { margin: 0; }
+.smart-editor-help { margin: 16px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+.smart-rule-group {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+
+.smart-group-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.smart-group-heading label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--text-soft); font-size: 12px; }
+.smart-group-heading > span { color: var(--accent); font: 500 10px/1 "IBM Plex Mono", monospace; }
+.smart-group-rules { display: flex; flex-direction: column; gap: 8px; }
+
+.smart-rule-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(135px, 1.1fr) minmax(140px, 1.5fr) 28px;
+  gap: 8px;
+  align-items: start;
+}
+
+.smart-rule-row.is-group { grid-template-columns: minmax(0, 1fr) 28px; }
+.smart-rule-row > .smart-remove { grid-column: -2; }
+.smart-rule-values { display: flex; align-items: center; min-width: 0; gap: 8px; }
+.smart-rule-values input, .smart-rule-values select { width: 100%; }
+.smart-rule-values span { color: var(--muted); font-size: 11px; }
+.smart-remove { width: 28px; height: 34px; border-radius: 4px; color: var(--muted); background: transparent; cursor: pointer; font-size: 20px; }
+.smart-remove:hover { color: var(--text); background: var(--line); }
+.smart-group-actions { display: flex; gap: 8px; margin-top: 12px; }
+.smart-group-actions .quiet-button { padding: 6px 9px; }
+
+.smart-output-controls { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 12px; margin: 20px 0; }
+.smart-output-controls label { display: flex; min-width: 0; flex-direction: column; gap: 8px; color: var(--text-soft); font-size: 12px; }
+.smart-preview { margin-top: 24px; border-top: 1px solid var(--line); }
+.smart-preview-heading { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 16px 0; }
+.smart-preview-heading h2 { margin: 0; font-size: 14px; }
+.smart-preview-heading p { margin: 0; color: var(--text-soft); font-size: 12px; }
+.smart-preview-track { display: grid; grid-template-columns: 24px minmax(0, 1fr) 60px 50px; align-items: center; gap: 10px; min-height: 48px; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+.smart-playlist-editor .playlist-create-actions { position: sticky; bottom: -20px; padding: 16px 0; background: var(--canvas); border-top: 1px solid var(--line); }
+.folder-creator { max-width: 540px; }
+
+@media (max-width: 1100px) {
+  .smart-rule-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 28px; }
+  .smart-rule-values { grid-row: 2; grid-column: 1 / 3; }
+  .smart-rule-row > .smart-remove { grid-row: 1; }
+  .smart-rule-group .smart-rule-group { padding: 10px; }
+}
+
 .playlist-name-field,
 .playlist-search {
   display: flex;
@@ -2993,7 +3098,7 @@ button.sidebar-search {
   }
 
   .cuebox-app {
-    grid-template-columns: 78px minmax(0, 1fr);
+    grid-template-columns: 180px minmax(0, 1fr);
   }
 
   .global-player {
@@ -3016,13 +3121,13 @@ button.sidebar-search {
   .sidebar-brand-text,
   .sidebar-version,
   .sidebar-section-label,
-  .nav-label,
   .nav-badge,
   .sidebar-search-label,
-  .search-shortcut,
-  .sidebar-playlist-tree {
+  .search-shortcut {
     display: none;
   }
+
+  .sidebar-playlist-title .sidebar-section-label { display: block; }
 
   .cuebox-mark {
     width: 18px;
@@ -3044,7 +3149,7 @@ button.sidebar-search {
 
   .sidebar-nav-item {
     display: grid;
-    grid-template-columns: 2px 1fr;
+    grid-template-columns: 2px 24px minmax(0, 1fr);
     gap: 7px;
     padding: 0 8px;
   }

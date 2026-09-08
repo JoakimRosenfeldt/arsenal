@@ -10,6 +10,7 @@ import {
 import type { DuplicateViewState } from './App';
 import { TrackWaveform } from './TrackWaveform';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
+import { PlaylistDestination } from './SmartPlaylistEditor';
 import {
   TrackArtwork,
   type PlaybackController,
@@ -27,6 +28,7 @@ import {
   type DuplicateScan,
   type LibrarySummary,
   type RekordboxPlaylist,
+  type PlaylistFolder,
   type SongPage,
   type SongRow,
   type SongSearchRequest,
@@ -173,7 +175,7 @@ export const LibraryPage = ({
 }: CommonPageProps &
   Readonly<{
     onPage: (offset: number) => void;
-    onCreate: (name: string, songIds: readonly string[]) => Promise<boolean>;
+    onCreate: (songIds: readonly string[]) => void;
     onRemove: RemoveSongs;
     onSearch: (query: string, filters: SongFilters) => void;
     filters: SongFilters;
@@ -184,7 +186,7 @@ export const LibraryPage = ({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [selection, setSelection] = useState<ReadonlyMap<string, SongRow>>(new Map());
-  const [action, setAction] = useState<'create' | 'remove' | null>(null);
+  const [action, setAction] = useState<'remove' | null>(null);
   const [menuError, setMenuError] = useState(false);
   const anchorId = useRef<string | null>(null);
 
@@ -265,7 +267,7 @@ export const LibraryPage = ({
       });
       if (choice === 'play') playback.play(song);
       if (choice === 'inspect') setInspectorOpen(true);
-      if (choice === 'create-playlist') setAction('create');
+      if (choice === 'create-playlist') onCreate(songs.map((selected) => selected.id));
       if (choice === 'remove-songs') setAction('remove');
       if (choice === 'clear-selection') setSelection(new Map());
     } catch {
@@ -664,16 +666,15 @@ const FileRemovalOption = ({
 const LibrarySelectionActions = ({
   action, busy, hiddenCount, onAction, onClear, onCreate, onRemove, songs,
 }: Readonly<{
-  action: 'create' | 'remove' | null;
+  action: 'remove' | null;
   busy: boolean;
   hiddenCount: number;
-  onAction: (action: 'create' | 'remove' | null) => void;
+  onAction: (action: 'remove' | null) => void;
   onClear: () => void;
-  onCreate: (name: string, songIds: readonly string[]) => Promise<boolean>;
+  onCreate: (songIds: readonly string[]) => void;
   onRemove: RemoveSongs;
   songs: readonly SongRow[];
 }>): JSX.Element => {
-  const [name, setName] = useState('');
   const [removeLocalFile, setRemoveLocalFile] = useState(false);
   const actionRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -683,33 +684,20 @@ const LibrarySelectionActions = ({
 
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    if (busy || tooMany) return;
-    const ids = songs.map((song) => song.id);
-    const saved = action === 'create'
-      ? await onCreate(name.trim(), ids)
-      : action === 'remove' && await onRemove(ids, removeLocalFile);
-    if (saved) onClear();
+    if (busy || tooMany || action !== 'remove') return;
+    if (await onRemove(songs.map((song) => song.id), removeLocalFile)) onClear();
   };
 
   return (
     <form className="library-selection-actions" onSubmit={(event) => void submit(event)} aria-label="Selected track actions">
-      {action !== null && (
+      {action === 'remove' && (
         <div className="duplicate-selection-review" ref={actionRef} tabIndex={-1}>
-          <strong>{action === 'remove' ? `Remove ${songs.length} selected ${songs.length === 1 ? 'track' : 'tracks'}?` : 'Create playlist from selection'}</strong>
-          <p>{action === 'remove'
-            ? 'This removes the tracks from the XML collection and its playlists. Local audio files are kept unless you choose below.'
-            : 'The playlist will be saved in your Rekordbox XML.'}</p>
-          <ul aria-label={action === 'remove' ? 'Tracks to remove' : 'Tracks in new playlist'}>
+          <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'}?</strong>
+          <p>This removes the tracks from the XML collection and its playlists. Local audio files are kept unless you choose below.</p>
+          <ul aria-label="Tracks to remove">
             {songs.map((song) => <li key={song.id}>{song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}</li>)}
           </ul>
-          {action === 'create' ? (
-            <label className="library-playlist-name">Playlist name
-              <input type="text" value={name} onChange={(event) => setName(event.currentTarget.value)}
-                maxLength={100} required disabled={busy} placeholder="Name your playlist" />
-            </label>
-          ) : (
-            <FileRemovalOption busy={busy} checked={removeLocalFile} onChange={setRemoveLocalFile} songs={songs} />
-          )}
+          <FileRemovalOption busy={busy} checked={removeLocalFile} onChange={setRemoveLocalFile} songs={songs} />
         </div>
       )}
       <div className="duplicate-selection-toolbar">
@@ -719,13 +707,12 @@ const LibrarySelectionActions = ({
         </span>
         {action === null ? <>
           <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>Clear selection</button>
-          <button className="quiet-button" type="button" onClick={() => onAction('create')} disabled={busy || tooMany}>Create playlist</button>
+          <button className="quiet-button" type="button" onClick={() => onCreate(songs.map((song) => song.id))} disabled={busy || tooMany}>Create playlist</button>
           <button className="danger-button" type="button" onClick={() => onAction('remove')} disabled={busy || tooMany}>Remove selected</button>
         </> : <>
           <button className="quiet-button" type="button" onClick={() => { setRemoveLocalFile(false); onAction(null); }} disabled={busy}>Cancel</button>
-          <button className={action === 'remove' ? 'danger-button' : 'accent-button compact'} type="submit"
-            disabled={busy || tooMany || (action === 'create' && name.trim().length === 0)}>
-            {busy ? 'Saving…' : action === 'remove' ? `Remove ${songs.length} ${songs.length === 1 ? 'track' : 'tracks'}` : 'Create playlist'}
+          <button className="danger-button" type="submit" disabled={busy || tooMany}>
+            {busy ? 'Saving…' : `Remove ${songs.length} ${songs.length === 1 ? 'track' : 'tracks'}`}
           </button>
         </>}
       </div>
@@ -1206,6 +1193,12 @@ export const DuplicatesPage = ({
 
 export const PlaylistsPage = ({
   busy,
+  creating,
+  initialParentFolderId,
+  initialSongs,
+  folders,
+  onCancel,
+  onEditSmart,
   onCreate,
   onImport,
   playback,
@@ -1214,19 +1207,25 @@ export const PlaylistsPage = ({
   view,
 }: CommonPageProps &
   Readonly<{
-    onCreate: (name: string, songIds: readonly string[]) => Promise<boolean>;
+    creating: boolean;
+    initialParentFolderId: string | null;
+    initialSongs: readonly SongRow[];
+    folders: readonly PlaylistFolder[];
+    onCancel: () => void;
+    onEditSmart: (playlist: RekordboxPlaylist) => void;
+    onCreate: (name: string, songIds: readonly string[], parentFolderId: string | null) => Promise<boolean>;
     playlists: readonly RekordboxPlaylist[] | null;
     selectedPlaylistId: string | null;
   }>): JSX.Element => {
-  const [creating, setCreating] = useState(false);
+  const [parentFolderId, setParentFolderId] = useState(initialParentFolderId);
   const [name, setName] = useState('');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SongPage | null>(null);
   const [searchRequest, setSearchRequest] = useState<SongSearchRequest>({
     query: '', offset: 0, limit: SONG_PAGE_SIZE,
   });
-  const [chosenSongs, setChosenSongs] = useState<ReadonlyMap<string, SongRow>>(() => new Map());
-  const [loadingSongs, setLoadingSongs] = useState(false);
+  const [chosenSongs, setChosenSongs] = useState<ReadonlyMap<string, SongRow>>(() => new Map(initialSongs.map((song) => [song.id, song])));
+  const [loadingSongs, setLoadingSongs] = useState(creating);
   const [searchFailed, setSearchFailed] = useState(false);
 
   useEffect(() => {
@@ -1261,7 +1260,7 @@ export const PlaylistsPage = ({
         busy={busy}
         eyebrow="Collection / Playlists"
         title="Open a library to view playlists."
-        description="Arsenal reads the playlist tree from the Rekordbox XML and can add root playlists."
+        description="Open a Rekordbox XML to create playlists and folders."
         onImport={onImport}
       />
     );
@@ -1293,23 +1292,12 @@ export const PlaylistsPage = ({
     <section className="workspace-page playlists-page" aria-labelledby="playlists-title">
       <header className="page-header">
         <div className="page-title-line">
-          <h1 id="playlists-title">Playlists</h1>
-          <p>{view.library.playlistCount} in {view.library.sourceName}</p>
+          <h1 id="playlists-title">{creating ? 'New playlist' : selectedPlaylist?.name ?? 'Playlist'}</h1>
+          <p>{creating ? 'Choose tracks from your collection.' : `${selectedPlaylist?.tracks.length ?? 0} tracks`}</p>
         </div>
         <div className="header-actions">
           <span className="status-pill"><i aria-hidden />Rekordbox XML</span>
-          <button className="accent-button compact" type="button" onClick={() => {
-            setName('');
-            setQuery('');
-            setChosenSongs(new Map());
-            setResults(null);
-            setSearchFailed(false);
-            setSearchRequest({ query: '', offset: 0, limit: SONG_PAGE_SIZE });
-            setLoadingSongs(true);
-            setCreating(true);
-          }} disabled={busy || creating}>
-            New playlist
-          </button>
+          {!creating && selectedPlaylist?.smartDefinition && <button className="quiet-button" type="button" disabled={busy} onClick={() => onEditSmart(selectedPlaylist)}>Edit rules</button>}
         </div>
       </header>
 
@@ -1318,7 +1306,7 @@ export const PlaylistsPage = ({
           {creating ? (
             <div className="playlist-creator">
               <div className="playlist-creator-heading">
-                <p className="mono-label">New root playlist</p>
+                <p className="mono-label">New playlist</p>
                 <h2>Choose a name and tracks.</h2>
                 <p>Pick tracks yourself or get suggestions from your library. Tracks keep the order you add them.</p>
               </div>
@@ -1326,6 +1314,7 @@ export const PlaylistsPage = ({
                 <span>Playlist name</span>
                 <input value={name} onChange={(event) => setName(event.currentTarget.value)} maxLength={100} disabled={busy} autoFocus />
               </label>
+              <PlaylistDestination folders={folders} value={parentFolderId} onChange={setParentFolderId} disabled={busy} />
               <PlaylistSuggestions
                 busy={busy}
                 chosenSongs={chosenSongs}
@@ -1391,11 +1380,11 @@ export const PlaylistsPage = ({
               )}
               <div className="playlist-create-actions">
                 <span aria-live="polite">{chosenSongs.size} tracks selected</span>
-                <button className="quiet-button" type="button" onClick={() => setCreating(false)} disabled={busy}>Cancel</button>
+                <button className="quiet-button" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
                 <button
                   className="accent-button compact"
                   type="button"
-                  onClick={() => void onCreate(name, [...chosenSongs.keys()])}
+                  onClick={() => void onCreate(name, [...chosenSongs.keys()], parentFolderId)}
                   disabled={busy || name.trim().length === 0}
                 >
                   {busy ? 'Writing XML' : 'Create playlist'}
@@ -1422,8 +1411,6 @@ export const PlaylistsPage = ({
                   <p className="mono-label">{selectedPlaylist.folderPath.length === 0 ? 'Root' : selectedPlaylist.folderPath.join(' / ')}</p>
                   {selectedPlaylist.kind === 'smart' && <span className="smart-playlist-mark">Smart</span>}
                 </div>
-                <h2>{selectedPlaylist.name}</h2>
-                <span>{selectedPlaylist.tracks.length} tracks</span>
               </div>
               {selectedPlaylist.smartRules !== null && (
                 <div className="playlist-rules">

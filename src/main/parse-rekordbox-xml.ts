@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { SaxesParser } from 'saxes';
 
-import type { SongRow, SongSource } from '../shared/dj-library';
+import type { PlaylistFolder, SongRow, SongSource } from '../shared/dj-library';
+import { readSmartDefinition, type SmartPlaylistDefinition } from '../shared/smart-playlists';
 import type { SmartPlaylistRules } from './smart-playlists';
 
 export type ParsedTrack = Readonly<{
@@ -21,9 +22,12 @@ export type PlaylistReferenceKind =
 
 export type ParsedPlaylist = Readonly<{
   id: string;
+  order: number;
   name: string;
   kind: 'regular' | 'smart';
   folderPath: readonly string[];
+  parentFolderId: string | null;
+  smartDefinition: SmartPlaylistDefinition | null;
   referenceKind: PlaylistReferenceKind;
   keys: readonly string[];
   rules: SmartPlaylistRules;
@@ -32,6 +36,7 @@ export type ParsedPlaylist = Readonly<{
 export type ParsedRekordboxLibrary = Readonly<{
   tracks: readonly ParsedTrack[];
   playlists: readonly ParsedPlaylist[];
+  folders: readonly PlaylistFolder[];
   fingerprint: string;
 }>;
 
@@ -194,9 +199,12 @@ const makeSong = ({
 
 type MutablePlaylist = {
   id: string;
+  order: number;
   name: string;
   kind: 'regular' | 'smart';
   folderPath: string[];
+  parentFolderId: string | null;
+  smartDefinition: SmartPlaylistDefinition | null;
   referenceKind: PlaylistReferenceKind;
   keys: string[];
   rules: {
@@ -206,7 +214,7 @@ type MutablePlaylist = {
 };
 
 type OpenPlaylistNode =
-  | Readonly<{ kind: 'folder'; name: string }>
+  | Readonly<{ kind: 'folder'; name: string; id: string | null }>
   | Readonly<{ kind: 'playlist'; playlist: MutablePlaylist }>;
 
 const referenceKindFor = (keyType: string | undefined): PlaylistReferenceKind => {
@@ -228,7 +236,7 @@ const isEnabledMarker = (value: string | undefined): boolean => {
     normalized !== 'no';
 };
 
-const isSmartPlaylistNode = (
+export const isSmartPlaylistNode = (
   attributes: Readonly<Record<string, string>>,
 ): boolean =>
   attributes.Type === '2' ||
@@ -245,11 +253,13 @@ export const parseRekordboxXml = async (
 ): Promise<ParsedRekordboxLibrary> => {
   const tracks: ParsedTrack[] = [];
   const playlists: MutablePlaylist[] = [];
+  const folders: PlaylistFolder[] = [];
   const playlistNodeStack: OpenPlaylistNode[] = [];
   const elementStack: string[] = [];
   const fingerprint = createHash('sha256');
   let rootSeen = false;
   let collectionSeen = false;
+  let nodeOrder = 0;
 
   const parser = new SaxesParser({ xmlns: false });
 
@@ -355,8 +365,11 @@ export const parseRekordboxXml = async (
       elementStack.slice(2).every((name) => name === 'NODE');
 
     if (isPlaylistNode) {
+      const order = nodeOrder++;
       const name = cleanText(tag.attributes.Name) ?? 'Untitled playlist';
       const smart = isSmartPlaylistNode(tag.attributes);
+      const parent = playlistNodeStack.at(-1);
+      const parentFolderId = parent?.kind === 'folder' ? parent.id : null;
       if (tag.attributes.Type === '1' || smart) {
         const folders = playlistNodeStack
           .filter((node): node is Extract<OpenPlaylistNode, { kind: 'folder' }> =>
@@ -365,9 +378,12 @@ export const parseRekordboxXml = async (
           .map((node) => node.name);
         const playlist: MutablePlaylist = {
           id: `playlist-${playlists.length + 1}`,
+          order,
           name,
           kind: smart ? 'smart' : 'regular',
           folderPath: folders.slice(1),
+          parentFolderId,
+          smartDefinition: null,
           referenceKind: referenceKindFor(tag.attributes.KeyType),
           keys: [],
           rules: { logicalOperator: tag.attributes.LogicalOperator ?? null, conditions: [] },
@@ -375,7 +391,11 @@ export const parseRekordboxXml = async (
         playlists.push(playlist);
         playlistNodeStack.push({ kind: 'playlist', playlist });
       } else {
-        playlistNodeStack.push({ kind: 'folder', name });
+        const id = playlistNodeStack.length === 0 ? null : `folder-${folders.length + 1}`;
+        if (id !== null) {
+          folders.push({ id, order, name, parentFolderId, folderPath: [...playlistNodeStack.slice(1).flatMap((node) => node.kind === 'folder' ? [node.name] : []), name] });
+        }
+        playlistNodeStack.push({ kind: 'folder', name, id });
       }
     }
 
@@ -404,6 +424,19 @@ export const parseRekordboxXml = async (
     }
 
     elementStack.push(tag.name);
+  });
+
+  parser.on('comment', (comment) => {
+    const prefix = 'arsenal-smart-playlist:';
+    const node = playlistNodeStack.at(-1);
+    if (node?.kind !== 'playlist' || !comment.startsWith(prefix) || elementStack.at(-1) !== 'NODE') return;
+    node.playlist.kind = 'smart';
+    try {
+      const raw: unknown = JSON.parse(Buffer.from(comment.slice(prefix.length), 'base64').toString('utf8'));
+      node.playlist.smartDefinition = readSmartDefinition(raw);
+    } catch {
+      // Keep the exported tracks if saved rules cannot be read.
+    }
   });
 
   parser.on('closetag', (tag) => {
@@ -443,6 +476,7 @@ export const parseRekordboxXml = async (
   return {
     tracks,
     playlists,
+    folders,
     fingerprint: fingerprint.digest('hex'),
   };
 };

@@ -24,9 +24,14 @@ import {
   type LibraryMutationResult,
   type MutationFailure,
   type RekordboxPlaylist,
+  type PlaylistWindowContext,
+  type PlaylistWindowRequest,
+  type PlaylistFolder,
   type SongRow,
   type SongFilters,
 } from './shared/dj-library';
+
+import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
 
 type DisplayError = ImportFailure | MutationFailure | 'unexpected';
 
@@ -66,7 +71,9 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
   'cannot-save-preferences':
     'Arsenal could not save the ignored group. Check the app data folder permissions and try again.',
   'invalid-playlist':
-    'The playlist name or track selection is not valid for this XML.',
+    'Check the name and rules. Each selected track needs a unique Rekordbox track ID.',
+  'name-conflict': 'A playlist or folder with this name already exists here. Choose another name.',
+  'folder-not-found': 'The destination folder no longer exists. Choose another folder.',
   'cannot-write':
     'Arsenal could not save the XML. Check the file permissions and try again.',
   unexpected:
@@ -98,12 +105,14 @@ const feedbackForRemoval = (
   };
 };
 
-export const App = (): JSX.Element => {
-  const [activePage, setActivePage] = useState<PageId>('library');
+export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWindowContext }>): JSX.Element => {
+  const playlistEditor = playlistWindow?.request ?? null;
+  const [activePage, setActivePage] = useState<PageId>(playlistWindow ? 'playlists' : 'library');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<LibraryView | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
+  const [folders, setFolders] = useState<readonly PlaylistFolder[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -133,20 +142,25 @@ export const App = (): JSX.Element => {
     const loadInitialState = async (): Promise<void> => {
       try {
         const status = await window.djLibrary.status();
-        if (!active || status.kind === 'empty') {
+        if (!active) return;
+        if (playlistWindow && (status.kind === 'empty' || status.library.revision !== playlistWindow.request.revision)) {
+          setError('stale-library');
           return;
         }
+        if (status.kind === 'empty') return;
 
-        const [page, loadedPlaylists] = await Promise.all([
+        const [page, loadedPlaylists, loadedFolders] = await Promise.all([
           window.djLibrary.listSongs({
             offset: 0,
             limit: SONG_PAGE_SIZE,
           }),
           window.djLibrary.listPlaylists(),
+          window.djLibrary.listFolders(),
         ]);
         if (active) {
           setView({ library: status.library, page });
           setPlaylists(loadedPlaylists);
+          setFolders(loadedFolders);
         }
       } catch {
         if (active) {
@@ -163,10 +177,10 @@ export const App = (): JSX.Element => {
     return () => {
       active = false;
     };
-  }, []);
+  }, [playlistWindow]);
 
   useEffect(() => {
-    if (!hasLibrary) {
+    if (!hasLibrary || playlistWindow !== undefined) {
       return;
     }
 
@@ -196,7 +210,7 @@ export const App = (): JSX.Element => {
     return () => {
       active = false;
     };
-  }, [duplicateMode, hasLibrary, libraryVersion]);
+  }, [duplicateMode, hasLibrary, libraryVersion, playlistWindow]);
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent): void => {
@@ -293,17 +307,20 @@ export const App = (): JSX.Element => {
 
       searchSequence.current += 1;
       setSearching(false);
-      const [page, loadedPlaylists] = await Promise.all([
+      const [page, loadedPlaylists, loadedFolders] = await Promise.all([
         window.djLibrary.listSongs({
           offset: 0,
           limit: SONG_PAGE_SIZE,
         }),
         window.djLibrary.listPlaylists(),
+        window.djLibrary.listFolders(),
       ]);
       stopPlayback();
       setView({ library: result.library, page });
       setPlaylists(loadedPlaylists);
+      setFolders(loadedFolders);
       setSelectedPlaylistId(null);
+      setActivePage('library');
       setQuery('');
       setViewQuery('');
       setFilters(DEFAULT_SONG_FILTERS);
@@ -315,8 +332,8 @@ export const App = (): JSX.Element => {
     }
   };
 
-  const applyMutation = async (
-    changeFor: (revision: string) => LibraryMutation,
+  const applyOperation = async (
+    operation: () => Promise<LibraryMutationResult | null>,
   ): Promise<boolean> => {
     if (busy || view === null) {
       return false;
@@ -328,12 +345,16 @@ export const App = (): JSX.Element => {
     setError(null);
     setFeedback(null);
     try {
-      const result = await window.djLibrary.mutate(
-        changeFor(view.library.revision),
-      );
+      const result = await operation();
+      if (result === null) return false;
       if (result.kind === 'rejected') {
         setError(result.reason);
         return false;
+      }
+
+      if (playlistWindow !== undefined) {
+        window.close();
+        return true;
       }
 
       if (result.kind === 'duplicate-ignored') {
@@ -356,7 +377,7 @@ export const App = (): JSX.Element => {
         Math.floor(Math.max(0, result.library.songCount - 1) / SONG_PAGE_SIZE) *
           SONG_PAGE_SIZE,
       );
-      const [page, loadedPlaylists, scan] = await Promise.all([
+      const [page, loadedPlaylists, loadedFolders, scan] = await Promise.all([
         window.djLibrary.searchSongs({
           offset: Math.min(view.page.offset, maxOffset),
           limit: SONG_PAGE_SIZE,
@@ -364,10 +385,12 @@ export const App = (): JSX.Element => {
           filters,
         }),
         window.djLibrary.listPlaylists(),
+        window.djLibrary.listFolders(),
         window.djLibrary.findDuplicates(duplicateMode),
       ]);
       setView({ library: result.library, page });
       setPlaylists(loadedPlaylists);
+      setFolders(loadedFolders);
       setViewQuery(query);
       setViewFilters(filters);
       setDuplicateState({
@@ -378,8 +401,12 @@ export const App = (): JSX.Element => {
       setFeedback(
         result.kind === 'songs-removed'
           ? feedbackForRemoval(result)
-          : { tone: 'success', message: 'Playlist written to the Rekordbox XML.' },
+          : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved. Matching tracks written to the XML.' : 'Playlist created.' },
       );
+      if ((result.kind === 'playlist-created' || result.kind === 'smart-playlist-saved') && result.library.playlistCount > view.library.playlistCount && selectedPlaylistId !== null) {
+        const previousIndex = playlists?.findIndex((playlist) => playlist.id === selectedPlaylistId) ?? -1;
+        setSelectedPlaylistId(loadedPlaylists.filter((playlist) => playlist.id !== result.playlistId)[previousIndex]?.id ?? null);
+      }
       return true;
     } catch {
       setError('unexpected');
@@ -387,6 +414,14 @@ export const App = (): JSX.Element => {
     } finally {
       setBusy(false);
     }
+  };
+
+  const applyMutation = (changeFor: (revision: string) => LibraryMutation): Promise<boolean> =>
+    applyOperation(() => window.djLibrary.mutate(changeFor(libraryVersion)));
+
+  const openPlaylistEditor = (request: PlaylistWindowRequest): void => {
+    audioRef.current?.pause();
+    void applyOperation(() => window.djLibrary.openPlaylistWindow(request));
   };
 
   const removeSongs = async (
@@ -408,9 +443,11 @@ export const App = (): JSX.Element => {
   const createPlaylist = (
     name: string,
     songIds: readonly string[],
+    parentFolderId: string | null = null,
   ): Promise<boolean> =>
     applyMutation((revision) => ({
       kind: 'create-playlist',
+      parentFolderId,
       revision,
       name,
       songIds,
@@ -452,15 +489,24 @@ export const App = (): JSX.Element => {
 
   const navigate = (nextPage: PageId): void => {
     setActivePage(nextPage);
-    if (nextPage === 'playlists') {
-      setSelectedPlaylistId(null);
-    }
   };
 
   const selectPlaylist = (playlistId: string): void => {
     setSelectedPlaylistId(playlistId);
     setActivePage('playlists');
   };
+
+  const openPlaylistMenu = async (parentFolderId: string | null): Promise<void> => {
+    if (busy || view === null) return;
+    try {
+      const kind = await window.djLibrary.playlistMenu();
+      if (kind !== null) openPlaylistEditor({ parentFolderId, revision: libraryVersion, ...(kind === 'playlist' ? { kind, songIds: [] } : { kind }) });
+    } catch {
+      setError('unexpected');
+    }
+  };
+
+  const cancelPlaylistEditor = (): void => window.close();
 
   const duplicateCount =
     duplicateState.kind === 'ready' &&
@@ -482,7 +528,7 @@ export const App = (): JSX.Element => {
               setFilters(nextFilters);
               void changePage(0, nextQuery, nextFilters);
             }}
-            onCreate={createPlaylist}
+            onCreate={(songIds) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds })}
             onRemove={removeSongs}
             onImport={() => void importLibrary()}
             onPage={(offset) => void changePage(offset)}
@@ -512,11 +558,31 @@ export const App = (): JSX.Element => {
             view={view}
           />
         );
-      case 'playlists':
+      case 'playlists': {
+        const editorKey = libraryVersion;
+        if (playlistEditor?.kind === 'folder') return <FolderCreator key={editorKey} busy={busy} folders={folders}
+          initialParentFolderId={playlistEditor.parentFolderId} onCancel={cancelPlaylistEditor}
+          onCreate={(name, parentFolderId) => applyMutation((revision) => ({ kind: 'create-folder', revision, name, parentFolderId }))} />;
+        if ((playlistEditor?.kind === 'smart-playlist' || playlistEditor?.kind === 'edit-smart-playlist') && view !== null) {
+          const editing = playlistEditor.kind === 'edit-smart-playlist' ? playlists?.find((playlist) => playlist.id === playlistEditor.playlistId) : undefined;
+          return <SmartPlaylistEditor key={editorKey} busy={busy} folders={folders} initialParentFolderId={playlistEditor.parentFolderId}
+            {...(editing?.smartDefinition ? { initialName: editing.name, initialDefinition: editing.smartDefinition } : {})}
+            revision={view.library.revision} playback={playback} onCancel={cancelPlaylistEditor}
+            onSave={(name, parentFolderId, definition) => applyMutation((revision) => ({
+              kind: 'save-smart-playlist', revision, name, parentFolderId, definition,
+              playlistId: playlistEditor.kind === 'edit-smart-playlist' ? playlistEditor.playlistId : null,
+            }))} />;
+        }
         return (
           <PlaylistsPage
-            key={`${libraryVersion}-${selectedPlaylistId ?? 'all'}`}
+            key={`${editorKey}-${selectedPlaylistId ?? 'new'}`}
             busy={busy}
+            creating={playlistEditor?.kind === 'playlist'}
+            initialParentFolderId={playlistEditor?.parentFolderId ?? null}
+            initialSongs={playlistWindow?.initialSongs ?? []}
+            folders={folders}
+            onCancel={cancelPlaylistEditor}
+            onEditSmart={(playlist) => openPlaylistEditor({ kind: 'edit-smart-playlist', playlistId: playlist.id, parentFolderId: playlist.parentFolderId, revision: libraryVersion })}
             onCreate={createPlaylist}
             onImport={() => void importLibrary()}
             playback={playback}
@@ -525,6 +591,7 @@ export const App = (): JSX.Element => {
             view={view}
           />
         );
+      }
       default: {
         const exhaustivePage: never = activePage;
         return exhaustivePage;
@@ -533,18 +600,20 @@ export const App = (): JSX.Element => {
   })();
 
   return (
-    <div className="cuebox-app">
-      <CueboxSidebar
+    <div className={playlistWindow ? `playlist-action-window${playlistEditor?.kind === 'folder' ? ' is-folder' : ''}` : 'cuebox-app'}>
+      {playlistWindow === undefined && <CueboxSidebar
         activePage={activePage}
         busy={busy}
         duplicateCount={duplicateCount}
+        folders={folders}
+        onMenu={(parentFolderId) => void openPlaylistMenu(parentFolderId)}
         hasLibrary={view !== null}
         onNavigate={navigate}
         onPlaylistSelect={selectPlaylist}
         playlists={playlists}
-        selectedPlaylistId={selectedPlaylistId}
+        selectedPlaylistId={playlistEditor === null ? selectedPlaylistId : null}
         songCount={view?.library.songCount ?? 0}
-      />
+      />}
       <main className="workspace" id="main-content">
         {feedback !== null && (
           <div className={`app-feedback is-${feedback.tone}`} role="status">
@@ -564,6 +633,8 @@ export const App = (): JSX.Element => {
             <span className="loading-mark" aria-hidden />
             <p>Opening Arsenal</p>
           </div>
+        ) : playlistWindow && view === null ? (
+          <div className="detail-empty"><h2>Could not open this editor.</h2><button className="quiet-button" type="button" onClick={() => window.close()}>Close window</button></div>
         ) : page}
       </main>
       <audio
@@ -580,7 +651,7 @@ export const App = (): JSX.Element => {
         onEnded={() => setPlaying(false)}
         onError={() => setPlaybackFailed(true)}
       />
-      <CueboxPlayer onStop={stopPlayback} playback={playback} />
+      {playlistEditor?.kind !== 'folder' && <CueboxPlayer onStop={stopPlayback} playback={playback} />}
     </div>
   );
 };

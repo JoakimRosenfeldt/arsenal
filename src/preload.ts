@@ -24,6 +24,11 @@ const api: DjLibraryApi = Object.freeze({
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.findDuplicates, mode),
   listPlaylists: () =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listPlaylists),
+  listFolders: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listFolders),
+  playlistMenu: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.playlistMenu),
+  openPlaylistWindow: (request) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.openPlaylistWindow, request),
+  playlistWindowContext: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.playlistWindowContext),
+  previewSmartPlaylist: (request) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.previewSmartPlaylist, request),
   searchSongs: (request) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.searchSongs, request),
   trackMenu: (request) =>

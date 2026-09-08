@@ -35,7 +35,12 @@ import {
   type PageRequest,
   type SongSearchRequest,
   type TrackMenuAction,
+  type PlaylistCreationKind,
+  type PlaylistWindowContext,
+  type PlaylistWindowRequest,
+  type LibraryMutationResult,
 } from './shared/dj-library';
+import { readSmartDefinition } from './shared/smart-playlists';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -49,7 +54,12 @@ const APP_ICON_PATH = app.isPackaged
 const library = new RekordboxLibrary();
 let mainWindow: BrowserWindow | null = null;
 let preferencesWindow: BrowserWindow | null = null;
+let playlistWindow: BrowserWindow | null = null;
 let libraryActions = 0;
+
+type WindowContent =
+  | Readonly<{ kind: 'main' | 'preferences' }>
+  | { kind: 'playlist'; context: PlaylistWindowContext; result: LibraryMutationResult | null };
 
 app.setName('Arsenal');
 
@@ -196,20 +206,26 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
       removeLocalFile: value.removeLocalFile,
     };
   }
-  if (value.kind === 'create-playlist') {
+  if (value.kind === 'create-playlist' || value.kind === 'create-folder' || value.kind === 'save-smart-playlist') {
     if (
       typeof value.revision !== 'string' ||
       value.revision.length === 0 ||
       typeof value.name !== 'string' ||
-      !Array.isArray(value.songIds) ||
-      !value.songIds.every((songId) => typeof songId === 'string')
+      (value.parentFolderId !== null && typeof value.parentFolderId !== 'string')
     ) {
       throw new Error('Invalid playlist creation');
     }
+    const common = { revision: value.revision, name: value.name, parentFolderId: value.parentFolderId };
+    if (value.kind === 'create-folder') return { kind: 'create-folder', ...common };
+    if (value.kind === 'save-smart-playlist') {
+      const definition = readSmartDefinition(value.definition);
+      if (definition === null || (value.playlistId !== null && typeof value.playlistId !== 'string')) throw new Error('Invalid smart playlist');
+      return { kind: 'save-smart-playlist', ...common, playlistId: value.playlistId, definition };
+    }
+    if (!Array.isArray(value.songIds) || !value.songIds.every((id) => typeof id === 'string')) throw new Error('Invalid playlist tracks');
     return {
       kind: 'create-playlist',
-      revision: value.revision,
-      name: value.name,
+      ...common,
       songIds: value.songIds,
     };
   }
@@ -230,8 +246,12 @@ const assertTrustedSender = (
   }
 };
 
-const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: boolean): void => {
+const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowContent): void => {
   const ipc = owner.webContents.ipc;
+  let saving = false;
+  owner.on('close', (event) => {
+    if (content.kind === 'playlist' && saving) event.preventDefault();
+  });
 
   ipc.handle(PREFERENCES_CHANNELS.open, (event) => {
     assertTrustedSender(event, owner);
@@ -258,7 +278,18 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: bool
     updates.install();
   });
 
-  if (preferences) return;
+  if (content.kind === 'preferences') return;
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.openPlaylistWindow, (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Only the library can open an editor');
+    return openPlaylistWindow(updates, readPlaylistWindowContext(value));
+  });
+  ipc.handle(DJ_LIBRARY_CHANNELS.playlistWindowContext, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'playlist') throw new Error('This is not a playlist window');
+    return content.context;
+  });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.status, (event) => {
     assertTrustedSender(event, owner);
@@ -267,6 +298,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: bool
 
   ipc.handle(DJ_LIBRARY_CHANNELS.importExport, async (event) => {
     assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Import from the library window');
     libraryActions += 1;
     try {
       return await library.importExport(owner);
@@ -294,6 +326,31 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: bool
   ipc.handle(DJ_LIBRARY_CHANNELS.listPlaylists, (event) => {
     assertTrustedSender(event, owner);
     return library.listPlaylists();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.listFolders, (event) => {
+    assertTrustedSender(event, owner);
+    return library.listFolders();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.previewSmartPlaylist, (event, request: unknown) => {
+    assertTrustedSender(event, owner);
+    if (!isRecord(request) || typeof request.revision !== 'string') throw new Error('Invalid preview');
+    const definition = readSmartDefinition(request.definition);
+    if (definition === null) throw new Error('Invalid smart playlist rules');
+    return library.previewSmartPlaylist(request.revision, definition);
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.playlistMenu, (event) => {
+    assertTrustedSender(event, owner);
+    return new Promise<PlaylistCreationKind | null>((resolve) => {
+      Menu.buildFromTemplate([
+        { label: 'New playlist…', click: () => resolve('playlist') },
+        { label: 'New smart playlist…', click: () => resolve('smart-playlist') },
+        { type: 'separator' },
+        { label: 'New folder…', click: () => resolve('folder') },
+      ]).popup({ window: owner, callback: () => resolve(null) });
+    });
   });
 
   ipc.handle(
@@ -333,10 +390,23 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, preferences: bool
 
   ipc.handle(DJ_LIBRARY_CHANNELS.mutate, async (event, change: unknown) => {
     assertTrustedSender(event, owner);
+    const mutation = readLibraryMutation(change);
+    if (saving) throw new Error('A save is already in progress');
+    if (content.kind === 'playlist') {
+      const request = content.context.request;
+      const valid = request.kind === 'playlist' ? mutation.kind === 'create-playlist'
+        : request.kind === 'folder' ? mutation.kind === 'create-folder'
+          : mutation.kind === 'save-smart-playlist' && mutation.playlistId === (request.kind === 'edit-smart-playlist' ? request.playlistId : null);
+      if (!valid || request.revision !== mutation.revision) throw new Error('This edit does not belong to the open window');
+    }
+    saving = true;
     libraryActions += 1;
     try {
-      return await library.mutate(readLibraryMutation(change));
+      const result = await library.mutate(mutation);
+      if (content.kind === 'playlist' && result.kind !== 'rejected') content.result = result;
+      return result;
     } finally {
+      saving = false;
       libraryActions -= 1;
     }
   });
@@ -498,20 +568,56 @@ const configureProtocols = (appSession: Session): void => {
   });
 };
 
-const createWindow = (updates: AppUpdates, preferences = false): BrowserWindow => {
+const readPlaylistWindowContext = (value: unknown): PlaylistWindowContext => {
+  const status = library.status();
+  if (!isRecord(value) || status.kind !== 'ready' || value.revision !== status.library.revision ||
+    (value.parentFolderId !== null && typeof value.parentFolderId !== 'string')) throw new Error('The library changed. Try opening the editor again.');
+  if (value.parentFolderId !== null && !library.listFolders().some((folder) => folder.id === value.parentFolderId)) throw new Error('Folder not found');
+  const common = { revision: status.library.revision, parentFolderId: value.parentFolderId };
+  if (value.kind === 'folder' || value.kind === 'smart-playlist') return { request: { ...common, kind: value.kind }, initialSongs: [] };
+  if (value.kind === 'edit-smart-playlist' && typeof value.playlistId === 'string') {
+    const playlist = library.listPlaylists().find((candidate) => candidate.id === value.playlistId);
+    if (!playlist?.smartDefinition || playlist.parentFolderId !== value.parentFolderId) throw new Error('Smart playlist not found');
+    return { request: { ...common, kind: value.kind, playlistId: value.playlistId }, initialSongs: [] };
+  }
+  if (value.kind !== 'playlist' || !Array.isArray(value.songIds) || value.songIds.length > 10_000 ||
+    !value.songIds.every((id) => typeof id === 'string') || new Set(value.songIds).size !== value.songIds.length) throw new Error('Invalid playlist selection');
+  const songs = new Map(library.listSongs({ offset: 0, limit: Math.max(1, status.library.songCount) }).items.map((song) => [song.id, song]));
+  const initialSongs = value.songIds.map((id) => {
+    const song = songs.get(id);
+    if (song === undefined) throw new Error('Selected track not found');
+    return song;
+  });
+  return { request: { ...common, kind: value.kind, songIds: value.songIds }, initialSongs };
+};
+
+const playlistWindowTitle = (request: PlaylistWindowRequest): string => {
+  switch (request.kind) {
+    case 'playlist': return 'New playlist';
+    case 'smart-playlist': return 'New smart playlist';
+    case 'folder': return 'New folder';
+    case 'edit-smart-playlist': return 'Edit smart playlist';
+  }
+};
+
+const createWindow = (updates: AppUpdates, content: WindowContent = { kind: 'main' }): BrowserWindow => {
+  const preferences = content.kind === 'preferences';
+  const editor = content.kind === 'playlist';
+  const folder = editor && content.context.request.kind === 'folder';
   const entry = app.isPackaged
     ? PACKAGED_RENDERER_URL
     : MAIN_WINDOW_WEBPACK_ENTRY;
   const renderer = new URL(entry);
-  if (preferences) renderer.searchParams.set('window', 'preferences');
+  if (content.kind !== 'main') renderer.searchParams.set('window', content.kind);
   const rendererUrl = renderer.href;
   const window = new BrowserWindow({
-    title: preferences ? 'Arsenal Preferences' : 'Arsenal',
-    width: preferences ? 760 : 1280,
-    height: preferences ? 740 : 800,
-    minWidth: preferences ? 560 : 760,
-    minHeight: 560,
-    autoHideMenuBar: preferences,
+    title: editor ? playlistWindowTitle(content.context.request) : preferences ? 'Arsenal Preferences' : 'Arsenal',
+    width: folder ? 520 : editor ? 1000 : preferences ? 760 : 1280,
+    height: folder ? 380 : editor ? 780 : preferences ? 740 : 800,
+    minWidth: folder ? 420 : preferences ? 560 : 760,
+    minHeight: folder ? 340 : 560,
+    autoHideMenuBar: content.kind !== 'main',
+    ...(editor && mainWindow !== null ? { parent: mainWindow, modal: true } : {}),
     show: false,
     icon: APP_ICON_PATH,
     backgroundColor: '#0b0b0d',
@@ -532,7 +638,7 @@ const createWindow = (updates: AppUpdates, preferences = false): BrowserWindow =
     },
   });
 
-  installIpc(window, updates, preferences);
+  installIpc(window, updates, content);
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url === 'https://www.buymeacoffee.com/joakim_mellonn') {
       void shell.openExternal(url).catch((error: unknown) => {
@@ -569,15 +675,31 @@ const createWindow = (updates: AppUpdates, preferences = false): BrowserWindow =
 
   window.on('closed', () => {
     if (preferences) preferencesWindow = null;
-    else mainWindow = null;
+    else if (content.kind === 'main') mainWindow = null;
   });
   void window.loadURL(rendererUrl);
   return window;
 };
 
+const openPlaylistWindow = (updates: AppUpdates, context: PlaylistWindowContext): Promise<LibraryMutationResult | null> => {
+  if (playlistWindow !== null) {
+    playlistWindow.focus();
+    return Promise.resolve(null);
+  }
+  return new Promise((resolve) => {
+    const content: WindowContent = { kind: 'playlist', context, result: null };
+    const editor = createWindow(updates, content);
+    playlistWindow = editor;
+    editor.once('closed', () => {
+      playlistWindow = null;
+      resolve(content.result);
+    });
+  });
+};
+
 const openPreferences = (updates: AppUpdates): void => {
   if (preferencesWindow === null) {
-    preferencesWindow = createWindow(updates, true);
+    preferencesWindow = createWindow(updates, { kind: 'preferences' });
   } else {
     if (preferencesWindow.isMinimized()) preferencesWindow.restore();
     preferencesWindow.show();

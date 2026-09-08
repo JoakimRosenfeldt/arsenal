@@ -1,4 +1,5 @@
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
+import type { SmartPlaylistDefinition } from './smart-playlists';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
@@ -6,6 +7,11 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   listSongs: 'dj-library:list-songs',
   findDuplicates: 'dj-library:find-duplicates',
   listPlaylists: 'dj-library:list-playlists',
+  listFolders: 'dj-library:list-folders',
+  playlistMenu: 'dj-library:playlist-menu',
+  openPlaylistWindow: 'dj-library:open-playlist-window',
+  playlistWindowContext: 'dj-library:playlist-window-context',
+  previewSmartPlaylist: 'dj-library:preview-smart-playlist',
   searchSongs: 'dj-library:search-songs',
   trackMenu: 'dj-library:track-menu',
   suggestPlaylist: 'dj-library:suggest-playlist',
@@ -134,13 +140,36 @@ export type LibrarySummary = Readonly<{
 
 export type RekordboxPlaylist = Readonly<{
   id: string;
+  order: number;
   name: string;
   kind: 'regular' | 'smart';
   folderPath: readonly string[];
+  parentFolderId: string | null;
   tracks: readonly SongRow[];
   missingTrackCount: number;
   smartRules: SmartPlaylistStatus | null;
+  smartDefinition: SmartPlaylistDefinition | null;
 }>;
+
+export type PlaylistFolder = Readonly<{
+  id: string;
+  order: number;
+  name: string;
+  parentFolderId: string | null;
+  folderPath: readonly string[];
+}>;
+
+export type PlaylistCreationKind = 'playlist' | 'folder' | 'smart-playlist';
+export type PlaylistWindowRequest = Readonly<{ revision: string; parentFolderId: string | null }> & (
+  | Readonly<{ kind: 'playlist'; songIds: readonly string[] }>
+  | Readonly<{ kind: 'folder' | 'smart-playlist' }>
+  | Readonly<{ kind: 'edit-smart-playlist'; playlistId: string }>
+);
+export type PlaylistWindowContext = Readonly<{
+  request: PlaylistWindowRequest;
+  initialSongs: readonly SongRow[];
+}>;
+export type SmartPlaylistPreview = Readonly<{ tracks: readonly SongRow[]; matchingCount: number; total: number }>;
 
 export type SmartPlaylistStatus = Readonly<{
   kind: 'evaluated' | 'unavailable';
@@ -198,6 +227,21 @@ export type LibraryMutation =
       revision: string;
       name: string;
       songIds: readonly string[];
+      parentFolderId: string | null;
+    }>
+  | Readonly<{
+      kind: 'create-folder';
+      revision: string;
+      name: string;
+      parentFolderId: string | null;
+    }>
+  | Readonly<{
+      kind: 'save-smart-playlist';
+      revision: string;
+      name: string;
+      parentFolderId: string | null;
+      playlistId: string | null;
+      definition: SmartPlaylistDefinition;
     }>;
 
 export type LocalFileAction =
@@ -215,6 +259,8 @@ export type MutationFailure =
   | 'duplicate-not-found'
   | 'cannot-save-preferences'
   | 'invalid-playlist'
+  | 'name-conflict'
+  | 'folder-not-found'
   | 'cannot-write';
 
 export type LibraryMutationResult =
@@ -232,6 +278,16 @@ export type LibraryMutationResult =
   | Readonly<{
       kind: 'playlist-created';
       library: LibrarySummary;
+      playlistId: string;
+    }>
+  | Readonly<{
+      kind: 'folder-created';
+      library: LibrarySummary;
+    }>
+  | Readonly<{
+      kind: 'smart-playlist-saved';
+      library: LibrarySummary;
+      playlistId: string;
     }>
   | Readonly<{
       kind: 'rejected';
@@ -244,6 +300,11 @@ export type DjLibraryApi = Readonly<{
   listSongs(page: PageRequest): Promise<SongPage>;
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;
+  listFolders(): Promise<readonly PlaylistFolder[]>;
+  playlistMenu(): Promise<PlaylistCreationKind | null>;
+  openPlaylistWindow(request: PlaylistWindowRequest): Promise<LibraryMutationResult | null>;
+  playlistWindowContext(): Promise<PlaylistWindowContext>;
+  previewSmartPlaylist(request: Readonly<{ revision: string; definition: SmartPlaylistDefinition }>): Promise<SmartPlaylistPreview>;
   searchSongs(request: SongSearchRequest): Promise<SongPage>;
   trackMenu(request: TrackMenuRequest): Promise<TrackMenuAction | null>;
   suggestPlaylist(request: PlaylistSuggestionRequest): Promise<PlaylistSuggestionResult>;

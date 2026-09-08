@@ -1,7 +1,7 @@
-import type { JSX } from 'react';
+import type { JSX, KeyboardEvent, MouseEvent } from 'react';
 
 import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
-import type { RekordboxPlaylist } from './shared/dj-library';
+import type { PlaylistFolder, RekordboxPlaylist } from './shared/dj-library';
 
 export type PageId =
   | 'library'
@@ -66,102 +66,97 @@ const NavigationGroup = ({
   </div>
 );
 
-type PlaylistBranchItem =
-  | Readonly<{ kind: 'folder'; name: string }>
-  | Readonly<{ kind: 'playlist'; playlist: RekordboxPlaylist }>;
-
-const startsWithPath = (
-  fullPath: readonly string[],
-  parentPath: readonly string[],
-): boolean =>
-  parentPath.every((folder, index) => fullPath[index] === folder);
-
-const itemsAtPath = (
-  playlists: readonly RekordboxPlaylist[],
-  path: readonly string[],
-): readonly PlaylistBranchItem[] => {
-  const items: PlaylistBranchItem[] = [];
-  const folders = new Set<string>();
-
-  for (const playlist of playlists) {
-    if (!startsWithPath(playlist.folderPath, path)) {
-      continue;
+const playlistMenuEvents = (onMenu: () => void) => ({
+  onContextMenu: (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    onMenu();
+  },
+  onKeyDown: (event: KeyboardEvent) => {
+    if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+      event.preventDefault();
+      event.stopPropagation();
+      onMenu();
     }
-
-    const childFolder = playlist.folderPath[path.length];
-    if (childFolder === undefined) {
-      items.push({ kind: 'playlist', playlist });
-    } else if (!folders.has(childFolder)) {
-      folders.add(childFolder);
-      items.push({ kind: 'folder', name: childFolder });
-    }
-  }
-
-  return items;
-};
+  },
+});
 
 const PlaylistBranch = ({
   activePage,
   onSelect,
-  path,
+  parentFolderId,
+  folders,
+  onMenu,
   playlists,
   selectedPlaylistId,
 }: Readonly<{
   activePage: PageId;
   onSelect: (playlistId: string) => void;
-  path: readonly string[];
+  parentFolderId: string | null;
+  folders: readonly PlaylistFolder[];
+  onMenu: (parentFolderId: string | null) => void;
   playlists: readonly RekordboxPlaylist[];
   selectedPlaylistId: string | null;
-}>): JSX.Element => (
-  <div className="sidebar-playlist-branch">
-    {itemsAtPath(playlists, path).map((item) => {
-      if (item.kind === 'playlist') {
-        const active = activePage === 'playlists' && item.playlist.id === selectedPlaylistId;
+}>): JSX.Element => {
+  const nodes: (PlaylistFolder | RekordboxPlaylist)[] = [...folders, ...playlists];
+  return (
+    <div className="sidebar-playlist-branch">
+      {nodes.filter((node) => node.parentFolderId === parentFolderId).sort((a, b) => a.order - b.order).map((node) => {
+        if ('tracks' in node) {
+          const playlist = node;
+          const active = activePage === 'playlists' && playlist.id === selectedPlaylistId;
+          return (
+            <button
+              className={active ? 'sidebar-playlist is-active' : 'sidebar-playlist'}
+              type="button"
+              onClick={() => onSelect(playlist.id)}
+              {...playlistMenuEvents(() => onMenu(parentFolderId))}
+              aria-current={active ? 'page' : undefined}
+              title={playlist.kind === 'smart' ? `${playlist.name}, smart playlist` : playlist.name}
+              key={playlist.id}
+            >
+              <span className={playlist.kind === 'smart' ? 'playlist-node-icon is-smart' : 'playlist-node-icon'} aria-hidden />
+              <span>{playlist.name}</span>
+              {playlist.kind === 'smart' && <small>Smart</small>}
+            </button>
+          );
+        }
+        const folder = node;
+        const descendants = new Set([folder.id]);
+        for (const child of folders) {
+          if (child.parentFolderId !== null && descendants.has(child.parentFolderId)) descendants.add(child.id);
+        }
+        const playlistCount = playlists.filter((playlist) => playlist.parentFolderId !== null && descendants.has(playlist.parentFolderId)).length;
         return (
-          <button
-            className={active ? 'sidebar-playlist is-active' : 'sidebar-playlist'}
-            type="button"
-            onClick={() => onSelect(item.playlist.id)}
-            aria-current={active ? 'page' : undefined}
-            title={item.playlist.kind === 'smart' ? `${item.playlist.name}, smart playlist` : item.playlist.name}
-            key={item.playlist.id}
-          >
-            <span className={item.playlist.kind === 'smart' ? 'playlist-node-icon is-smart' : 'playlist-node-icon'} aria-hidden />
-            <span>{item.playlist.name}</span>
-            {item.playlist.kind === 'smart' && <small>Smart</small>}
-          </button>
+          <details className="sidebar-playlist-folder" open key={folder.id}>
+            <summary {...playlistMenuEvents(() => onMenu(folder.id))}>
+              <span className="folder-caret" aria-hidden>›</span>
+              <span>{folder.name}</span>
+              <small>{playlistCount}</small>
+            </summary>
+            <PlaylistBranch
+              activePage={activePage}
+              onSelect={onSelect}
+              parentFolderId={folder.id}
+              folders={folders}
+              onMenu={onMenu}
+              playlists={playlists}
+              selectedPlaylistId={selectedPlaylistId}
+            />
+          </details>
         );
-      }
-
-      const childPath = [...path, item.name];
-      const playlistCount = playlists.filter((playlist) =>
-        startsWithPath(playlist.folderPath, childPath),
-      ).length;
-      return (
-        <details className="sidebar-playlist-folder" open key={childPath.join('\u0000')}>
-          <summary>
-            <span className="folder-caret" aria-hidden>›</span>
-            <span>{item.name}</span>
-            <small>{playlistCount}</small>
-          </summary>
-          <PlaylistBranch
-            activePage={activePage}
-            onSelect={onSelect}
-            path={childPath}
-            playlists={playlists}
-            selectedPlaylistId={selectedPlaylistId}
-          />
-        </details>
-      );
-    })}
-  </div>
-);
+      })}
+    </div>
+  );
+};
 
 export const CueboxSidebar = ({
   activePage,
   busy,
   duplicateCount,
   hasLibrary,
+  folders,
+  onMenu,
   onNavigate,
   onPlaylistSelect,
   playlists,
@@ -172,6 +167,8 @@ export const CueboxSidebar = ({
   busy: boolean;
   duplicateCount: number | null;
   hasLibrary: boolean;
+  folders: readonly PlaylistFolder[];
+  onMenu: (parentFolderId: string | null) => void;
   onNavigate: (page: PageId) => void;
   onPlaylistSelect: (playlistId: string) => void;
   playlists: readonly RekordboxPlaylist[] | null;
@@ -192,8 +189,6 @@ export const CueboxSidebar = ({
         : '—',
     };
   });
-
-  const playlistPageActive = activePage === 'playlists' && selectedPlaylistId === null;
 
   return (
     <aside className="cuebox-sidebar" aria-label="Arsenal navigation">
@@ -225,32 +220,26 @@ export const CueboxSidebar = ({
         />
 
         <div className="sidebar-group sidebar-playlist-group">
-          <p className="sidebar-section-label">Playlists</p>
-          <button
-            className={playlistPageActive ? 'sidebar-nav-item is-active' : 'sidebar-nav-item'}
-            type="button"
-            onClick={() => onNavigate('playlists')}
-            aria-current={playlistPageActive ? 'page' : undefined}
-            aria-label="Playlists"
-          >
-            <span className="nav-active-bar" aria-hidden />
-            <span className="nav-short" aria-hidden>PL</span>
-            <span className="nav-label">All playlists</span>
-            <span className="nav-badge">{playlists?.length ?? (hasLibrary ? '…' : '—')}</span>
-          </button>
+          <div className="sidebar-playlist-title" {...playlistMenuEvents(() => onMenu(null))}>
+            <p className="sidebar-section-label">Playlists</p>
+            <button className="sidebar-add" type="button" aria-label="Create playlist or folder" aria-haspopup="menu"
+              title="New playlist, smart playlist, or folder" disabled={!hasLibrary || busy} onClick={() => onMenu(null)}>+</button>
+          </div>
 
-          <div className="sidebar-playlist-tree">
-            {playlists !== null && playlists.length > 0 && (
+          <div className="sidebar-playlist-tree" {...playlistMenuEvents(() => onMenu(null))}>
+            {playlists !== null && (
               <PlaylistBranch
                 activePage={activePage}
                 onSelect={onPlaylistSelect}
-                path={[]}
+                parentFolderId={null}
+                folders={folders}
+                onMenu={onMenu}
                 playlists={playlists}
                 selectedPlaylistId={selectedPlaylistId}
               />
             )}
-            {playlists !== null && playlists.length === 0 && (
-              <p className="sidebar-playlist-empty">No playlists in this XML</p>
+            {playlists !== null && playlists.length === 0 && folders.length === 0 && (
+              <p className="sidebar-playlist-empty">Use + to create a playlist or folder.</p>
             )}
           </div>
         </div>

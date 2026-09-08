@@ -17,6 +17,7 @@ import type {
   LocalFileAction,
   MutationFailure,
   PageRequest,
+  PlaylistFolder,
   RekordboxPlaylist,
   SongPage,
   SongRow,
@@ -29,6 +30,7 @@ import {
 } from './edit-rekordbox-xml';
 import { findDuplicateScan } from './find-duplicates';
 import { evaluateSmartPlaylist } from './smart-playlists';
+import { describeSmartRules, evaluateArsenalSmartPlaylist, smartDefinitionError, type SmartPlaylistDefinition } from '../shared/smart-playlists';
 import { suggestPlaylist } from './playlist-suggestions';
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from '../shared/playlist-suggestions';
 import {
@@ -59,6 +61,7 @@ type CurrentCatalog = Readonly<{
   tracks: readonly CatalogTrack[];
   songs: readonly SongRow[];
   playlists: readonly RekordboxPlaylist[];
+  folders: readonly PlaylistFolder[];
   duplicateScans: Map<DuplicateMatchMode, DuplicateScan>;
   trackKeysBySongId: ReadonlyMap<string, string>;
   artwork: TrackArtworkStore;
@@ -195,14 +198,26 @@ const projectPlaylists = (
           : null;
     const resolved = playlist.keys.map((key) => lookup?.get(key) ?? null);
     const exportedTracks = resolved.filter((song): song is SongRow => song !== null);
-    const smart = playlist.kind === 'smart'
+    const smart = playlist.smartDefinition !== null
+      ? {
+          ...evaluateArsenalSmartPlaylist(playlist.smartDefinition, tracks.map((track) => track.song)),
+          status: {
+            kind: 'evaluated' as const,
+            message: 'Rules run against the current collection in Arsenal. Save rules to update the tracks in the XML.',
+            conditions: [describeSmartRules(playlist.smartDefinition.rules)],
+          },
+        }
+      : playlist.kind === 'smart'
       ? evaluateSmartPlaylist(playlist.rules, tracks, exportedTracks)
       : null;
     return {
       id: playlist.id,
+      order: playlist.order,
       name: playlist.name,
       kind: playlist.kind,
       folderPath: playlist.folderPath,
+      parentFolderId: playlist.parentFolderId,
+      smartDefinition: playlist.smartDefinition,
       tracks: smart?.tracks ?? exportedTracks,
       missingTrackCount: resolved.filter((song) => song === null).length,
       smartRules: smart?.status ?? null,
@@ -319,7 +334,21 @@ export class RekordboxLibrary {
   }
 
   listPlaylists(): readonly RekordboxPlaylist[] {
-    return this.requireCatalog().playlists;
+    const catalog = this.requireCatalog();
+    return catalog.playlists.map((playlist) => playlist.smartDefinition === null ? playlist : {
+      ...playlist, tracks: evaluateArsenalSmartPlaylist(playlist.smartDefinition, catalog.songs).tracks,
+    });
+  }
+
+  listFolders(): readonly PlaylistFolder[] {
+    return this.requireCatalog().folders;
+  }
+
+  previewSmartPlaylist(revision: string, definition: SmartPlaylistDefinition) {
+    const catalog = this.requireCatalog();
+    if (revision !== catalog.revision) throw new Error('The library changed. Reopen the rule editor.');
+    const result = evaluateArsenalSmartPlaylist(definition, catalog.songs);
+    return { matchingCount: result.matchingCount, total: result.tracks.length, tracks: result.tracks.slice(0, 50) };
   }
 
   async suggestPlaylist(request: PlaylistSuggestionRequest, onProgress: (progress: PlaylistSuggestionProgress) => void): Promise<PlaylistSuggestionResult> {
@@ -461,7 +490,9 @@ export class RekordboxLibrary {
       case 'remove-songs':
         return this.removeSongs(catalog, change);
       case 'create-playlist':
-        return this.createPlaylist(catalog, change);
+      case 'create-folder':
+      case 'save-smart-playlist':
+        return this.createPlaylistNode(catalog, change);
       default: {
         const exhaustiveChange: never = change;
         return exhaustiveChange;
@@ -550,51 +581,72 @@ export class RekordboxLibrary {
     };
   }
 
-  private async createPlaylist(
+  private async createPlaylistNode(
     catalog: CurrentCatalog,
-    change: Extract<LibraryMutation, { kind: 'create-playlist' }>,
+    change: Extract<LibraryMutation, { kind: 'create-playlist' | 'create-folder' | 'save-smart-playlist' }>,
   ): Promise<LibraryMutationResult> {
     const name = change.name.trim();
-    const distinctSongIds = new Set(change.songIds);
     if (
       name.length === 0 ||
       name.length > 100 ||
-      [...name].some((character) => character.charCodeAt(0) < 32) ||
-      change.songIds.length > 10_000 ||
-      distinctSongIds.size !== change.songIds.length
+      [...name].some((character) => character.charCodeAt(0) < 32)
     ) {
       return { kind: 'rejected', reason: 'invalid-playlist' };
     }
 
+    if (change.parentFolderId !== null && !catalog.folders.some((folder) => folder.id === change.parentFolderId)) {
+      return { kind: 'rejected', reason: 'folder-not-found' };
+    }
+    const editingId = change.kind === 'save-smart-playlist' ? change.playlistId : null;
+    if (editingId !== null && !catalog.playlists.some((playlist) => playlist.id === editingId && playlist.smartDefinition !== null && playlist.parentFolderId === change.parentFolderId)) {
+      return { kind: 'rejected', reason: 'invalid-playlist' };
+    }
+    if ([...catalog.folders, ...catalog.playlists].some((node) => node.id !== editingId && node.parentFolderId === change.parentFolderId && node.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      return { kind: 'rejected', reason: 'name-conflict' };
+    }
+    if (change.kind === 'save-smart-playlist' && smartDefinitionError(change.definition) !== null) {
+      return { kind: 'rejected', reason: 'invalid-playlist' };
+    }
+    const songIds = change.kind === 'create-playlist' ? change.songIds : change.kind === 'save-smart-playlist'
+      ? evaluateArsenalSmartPlaylist(change.definition, catalog.songs).tracks.map((song) => song.id) : [];
+    if (new Set(songIds).size !== songIds.length || (change.kind === 'create-playlist' && songIds.length > 10_000)) {
+      return { kind: 'rejected', reason: 'invalid-playlist' };
+    }
+
     const trackIds: string[] = [];
-    for (const songId of change.songIds) {
-      const track = catalog.tracks.find(
-        (candidate) => candidate.song.id === songId,
-      );
+    const bySongId = new Map(catalog.tracks.map((track) => [track.song.id, track]));
+    const idCounts = new Map<string, number>();
+    for (const track of catalog.tracks) {
+      if (track.rekordboxId !== null) idCounts.set(track.rekordboxId, (idCounts.get(track.rekordboxId) ?? 0) + 1);
+    }
+    for (const songId of songIds) {
+      const track = bySongId.get(songId);
       if (track?.rekordboxId === null || track?.rekordboxId === undefined) {
         return { kind: 'rejected', reason: 'invalid-playlist' };
       }
-      const matches = catalog.tracks.filter(
-        (candidate) => candidate.rekordboxId === track.rekordboxId,
-      );
-      if (matches.length !== 1) {
+      if (idCounts.get(track.rekordboxId) !== 1) {
         return { kind: 'rejected', reason: 'invalid-playlist' };
       }
       trackIds.push(track.rekordboxId);
     }
 
-    const reload = await this.writeAndReload(catalog, {
-      kind: 'create-root-playlist',
-      name,
-      trackIds,
-    });
+    const edit: RekordboxXmlEdit = change.kind === 'create-folder'
+      ? { kind: 'create-folder', name, parentFolderId: change.parentFolderId }
+      : change.kind === 'save-smart-playlist' && change.playlistId !== null
+        ? { kind: 'update-smart-playlist', playlistId: change.playlistId, name, trackIds, smartDefinition: change.definition }
+        : { kind: 'create-playlist', name, trackIds, parentFolderId: change.parentFolderId, smartDefinition: change.kind === 'save-smart-playlist' ? change.definition : null };
+    const reload = await this.writeAndReload(catalog, edit);
     if (reload.kind === 'rejected') {
       return reload;
     }
     this.cancelSuggestions();
     this.catalog = reload.catalog;
+    if (change.kind === 'create-folder') return { kind: 'folder-created', library: summaryFor(reload.catalog) };
+    const playlist = reload.catalog.playlists.find((candidate) => candidate.name === name && candidate.parentFolderId === change.parentFolderId);
+    if (playlist === undefined) return { kind: 'rejected', reason: 'cannot-write' };
     return {
-      kind: 'playlist-created',
+      kind: change.kind === 'save-smart-playlist' ? 'smart-playlist-saved' : 'playlist-created',
+      playlistId: playlist.id,
       library: summaryFor(reload.catalog),
     };
   }
@@ -654,6 +706,7 @@ export class RekordboxLibrary {
       tracks,
       songs: tracks.map((track) => track.song),
       playlists: projectPlaylists(parsed.playlists, tracks),
+      folders: parsed.folders,
       duplicateScans: new Map(),
       trackKeysBySongId: new Map(tracks.map((track) => [
         track.song.id,
