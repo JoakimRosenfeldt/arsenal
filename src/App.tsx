@@ -600,7 +600,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   })();
 
   return (
-    <div className={playlistWindow ? `playlist-action-window${playlistEditor?.kind === 'folder' ? ' is-folder' : ''}` : 'cuebox-app'}>
+    <div className={playlistWindow ? 'playlist-action-window' : 'cuebox-app'}>
       {playlistWindow === undefined && <CueboxSidebar
         activePage={activePage}
         busy={busy}
@@ -651,7 +651,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         onEnded={() => setPlaying(false)}
         onError={() => setPlaybackFailed(true)}
       />
-      {playlistEditor?.kind !== 'folder' && <CueboxPlayer onStop={stopPlayback} playback={playback} />}
+      {playlistWindow === undefined && <CueboxPlayer onStop={stopPlayback} playback={playback} />}
     </div>
   );
 };

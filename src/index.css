@@ -610,11 +610,10 @@ input:disabled {
   width: 100vw;
   height: 100vh;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: minmax(0, 1fr) 72px;
+  grid-template-rows: minmax(0, 1fr);
   background: var(--canvas);
 }
 
-.playlist-action-window.is-folder { grid-template-rows: minmax(0, 1fr); }
 .playlist-action-window .workspace { grid-column: 1; }
 .playlist-action-window .page-header { padding: 20px; }
 .playlist-action-window .playlist-create-actions {
