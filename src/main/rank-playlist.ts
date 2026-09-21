@@ -59,30 +59,23 @@ export const orderPlaylist = (
   tempo: TempoRange | null,
   reason: string,
 ): PlaylistSuggestion[] => {
-  const candidates = [...tracks];
+  const candidates = [...tracks].sort((a, b) => b.score - a.score || a.song.id.localeCompare(b.song.id));
   const selected: PlaylistSuggestion[] = [];
   const artistCounts = new Map<string, number>();
-  while (selected.length < 12 && candidates.length > 0) {
-    const ranked = candidates.map((track, index) => {
-      const artist = normalize(track.song.artist ?? track.song.id);
-      const artistCount = artistCounts.get(artist) ?? 0;
-      const bpmDistance = previous ? tempoDistance(track.song.bpm, previous.bpm) : Infinity;
-      const compatibleKey = previous ? harmonicMatch(track.song, previous) : false;
-      return {
-        track, index, artist, artistCount, bpmDistance, compatibleKey,
-        score: track.score + Math.max(0, 1 - bpmDistance / 10) * 2.5 + (compatibleKey ? 1.5 : 0) - artistCount * 6,
-      };
-    }).filter((item) => item.artistCount < 2).sort((a, b) => b.score - a.score || a.track.song.id.localeCompare(b.track.song.id));
-    const best = ranked[0];
-    if (!best) break;
+  for (const track of candidates) {
+    if (selected.length === 12) break;
+    const artist = normalize(track.song.artist ?? track.song.id);
+    const artistCount = artistCounts.get(artist) ?? 0;
+    if (artistCount >= 2) continue;
+    const bpmDistance = previous ? tempoDistance(track.song.bpm, previous.bpm) : Infinity;
+    const compatibleKey = previous ? harmonicMatch(track.song, previous) : false;
     const reasons = [reason];
-    if (tempo !== null && best.track.song.bpm !== null) reasons.push(`${best.track.song.bpm} BPM`);
-    else if (best.bpmDistance <= 3) reasons.push('close tempo');
-    if (best.compatibleKey) reasons.push('compatible key');
-    selected.push({ song: best.track.song, score: best.track.score, reason: `${reasons.join(' · ')}.` });
-    artistCounts.set(best.artist, best.artistCount + 1);
-    previous = best.track.song;
-    candidates.splice(best.index, 1);
+    if (tempo !== null && track.song.bpm !== null) reasons.push(`${track.song.bpm} BPM`);
+    else if (bpmDistance <= 3) reasons.push('close tempo');
+    if (compatibleKey) reasons.push('compatible key');
+    selected.push({ song: track.song, score: track.score, reason: `${reasons.join(' · ')}.` });
+    artistCounts.set(artist, artistCount + 1);
+    previous = track.song;
   }
   return selected;
 };
