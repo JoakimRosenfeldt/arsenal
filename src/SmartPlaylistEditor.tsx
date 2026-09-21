@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 
 import { TrackArtwork, type PlaybackController } from './CueboxPlayer';
+import { HelpTooltip } from './HelpTooltip';
 import { SONG_SOURCE_LABELS, type PlaylistFolder, type SmartPlaylistPreview } from './shared/dj-library';
 import {
   SMART_FIELDS, SMART_OPERATORS, newSmartCondition, newSmartDefinition, operatorsFor, smartDefinitionError,
@@ -178,7 +179,14 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
             </div>
           </fieldset>
           <section className="smart-preview" aria-label="Matching tracks" aria-busy={validation === null && !failed && currentPreview === null}>
-            <div className="smart-preview-heading"><h2>Preview</h2><p role="status">{validation ?? (failed ? 'Could not load matches. Try again.' : currentPreview === null ? 'Finding matches…' : `${currentPreview.matchingCount.toLocaleString()} matches · ${currentPreview.total.toLocaleString()} in playlist`)}</p>
+            <div className="smart-preview-heading">
+              <div className="help-label">
+                <h2>Preview</h2>
+                {currentPreview !== null && currentPreview.total > currentPreview.tracks.length && (
+                  <HelpTooltip label="Preview">{`Showing the first ${currentPreview.tracks.length} tracks.`}</HelpTooltip>
+                )}
+              </div>
+              <p role="status">{validation ?? (failed ? 'Could not load matches. Try again.' : currentPreview === null ? 'Finding matches…' : `${currentPreview.matchingCount.toLocaleString()} matches · ${currentPreview.total.toLocaleString()} in playlist`)}</p>
               {failed && <button className="quiet-button" type="button" onClick={() => setDefinition({ ...definition })}>Retry</button>}
             </div>
             {currentPreview !== null && <>
@@ -189,10 +197,8 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
                   <span className="numeric">{song.bpm ?? ''}</span><span>{song.musicalKey ?? ''}</span>
                 </div>
               ))}
-              {currentPreview.total > currentPreview.tracks.length && <p className="smart-editor-help">Showing the first {currentPreview.tracks.length} tracks.</p>}
             </>}
           </section>
-          <p className="smart-editor-help">Writes matches to XML as a regular playlist. Fresh Rekordbox exports omit Arsenal rules.</p>
           <div className="playlist-create-actions">
             <button className="quiet-button" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
             <button className="accent-button compact" type="button" disabled={busy || !name.trim() || validation !== null || currentPreview === null}

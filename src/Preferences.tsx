@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 
 import { AppUpdates } from './AppUpdates';
+import { HelpTooltip } from './HelpTooltip';
 import type { OpenRouterSettings } from './shared/preferences';
 
 const LibraryPreferences = (): JSX.Element => {
@@ -34,13 +35,15 @@ const LibraryPreferences = (): JSX.Element => {
 
   return (
     <form className="library-preferences" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-      <label className="playlist-name-field" htmlFor="minimum-song-length">
-        <span>Minimum song length (seconds)</span>
+      <div className="playlist-name-field">
+        <div className="help-label">
+          <label htmlFor="minimum-song-length">Minimum song length (seconds)</label>
+          <HelpTooltip label="Minimum song length">Shorter tracks are hidden throughout the app. Use 0 to show all tracks.</HelpTooltip>
+        </div>
         <input id="minimum-song-length" type="number" min="0" step="1" required value={seconds}
-          disabled={!loaded || saving} aria-describedby="minimum-song-length-help"
+          disabled={!loaded || saving}
           onChange={(event) => { setSeconds(event.currentTarget.value); setMessage(null); }} />
-      </label>
-      <p id="minimum-song-length-help">Shorter tracks are hidden throughout the app. Use 0 to show all tracks.</p>
+      </div>
       <button className="quiet-button" type="submit" disabled={!loaded || saving || !valid}>{saving ? 'Saving…' : 'Save'}</button>
       {message !== null && <p role="status">{message}</p>}
       {error !== null && <p role="alert">{error}</p>}
@@ -78,11 +81,13 @@ const OpenRouterPreferences = (): JSX.Element => {
 
   return (
     <div className="ai-model-picker">
-      <p>Descriptions and track metadata go to OpenRouter and TypeSafe. Usage is billed to your OpenRouter account.</p>
       <form className="ai-key-form" onSubmit={(event) => { event.preventDefault(); if (apiKey.trim()) void save(apiKey); }}>
         <fieldset disabled={saving || settings === null}>
           <legend className="visually-hidden">OpenRouter connection</legend>
-          <label htmlFor="playlist-api-key">OpenRouter API key</label>
+          <div className="help-label">
+            <label htmlFor="playlist-api-key">OpenRouter API key</label>
+            {settings?.hasApiKey && settings.keyStorage === 'session' && <HelpTooltip label="Saved API key">Key saved for this session only.</HelpTooltip>}
+          </div>
           <div className="ai-input-action">
             <input id="playlist-api-key" type="password" autoComplete="off" spellCheck={false} value={apiKey} maxLength={4_096}
               placeholder={settings?.hasApiKey ? 'Replace saved key' : 'Paste API key'}
@@ -93,7 +98,6 @@ const OpenRouterPreferences = (): JSX.Element => {
         </fieldset>
       </form>
       {settings === null && error === null && <p role="status">Loading…</p>}
-      {settings !== null && settings.keyStorage !== 'encrypted' && <p>Secure storage unavailable. Your key is kept until you quit.</p>}
       {message !== null && <p role="status">{message}</p>}
       {error !== null && <p role="alert">{error}</p>}
     </div>

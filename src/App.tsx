@@ -56,27 +56,27 @@ export type DuplicateViewState =
 
 const errorMessages: Readonly<Record<DisplayError, string>> = {
   'cannot-read':
-    'Arsenal could not read that XML file. Check that it still exists and that this app can open it.',
+    'Could not open this file. Check that it still exists and try again.',
   'not-rekordbox-xml':
     'That file is not a supported Rekordbox Collection export. In Rekordbox, choose File > Library > Export Collection in xml format.',
   'malformed-xml':
-    'The XML file is incomplete or malformed. Export the collection again, then choose the new file.',
+    'This file is damaged. Export the collection again, then choose the new file.',
   'stale-library':
     'The library changed before this action ran. Try the action again.',
   'source-changed':
-    'The XML changed outside Arsenal. Import it again before editing.',
+    'The library file changed. Import it again before editing.',
   'song-not-found':
-    'That track no longer exists in the open XML.',
+    'That track is no longer in the library.',
   'duplicate-not-found':
     'That duplicate group is no longer in the list. Choose another group.',
   'cannot-save-preferences':
-    'Arsenal could not save the ignored group. Check the app data folder permissions and try again.',
+    'Could not ignore this group. Try again.',
   'invalid-playlist':
-    'Check the name and rules. Each selected track needs a unique Rekordbox track ID.',
+    'Could not save this playlist. Check its name, tracks, and rules.',
   'name-conflict': 'A playlist or folder with this name already exists here. Choose another name.',
   'folder-not-found': 'The destination folder no longer exists. Choose another folder.',
   'cannot-write':
-    'Arsenal could not save the XML. Check the file permissions and try again.',
+    'Could not save the library. Check the file permissions and try again.',
   unexpected:
     'Arsenal could not complete that action. Close the app, reopen it, and try again.',
 };
@@ -97,9 +97,9 @@ const feedbackForRemoval = (
   return {
     tone: problems.length === 0 ? 'success' : 'warning',
     message: [
-      `Removed ${result.removedCount} ${result.removedCount === 1 ? 'track' : 'tracks'} from the Rekordbox XML.`,
+      `Removed ${result.removedCount} ${result.removedCount === 1 ? 'track' : 'tracks'}.`,
       ...(trashedCount === 0 ? [] : [
-        `Moved ${trashedCount} local ${trashedCount === 1 ? 'file' : 'files'} to Trash.`,
+        `Moved ${trashedCount} ${trashedCount === 1 ? 'file' : 'files'} to Trash.`,
       ]),
       ...problems,
     ].join(' '),
@@ -381,7 +381,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         });
         setFeedback({
           tone: 'success',
-          message: 'Group ignored. It will return when a new matching track is imported.',
+          message: 'Group ignored.',
         });
         return true;
       }
@@ -417,7 +417,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       setFeedback(
         result.kind === 'songs-removed'
           ? feedbackForRemoval(result)
-          : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved. Matching tracks written to the XML.' : 'Playlist created.' },
+          : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : 'Playlist created.' },
       );
       if ((result.kind === 'playlist-created' || result.kind === 'smart-playlist-saved') && result.library.playlistCount > view.library.playlistCount && selectedPlaylistId !== null) {
         const previousIndex = playlists?.findIndex((playlist) => playlist.id === selectedPlaylistId) ?? -1;

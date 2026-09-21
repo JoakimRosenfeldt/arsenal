@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 
 import type { UpdateStatus } from './shared/app-updates';
+import { HelpTooltip } from './HelpTooltip';
 
 const messageFor = (status: UpdateStatus): string => {
   switch (status.kind) {
@@ -83,12 +84,16 @@ export const AppUpdates = (): JSX.Element => {
 
   return (
     <div className="app-updates">
-      <p role="status" title={message}>{message}</p>
+      {status?.kind === 'disabled' && !requestFailed ? (
+        <div className="help-label">
+          <p role="status">Updates unavailable</p>
+          <HelpTooltip label="App updates">{message}</HelpTooltip>
+        </div>
+      ) : <p role="status">{message}</p>}
       <button
         type="button"
         onClick={() => void performAction()}
         disabled={status?.kind === 'disabled' || status?.kind === 'checking' || status?.kind === 'downloading'}
-        title={message}
       >
         {label}
       </button>

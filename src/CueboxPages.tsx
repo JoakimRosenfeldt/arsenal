@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useId,
   useRef,
   useState,
   type FormEvent,
@@ -9,6 +8,7 @@ import {
 
 import type { DuplicateViewState } from './App';
 import { TrackWaveform } from './TrackWaveform';
+import { HelpTooltip } from './HelpTooltip';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
 import { PlaylistDestination } from './SmartPlaylistEditor';
 import {
@@ -139,7 +139,7 @@ const NoLibrary = ({
     </div>
     <h1 id="empty-page-title">Import your library</h1>
     <button className="accent-button" type="button" onClick={onImport} disabled={busy}>
-      {busy ? 'Reading XML' : 'Choose Rekordbox XML'}
+      {busy ? 'Importing…' : 'Choose Rekordbox XML'}
     </button>
   </section>
 );
@@ -263,7 +263,7 @@ export const LibraryPage = ({
             Inspector
           </button>
           <button className="quiet-button" type="button" onClick={onImport} disabled={busy}>
-            {busy ? 'Reading XML' : 'Import XML'}
+            {busy ? 'Importing…' : 'Import XML'}
           </button>
         </div>
       </header>
@@ -304,7 +304,7 @@ export const LibraryPage = ({
       {menuError && <p className="library-menu-error" role="alert">Could not open the menu. Use the selection actions below.</p>}
 
       <div className="library-body">
-        <div className="track-table" role="table" aria-label="Songs in the Rekordbox Collection export"
+        <div className="track-table" role="table" aria-label="Library tracks"
           onKeyDown={(event) => {
             if (selectionLocked) return;
             if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') {
@@ -492,7 +492,6 @@ export const LibraryPage = ({
 };
 
 type DuplicateModeCopy = Readonly<{
-  description: string;
   emptyTitle: string;
   label: string;
 }>;
@@ -500,27 +499,22 @@ type DuplicateModeCopy = Readonly<{
 const duplicateModeCopy: Readonly<Record<DuplicateMatchMode, DuplicateModeCopy>> = {
   smart: {
     label: 'Smart',
-    description: 'Matching title, artist, duration, mix, and remixer. Prefers local tracks, then hot cues.',
     emptyTitle: 'No smart matches',
   },
   exact: {
     label: 'Exact',
-    description: 'Same title and artist metadata',
     emptyTitle: 'No exact matches',
   },
   versions: {
     label: 'All versions',
-    description: 'Same base title with recognized version tags',
     emptyTitle: 'No matching versions',
   },
   'dj-edits': {
     label: 'DJ edits',
-    description: 'Intro, extended, clean, dirty, radio, club, and other edits',
     emptyTitle: 'No matching DJ edits',
   },
   remixes: {
     label: 'Remixes',
-    description: 'Remix, rework, bootleg, mashup, VIP, and flip tags',
     emptyTitle: 'No matching remixes',
   },
 };
@@ -575,37 +569,29 @@ const FileRemovalOption = ({
   onChange: (checked: boolean) => void;
   songs: readonly SongRow[];
 }>): JSX.Element => {
-  const tooltipId = useId();
   const disabledReason = busy
     ? 'Wait until the current action finishes.'
     : !songs.some((song) => song.audioUrl !== null)
       ? songs.length === 1
-        ? 'The XML does not link this track to a supported local audio file.'
-        : 'None of the selected tracks are linked to a supported local audio file in the XML.'
+        ? 'No audio file available.'
+        : 'No audio files available for these tracks.'
       : null;
 
   return (
-    <label
-      className="file-removal-option"
-      tabIndex={disabledReason === null ? undefined : 0}
-      aria-describedby={disabledReason === null ? undefined : tooltipId}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(event) => onChange(event.currentTarget.checked)}
-        disabled={disabledReason !== null}
-        aria-describedby={disabledReason === null ? undefined : tooltipId}
-      />
-      {songs.length === 1
-        ? 'Also move the audio file to Trash'
-        : 'Also move audio files to Trash'}
-      {disabledReason !== null && (
-        <span className="file-removal-tooltip" id={tooltipId} role="tooltip">
-          {disabledReason}
-        </span>
-      )}
-    </label>
+    <div className="file-removal-option">
+      <label>
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(event) => onChange(event.currentTarget.checked)}
+          disabled={disabledReason !== null}
+        />
+        {songs.length === 1
+          ? 'Also move the audio file to Trash'
+          : 'Also move audio files to Trash'}
+      </label>
+      {disabledReason !== null && <HelpTooltip label="Audio file removal">{disabledReason}</HelpTooltip>}
+    </div>
   );
 };
 
@@ -638,8 +624,10 @@ const LibrarySelectionActions = ({
     <form className="library-selection-actions" onSubmit={(event) => void submit(event)} aria-label="Selected track actions">
       {action === 'remove' && (
         <div className="duplicate-selection-review" ref={actionRef} tabIndex={-1}>
-          <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'}?</strong>
-          <p>Removes tracks from the XML and its playlists. Audio files are kept unless selected below.</p>
+          <div className="help-label">
+            <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'}?</strong>
+            <HelpTooltip label="Removing tracks">Removes tracks from the library and playlists. Audio files are kept unless selected below.</HelpTooltip>
+          </div>
           <ul aria-label="Tracks to remove">
             {songs.map((song) => <li key={song.id}>{song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}</li>)}
           </ul>
@@ -648,8 +636,8 @@ const LibrarySelectionActions = ({
       )}
       <div className="duplicate-selection-toolbar">
         <span role="status">{songs.length.toLocaleString()} selected
-          {hiddenCount > 0 && <small> · {hiddenCount.toLocaleString()} on other pages or outside filters</small>}
-          {tooMany && <small> · Select at most 10,000 tracks per action</small>}
+          {hiddenCount > 0 && <><small> · {hiddenCount.toLocaleString()} hidden</small> <HelpTooltip label="Hidden selections">Selected tracks on other pages or outside filters.</HelpTooltip></>}
+          {tooMany && <> <HelpTooltip label="Selection limit">Select at most 10,000 tracks per action.</HelpTooltip></>}
         </span>
         {action === null ? <>
           <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>Clear selection</button>
@@ -684,8 +672,10 @@ const DuplicateSelectionActions = ({
     <footer className="duplicate-selection-actions" aria-label="Selected tracks">
       {confirming && (
         <div className="duplicate-selection-review">
-          <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'} from the XML?</strong>
-          <p>Also removes these tracks from playlists.</p>
+          <div className="help-label">
+            <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'}?</strong>
+            <HelpTooltip label="Removing tracks">Also removes these tracks from playlists.</HelpTooltip>
+          </div>
           <ul aria-label="Tracks to remove">
             {songs.map((song) => (
               <li key={song.id}>
@@ -704,7 +694,8 @@ const DuplicateSelectionActions = ({
       )}
       <div className="duplicate-selection-toolbar">
         <span role="status">
-          {songs.length} selected{songs.length > 10_000 ? ' · Select at most 10,000 tracks per removal' : ''}
+          {songs.length} selected
+          {songs.length > 10_000 && <> <HelpTooltip label="Selection limit">Select at most 10,000 tracks per removal.</HelpTooltip></>}
         </span>
         <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>
           Clear selection
@@ -815,8 +806,10 @@ const DuplicateSong = ({
             {confirming ? (
               <>
                 <div>
-                  <strong>Remove this track from the XML?</strong>
-                  <p>Also removes this track from playlists.</p>
+                  <div className="help-label">
+                    <strong>Remove this track?</strong>
+                    <HelpTooltip label="Removing this track">Also removes this track from playlists.</HelpTooltip>
+                  </div>
                   <FileRemovalOption
                     busy={busy}
                     checked={removeLocalFile}
@@ -955,7 +948,7 @@ export const DuplicatesPage = ({
         </div>
         <div className="header-actions">
           <button className="quiet-button" type="button" onClick={onImport} disabled={busy}>
-            {busy ? 'Reading XML' : 'Import XML'}
+            {busy ? 'Importing…' : 'Import XML'}
           </button>
         </div>
         <div className="duplicate-controls">
@@ -970,7 +963,6 @@ export const DuplicatesPage = ({
                 }}
                 disabled={busy}
                 aria-pressed={option === mode}
-                title={duplicateModeCopy[option].description}
                 key={option}
               >
                 {duplicateModeCopy[option].label}
@@ -988,10 +980,7 @@ export const DuplicatesPage = ({
             >
               Select suggested duplicates ({Math.min(suggestedIds.length, 10_000).toLocaleString()})
             </button>
-            <span>
-              Metadata matches only. Review before removal.
-              {suggestedIds.length > 10_000 && ` First 10,000 of ${suggestedIds.length.toLocaleString()}.`}
-            </span>
+            {suggestedIds.length > 10_000 && <HelpTooltip label="Selection limit">{`Selects the first 10,000 of ${suggestedIds.length.toLocaleString()} suggestions.`}</HelpTooltip>}
           </div>
         )}
       </header>
@@ -1028,8 +1017,10 @@ export const DuplicatesPage = ({
           ) : scanFailed ? (
             <div className="detail-empty" role="alert">
               <span className="empty-scan" aria-hidden />
-              <h2>Scan unavailable</h2>
-              <p>Choose another mode or import the XML again.</p>
+              <div className="help-label">
+                <h2>Scan unavailable</h2>
+                <HelpTooltip label="Scan unavailable">Choose another mode or import the XML again.</HelpTooltip>
+              </div>
             </div>
           ) : selectedGroup === null ? (
             <div className="detail-empty">
@@ -1041,16 +1032,15 @@ export const DuplicatesPage = ({
               <div className="duplicate-list-heading">
                 <div>
                   <span className="accent-tag">{selectedGroup.candidates.length} tracks</span>
-                  <p>{selectedGroup.matchReason}</p>
                   <button
                     className="quiet-button duplicate-ignore"
                     type="button"
                     disabled={busy}
-                    title={`Hide this group in ${copy.label} until a new matching track is imported`}
                     onClick={() => void onIgnore(selectedGroup.key)}
                   >
                     Ignore group
                   </button>
+                  <HelpTooltip label="Ignore group">{`Hide this group in ${copy.label} until a new matching track is imported.`}</HelpTooltip>
                 </div>
                 <h2>{selectedGroup.title}</h2>
                 <span>{selectedGroup.artist}</span>
@@ -1295,7 +1285,7 @@ export const PlaylistsPage = ({
                   onClick={() => void onCreate(name, [...chosenSongs.keys()], parentFolderId)}
                   disabled={busy || name.trim().length === 0}
                 >
-                  {busy ? 'Writing XML' : 'Create playlist'}
+                  {busy ? 'Saving…' : 'Create playlist'}
                 </button>
               </div>
             </div>
@@ -1319,9 +1309,7 @@ export const PlaylistsPage = ({
               </div>
               {selectedPlaylist.smartRules !== null && (
                 <div className="playlist-rules">
-                  <p role={selectedPlaylist.smartRules.kind === 'unavailable' ? 'status' : undefined}>
-                    {selectedPlaylist.smartRules.message}
-                  </p>
+                  {selectedPlaylist.smartRules.kind === 'unavailable' && <p role="status">Playlist rules unavailable.</p>}
                   {selectedPlaylist.smartRules.conditions.length > 0 && (
                     <details>
                       <summary>Smart playlist rules</summary>
@@ -1361,7 +1349,7 @@ export const PlaylistsPage = ({
                   <div className="inline-empty"><strong>This playlist is empty.</strong></div>
                 )}
                 {selectedPlaylist.missingTrackCount > 0 && (
-                  <p className="playlist-missing">{selectedPlaylist.missingTrackCount} XML references do not match a collection track.</p>
+                  <p className="playlist-missing">{selectedPlaylist.missingTrackCount} missing {selectedPlaylist.missingTrackCount === 1 ? 'track' : 'tracks'}.</p>
                 )}
               </div>
             </>

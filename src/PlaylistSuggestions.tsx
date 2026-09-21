@@ -11,17 +11,17 @@ import {
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
-  'api-key-missing': 'Add your OpenRouter API key in Preferences to use Jev.',
-  unauthorized: 'OpenRouter rejected the API key or model access. Check your key in Preferences.',
+  'api-key-missing': 'Add your OpenRouter API key in Preferences.',
+  unauthorized: 'Check your OpenRouter API key in Preferences.',
   'insufficient-credit': 'Your OpenRouter account needs more credits.',
-  'rate-limited': 'OpenRouter reached its rate limit. Try again shortly.',
-  'context-too-large': 'The request exceeds Jev\'s input limit. Shorten the description or use fewer starting tracks.',
-  'invalid-response': 'Jev returned incomplete or invalid scores or confidence. Try again.',
-  'service-unavailable': 'Could not reach Jev through OpenRouter. Check your connection and try again.',
-  'request-rejected': 'OpenRouter rejected the Jev request.',
-  'model-unavailable': 'Jev is unavailable through OpenRouter for this account.',
+  'rate-limited': 'Too many requests. Try again shortly.',
+  'context-too-large': 'Shorten the description or use fewer starting tracks.',
+  'invalid-response': 'Could not find suggestions. Try again.',
+  'service-unavailable': 'Suggestions unavailable. Check your connection and try again.',
+  'request-rejected': 'Could not find suggestions. Try again.',
+  'model-unavailable': 'Suggestions unavailable for your OpenRouter account.',
   'invalid-tempo': 'Use a tempo from 30 to 300 BPM, with the lower number first in a range.',
-  'timed-out': 'Jev took too long to respond. Try again.',
+  'timed-out': 'Suggestions took too long. Try again.',
   cancelled: 'Suggestions stopped.',
   'stale-library': 'The library changed. Reopen the playlist creator to use the current tracks.',
   'invalid-request': 'Describe a mood or select some tracks before requesting suggestions.',
@@ -29,11 +29,9 @@ const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
 };
 
 const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
-  if (progress === null) return 'Finding suggestions…';
-  switch (progress.phase) {
-    case 'scoring': return `Scoring ${progress.completed} / ${progress.total} tracks…`;
-    case 'ranking': return 'Ranking tracks…';
-  }
+  return progress?.phase === 'scoring'
+    ? `Finding suggestions… ${progress.completed} / ${progress.total}`
+    : 'Finding suggestions…';
 };
 
 export const PlaylistSuggestions = ({
@@ -131,7 +129,6 @@ export const PlaylistSuggestions = ({
       <div className="playlist-helper-heading">
         <h3 id="playlist-helper-title">Suggestions</h3>
       </div>
-      <p className="playlist-ai-summary">Sends your description and track metadata to OpenRouter.</p>
       <form onSubmit={(event) => void generate(event)}>
         <label className="playlist-mood-field" htmlFor="playlist-mood">Mood</label>
         <textarea
@@ -141,13 +138,10 @@ export const PlaylistSuggestions = ({
           maxLength={MAX_MOOD_LENGTH}
           rows={3}
           disabled={busy || generating}
-          placeholder="Sunset house, 115 BPM"
+          placeholder="Describe a mood, e.g. sunset house at 115 BPM, or select tracks below."
         />
         <div className="playlist-helper-actions">
-          <span>
-            {chosenSongs.size === 0 ? 'Describe a mood or select tracks'
-                : `${chosenSongs.size} starting ${chosenSongs.size === 1 ? 'track' : 'tracks'}`}
-          </span>
+          {chosenSongs.size > 0 && <span>{chosenSongs.size} starting {chosenSongs.size === 1 ? 'track' : 'tracks'}</span>}
           {generating ? (
             <button className="quiet-button" type="button" onClick={cancel}>Stop</button>
           ) : (
@@ -158,7 +152,7 @@ export const PlaylistSuggestions = ({
         </div>
       </form>
       {generating && <p className="playlist-helper-status" role="status">{progressMessage(progress)}</p>}
-      {failure !== null && <p className="playlist-search-error" role={failure.reason === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure.reason]}{failure.detail ? ` ${failure.detail}` : ''}</p>}
+      {failure !== null && <p className="playlist-search-error" role={failure.reason === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure.reason]}</p>}
       {result !== null && (
         <div className="playlist-suggestions" aria-busy={generating}>
           <div className="playlist-helper-heading">
@@ -169,7 +163,7 @@ export const PlaylistSuggestions = ({
             <p>No matching tracks</p>
           ) : (
             <ul className="playlist-suggestion-list">
-              {result.suggestions.map(({ song, confidence, reason }) => {
+              {result.suggestions.map(({ song }) => {
                 const added = chosenSongs.has(song.id);
                 const isPlaying = playback.song?.id === song.id && playback.playing;
                 return (
@@ -187,7 +181,6 @@ export const PlaylistSuggestions = ({
                     <div className="track-identity">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}{song.bpm === null ? '' : ` · ${song.bpm} BPM`}{song.musicalKey === null ? '' : ` · ${song.musicalKey}`}</small>
-                      <p className="playlist-suggestion-reason" title={`${(confidence * 100).toFixed(0)}% confidence`}>{reason}</p>
                     </div>
                     <button className="quiet-button" type="button" onClick={() => onAdd(song)} disabled={busy || added} aria-label={added ? `${song.title} added to playlist` : `Add ${song.title} to playlist`}>
                       {added ? 'Added' : 'Add'}
