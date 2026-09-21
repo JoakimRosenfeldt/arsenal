@@ -12,7 +12,7 @@ import { matchesTempo, orderPlaylist, tempoFromMood } from './rank-playlist';
 // Bound the full JSON payload. Byte size is not a token count; batches shrink
 // if OpenRouter reports that Jev's 32k context limit was exceeded.
 const MAX_INPUT_BYTES = 72_000;
-const MAX_BATCH_TRACKS = 40;
+const MAX_BATCH_TRACKS = 120;
 const MIN_MATCH_SCORE = 67;
 const criteria = [
   'The track belongs to an unrelated musical style and contradicts the requested mood.',
