@@ -67,6 +67,15 @@ export const PlaylistSuggestions = ({
     }
   }, []);
 
+  useEffect(() => window.preferences.onLibraryChanged(() => {
+    sequence.current += 1;
+    pending.current = false;
+    setGenerating(false);
+    setProgress(null);
+    setResult(null);
+    setFailure(null);
+  }), []);
+
   const generate = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
     if (pending.current || busy || (mood.trim().length === 0 && chosenSongs.size === 0)) {

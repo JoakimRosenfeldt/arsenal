@@ -3,6 +3,52 @@ import { useEffect, useState, type JSX } from 'react';
 import { AppUpdates } from './AppUpdates';
 import type { OpenRouterSettings } from './shared/preferences';
 
+const LibraryPreferences = (): JSX.Element => {
+  const [seconds, setSeconds] = useState('');
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void window.preferences.library().then((settings) => {
+      if (active) { setSeconds(String(settings.minimumSongLengthSeconds)); setLoaded(true); }
+    }).catch(() => { if (active) setError('Could not load library settings. Reopen Preferences to try again.'); });
+    return () => { active = false; };
+  }, []);
+
+  const valid = seconds.trim() !== '' && Number.isSafeInteger(Number(seconds)) && Number(seconds) >= 0;
+  const save = async (): Promise<void> => {
+    if (saving || !valid) return;
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const settings = await window.preferences.saveMinimumSongLength(Number(seconds));
+      setSeconds(String(settings.minimumSongLengthSeconds));
+      setMessage('Minimum song length saved.');
+    } catch {
+      setError('Could not save the minimum song length. Try again.');
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <form className="library-preferences" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <p>Hide short tracks across the library, playlists, duplicates and suggestions.</p>
+      <label className="playlist-name-field" htmlFor="minimum-song-length">
+        <span>Minimum song length (seconds)</span>
+        <input id="minimum-song-length" type="number" min="0" step="1" required value={seconds}
+          disabled={!loaded || saving} aria-describedby="minimum-song-length-help"
+          onChange={(event) => { setSeconds(event.currentTarget.value); setMessage(null); }} />
+      </label>
+      <p id="minimum-song-length-help">Default: 30 seconds. Use 0 to include every track. Tracks with an unknown duration stay included. Changes apply immediately.</p>
+      <button className="quiet-button" type="submit" disabled={!loaded || saving || !valid}>{saving ? 'Saving…' : 'Save'}</button>
+      {message !== null && <p role="status">{message}</p>}
+      {error !== null && <p role="alert">{error}</p>}
+    </form>
+  );
+};
+
 const OpenRouterPreferences = (): JSX.Element => {
   const [settings, setSettings] = useState<OpenRouterSettings | null>(null);
   const [apiKey, setApiKey] = useState('');
@@ -73,7 +119,7 @@ export const PreferencesButton = (): JSX.Element => {
 };
 
 export const Preferences = (): JSX.Element => {
-  const [section, setSection] = useState<'ai' | 'updates'>('ai');
+  const [section, setSection] = useState<'library' | 'ai' | 'updates'>('library');
   return (
     <div className="preferences-window">
       <header className="preferences-header">
@@ -81,10 +127,15 @@ export const Preferences = (): JSX.Element => {
         <span>Arsenal</span>
       </header>
       <nav className="preferences-navigation" aria-label="Preferences sections">
+        <button type="button" aria-current={section === 'library' ? 'page' : undefined} onClick={() => setSection('library')}>Library</button>
         <button type="button" aria-current={section === 'ai' ? 'page' : undefined} onClick={() => setSection('ai')}>Music recommendations</button>
         <button type="button" aria-current={section === 'updates' ? 'page' : undefined} onClick={() => setSection('updates')}>App updates</button>
       </nav>
       <main className="preferences-content" id="main-content">
+        <section hidden={section !== 'library'} aria-labelledby="library-preferences-title">
+          <h2 id="library-preferences-title">Library</h2>
+          <LibraryPreferences />
+        </section>
         <section hidden={section !== 'ai'} aria-labelledby="ai-preferences-title">
           <h2 id="ai-preferences-title">Music recommendations</h2>
           <OpenRouterPreferences />

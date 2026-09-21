@@ -268,6 +268,24 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     if (content.kind !== 'preferences') throw new Error('Open Preferences to change the API key.');
     return openRouter.saveKey(value);
   });
+  ipc.handle(PREFERENCES_CHANNELS.library, (event) => {
+    assertTrustedSender(event, owner);
+    return library.settings();
+  });
+  ipc.handle(PREFERENCES_CHANNELS.saveMinimumSongLength, async (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'preferences') throw new Error('Open Preferences to change the minimum song length.');
+    libraryActions += 1;
+    try {
+      const settings = await library.saveMinimumSongLength(value);
+      for (const window of BrowserWindow.getAllWindows()) {
+        window.webContents.send(PREFERENCES_CHANNELS.libraryChanged, settings);
+      }
+      return settings;
+    } finally {
+      libraryActions -= 1;
+    }
+  });
 
   ipc.handle(APP_UPDATE_CHANNELS.status, (event) => {
     assertTrustedSender(event, owner);

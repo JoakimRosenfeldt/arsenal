@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type JSX } from 'react';
+import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
+import { DEFAULT_MINIMUM_SONG_LENGTH_SECONDS } from './shared/preferences';
 
 import {
   CueboxPlayer,
@@ -109,6 +110,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const playlistEditor = playlistWindow?.request ?? null;
   const [activePage, setActivePage] = useState<PageId>(playlistWindow ? 'playlists' : 'library');
   const [loading, setLoading] = useState(true);
+  const [minimumSongLengthSeconds, setMinimumSongLengthSeconds] = useState(DEFAULT_MINIMUM_SONG_LENGTH_SECONDS);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<LibraryView | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
@@ -141,8 +143,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
 
     const loadInitialState = async (): Promise<void> => {
       try {
-        const status = await window.djLibrary.status();
+        const [status, settings] = await Promise.all([window.djLibrary.status(), window.preferences.library()]);
         if (!active) return;
+        setMinimumSongLengthSeconds(settings.minimumSongLengthSeconds);
         if (playlistWindow && (status.kind === 'empty' || status.library.revision !== playlistWindow.request.revision)) {
           setError('stale-library');
           return;
@@ -177,7 +180,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     return () => {
       active = false;
     };
-  }, [playlistWindow]);
+  }, [playlistWindow, minimumSongLengthSeconds]);
 
   useEffect(() => {
     if (!hasLibrary || playlistWindow !== undefined) {
@@ -210,7 +213,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     return () => {
       active = false;
     };
-  }, [duplicateMode, hasLibrary, libraryVersion, playlistWindow]);
+  }, [duplicateMode, hasLibrary, libraryVersion, playlistWindow, minimumSongLengthSeconds]);
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent): void => {
@@ -225,7 +228,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     return () => window.removeEventListener('keydown', focusSearch);
   }, [activePage]);
 
-  const stopPlayback = (): void => {
+  const stopPlayback = useCallback((): void => {
     const audio = audioRef.current;
     audio?.pause();
     if (audio !== null) {
@@ -237,7 +240,20 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setPosition(0);
     setAudioDuration(0);
     setPlaybackFailed(false);
-  };
+  }, []);
+
+  useEffect(() => window.preferences.onLibraryChanged((settings) => {
+    if (settings.minimumSongLengthSeconds === minimumSongLengthSeconds) return;
+    stopPlayback();
+    searchSequence.current += 1;
+    setSearching(false);
+    setQuery('');
+    setViewQuery('');
+    setFilters(DEFAULT_SONG_FILTERS);
+    setViewFilters(DEFAULT_SONG_FILTERS);
+    setDuplicateState({ kind: 'empty' });
+    setMinimumSongLengthSeconds(settings.minimumSongLengthSeconds);
+  }), [minimumSongLengthSeconds, stopPlayback]);
 
   const playSong = (song: SongRow): void => {
     const audio = audioRef.current;
@@ -520,7 +536,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       case 'library':
         return (
           <LibraryPage
-            key={libraryVersion}
+            key={`${libraryVersion}-${minimumSongLengthSeconds}`}
             busy={busy}
             filters={filters}
             onSearch={(nextQuery, nextFilters) => {
@@ -542,6 +558,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       case 'duplicates':
         return (
           <DuplicatesPage
+            key={`${libraryVersion}-${minimumSongLengthSeconds}`}
             busy={busy}
             mode={duplicateMode}
             onIgnore={(groupKey) => applyMutation((revision) => ({
@@ -566,6 +583,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         if ((playlistEditor?.kind === 'smart-playlist' || playlistEditor?.kind === 'edit-smart-playlist') && view !== null) {
           const editing = playlistEditor.kind === 'edit-smart-playlist' ? playlists?.find((playlist) => playlist.id === playlistEditor.playlistId) : undefined;
           return <SmartPlaylistEditor key={editorKey} busy={busy} folders={folders} initialParentFolderId={playlistEditor.parentFolderId}
+            minimumSongLengthSeconds={minimumSongLengthSeconds}
             {...(editing?.smartDefinition ? { initialName: editing.name, initialDefinition: editing.smartDefinition } : {})}
             revision={view.library.revision} playback={playback} onCancel={cancelPlaylistEditor}
             onSave={(name, parentFolderId, definition) => applyMutation((revision) => ({
@@ -577,6 +595,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           <PlaylistsPage
             key={`${editorKey}-${selectedPlaylistId ?? 'new'}`}
             busy={busy}
+            minimumSongLengthSeconds={minimumSongLengthSeconds}
             creating={playlistEditor?.kind === 'playlist'}
             initialParentFolderId={playlistEditor?.parentFolderId ?? null}
             initialSongs={playlistWindow?.initialSongs ?? []}

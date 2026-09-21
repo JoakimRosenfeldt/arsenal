@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 import { APP_UPDATE_CHANNELS, type AppUpdatesApi, type UpdateStatus } from './shared/app-updates';
-import { PREFERENCES_CHANNELS, type PreferencesApi } from './shared/preferences';
+import { PREFERENCES_CHANNELS, type LibrarySettings, type PreferencesApi } from './shared/preferences';
 import { PLAYLIST_DEBUG_CHANNEL, PLAYLIST_DEBUG_PREFIX, PLAYLIST_PROGRESS_CHANNEL, type PlaylistSuggestionProgress } from './shared/playlist-suggestions';
 
 ipcRenderer.on(PLAYLIST_DEBUG_CHANNEL, (_event: IpcRendererEvent, message: string, details: Record<string, unknown>) => {
@@ -52,6 +52,13 @@ const preferences: PreferencesApi = Object.freeze({
   open: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.open),
   openRouter: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.openRouter),
   saveOpenRouterKey: (apiKey) => ipcRenderer.invoke(PREFERENCES_CHANNELS.saveOpenRouterKey, apiKey),
+  library: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.library),
+  saveMinimumSongLength: (seconds) => ipcRenderer.invoke(PREFERENCES_CHANNELS.saveMinimumSongLength, seconds),
+  onLibraryChanged: (listener) => {
+    const handleChange = (_event: IpcRendererEvent, settings: LibrarySettings): void => listener(settings);
+    ipcRenderer.on(PREFERENCES_CHANNELS.libraryChanged, handleChange);
+    return () => { ipcRenderer.removeListener(PREFERENCES_CHANNELS.libraryChanged, handleChange); };
+  },
 });
 contextBridge.exposeInMainWorld('preferences', preferences);
 
