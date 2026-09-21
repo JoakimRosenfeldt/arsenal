@@ -70,7 +70,7 @@ export const orderPlaylist = (
       const compatibleKey = previous ? harmonicMatch(track.song, previous) : false;
       return {
         track, index, artist, artistCount, bpmDistance, compatibleKey,
-        score: track.score + Math.max(0, 1 - bpmDistance / 10) * 0.025 + (compatibleKey ? 0.015 : 0) - artistCount * 0.06,
+        score: track.score + Math.max(0, 1 - bpmDistance / 10) * 2.5 + (compatibleKey ? 1.5 : 0) - artistCount * 6,
       };
     }).filter((item) => item.artistCount < 2).sort((a, b) => b.score - a.score || a.track.song.id.localeCompare(b.track.song.id));
     const best = ranked[0];
@@ -79,7 +79,7 @@ export const orderPlaylist = (
     if (tempo !== null && best.track.song.bpm !== null) reasons.push(`${best.track.song.bpm} BPM`);
     else if (best.bpmDistance <= 3) reasons.push('close tempo');
     if (best.compatibleKey) reasons.push('compatible key');
-    selected.push({ song: best.track.song, reason: `${reasons.join(' · ')}.` });
+    selected.push({ song: best.track.song, score: best.track.score, reason: `${reasons.join(' · ')}.` });
     artistCounts.set(best.artist, best.artistCount + 1);
     previous = best.track.song;
     candidates.splice(best.index, 1);

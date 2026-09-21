@@ -19,6 +19,8 @@ const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
   'context-too-large': 'The request exceeds Jev\'s input limit. Shorten the description or use fewer starting tracks.',
   'invalid-response': 'Jev returned incomplete or invalid scores. Try again.',
   'service-unavailable': 'Could not reach Jev through OpenRouter. Check your connection and try again.',
+  'request-rejected': 'OpenRouter rejected the Jev request.',
+  'model-unavailable': 'Jev is unavailable through OpenRouter for this account.',
   'invalid-tempo': 'Use a tempo from 30 to 300 BPM, with the lower number first in a range.',
   'timed-out': 'Jev took too long to respond. Try again.',
   cancelled: 'Suggestions stopped.',
@@ -52,7 +54,7 @@ export const PlaylistSuggestions = ({
   const [progress, setProgress] = useState<PlaylistSuggestionProgress | null>(null);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<Extract<PlaylistSuggestionResult, { kind: 'ready' }> | null>(null);
-  const [failure, setFailure] = useState<PlaylistSuggestionFailure | null>(null);
+  const [failure, setFailure] = useState<Extract<PlaylistSuggestionResult, { kind: 'rejected' }> | null>(null);
   const sequence = useRef(0);
   const pending = useRef(false);
   useEffect(() => window.djLibrary.onSuggestionProgress((next) => {
@@ -93,12 +95,12 @@ export const PlaylistSuggestions = ({
       if (response.kind === 'ready') {
         setResult(response);
       } else {
-        setFailure(response.reason);
+        setFailure(response);
       }
     } catch (error: unknown) {
       console.error(`${PLAYLIST_DEBUG_PREFIX} renderer request failed`, error);
       if (requestSequence === sequence.current) {
-        setFailure('failed');
+        setFailure({ kind: 'rejected', reason: 'failed' });
       }
     } finally {
       if (requestSequence === sequence.current) {
@@ -112,7 +114,7 @@ export const PlaylistSuggestions = ({
     sequence.current += 1;
     pending.current = false;
     setGenerating(false);
-    setFailure('cancelled');
+    setFailure({ kind: 'rejected', reason: 'cancelled' });
     void window.djLibrary.cancelSuggestions().catch(() => undefined);
   };
 
@@ -151,7 +153,7 @@ export const PlaylistSuggestions = ({
         </div>
       </form>
       {generating && <p className="playlist-helper-status" role="status">{progressMessage(progress)}</p>}
-      {failure !== null && <p className="playlist-search-error" role={failure === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure]}</p>}
+      {failure !== null && <p className="playlist-search-error" role={failure.reason === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure.reason]}{failure.detail ? ` ${failure.detail}` : ''}</p>}
       {result !== null && (
         <div className="playlist-suggestions" aria-busy={generating}>
           <div className="playlist-helper-heading">
@@ -163,7 +165,7 @@ export const PlaylistSuggestions = ({
             <p>No matching tracks found. Try a different mood or starting tracks.</p>
           ) : (
             <ul className="playlist-suggestion-list">
-              {result.suggestions.map(({ song, reason }) => {
+              {result.suggestions.map(({ song, score, reason }) => {
                 const added = chosenSongs.has(song.id);
                 const isPlaying = playback.song?.id === song.id && playback.playing;
                 return (
@@ -181,7 +183,7 @@ export const PlaylistSuggestions = ({
                     <div className="track-identity">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}{song.bpm === null ? '' : ` · ${song.bpm} BPM`}{song.musicalKey === null ? '' : ` · ${song.musicalKey}`}</small>
-                      <p className="playlist-suggestion-reason">{reason}</p>
+                      <p className="playlist-suggestion-reason">{score.toFixed(1)}/100 match · {reason}</p>
                     </div>
                     <button className="quiet-button" type="button" onClick={() => onAdd(song)} disabled={busy || added} aria-label={added ? `${song.title} added to playlist` : `Add ${song.title} to playlist`}>
                       {added ? 'Added' : 'Add to playlist'}

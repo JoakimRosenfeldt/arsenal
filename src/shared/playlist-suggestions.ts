@@ -16,6 +16,7 @@ export type PlaylistSuggestionRequest = Readonly<{
 
 export type PlaylistSuggestion = Readonly<{
   song: SongRow;
+  score: number;
   reason: string;
 }>;
 
@@ -31,6 +32,8 @@ export type PlaylistSuggestionFailure =
   | 'context-too-large'
   | 'invalid-response'
   | 'service-unavailable'
+  | 'request-rejected'
+  | 'model-unavailable'
   | 'invalid-tempo'
   | 'timed-out'
   | 'cancelled'
@@ -46,4 +49,4 @@ export type PlaylistSuggestionResult =
       librarySongCount: number;
       model: string;
     }>
-  | Readonly<{ kind: 'rejected'; reason: PlaylistSuggestionFailure }>;
+  | Readonly<{ kind: 'rejected'; reason: PlaylistSuggestionFailure; detail?: string }>;

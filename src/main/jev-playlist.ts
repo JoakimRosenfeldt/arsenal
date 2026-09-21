@@ -9,15 +9,22 @@ import {
 import { logPlaylistDebug } from './playlist-debug';
 import { matchesTempo, orderPlaylist, tempoFromMood } from './rank-playlist';
 
-// Count the whole JSON body as UTF-8 bytes, conservatively budgeting one token
-// per byte. Leave 8k of the 32k context for provider formatting and overhead.
-const MAX_INPUT_BYTES = 24_000;
+// Bound the full JSON payload. Byte size is not a token count; batches shrink
+// if OpenRouter reports that Jev's 32k context limit was exceeded.
+const MAX_INPUT_BYTES = 72_000;
 const MAX_BATCH_TRACKS = 40;
+const MIN_MATCH_SCORE = 67;
 const criteria = [
-  'The track conflicts with the requested musical style or mood.',
-  'The metadata gives little evidence of a fit, or suggests only a loose connection.',
-  'The metadata supports a compatible musical style and mood.',
-  'The metadata strongly supports a close match to the requested musical style and mood.',
+  'The track belongs to an unrelated musical style and contradicts the requested mood.',
+  'The track shares a broad musical category but contradicts the requested mood.',
+  'The track has a distant stylistic connection; the requested mood is unsupported.',
+  'The track shares the requested genre, but its mood or energy is a poor fit.',
+  'Some requested qualities fit, but a defining musical quality conflicts.',
+  'The track plausibly fits the request, but defining musical details are unknown.',
+  'The track fits the main musical style and mood, with some requested details unsupported.',
+  'The track fits the style, mood and energy, with only minor musical differences.',
+  'The track closely fits all stated musical qualities, with clear metadata support.',
+  'The track is an exceptionally close fit to the specific requested sound, with no evident musical mismatch.',
 ];
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -55,10 +62,14 @@ const requestBody = (songs: readonly SongRow[], seeds: readonly SongRow[], mood:
   }])),
 });
 
-const serviceFailure = (status: number): PlaylistSuggestionFailure => {
+const serviceFailure = (status: number, message: string): PlaylistSuggestionFailure => {
+  if ((status === 400 || status === 422) && /context|token.{0,20}(limit|exceed)|input.{0,20}(long|large)/iu.test(message)) return 'context-too-large';
   switch (status) {
+    case 400: case 422: return 'request-rejected';
     case 401: case 403: return 'unauthorized';
     case 402: return 'insufficient-credit';
+    case 404: return 'model-unavailable';
+    case 408: case 504: case 524: return 'timed-out';
     case 413: return 'context-too-large';
     case 429: return 'rate-limited';
     default: return 'service-unavailable';
@@ -74,6 +85,8 @@ export const suggestJevPlaylist = async (
 ): Promise<PlaylistSuggestionResult> => {
   if (signal.aborted) return { kind: 'rejected', reason: 'cancelled' };
   if (!apiKey) return { kind: 'rejected', reason: 'api-key-missing' };
+  const redact = (message: string): string => message.replaceAll(apiKey, '[REDACTED]')
+    .replace(/sk-or-[a-z0-9_-]+/giu, '[REDACTED]').slice(0, 500);
   const tempo = tempoFromMood(request.mood);
   if (tempo && (tempo.min < 30 || tempo.max > 300 || tempo.min > tempo.max)) return { kind: 'rejected', reason: 'invalid-tempo' };
   const byId = new Map(songs.map((song) => [song.id, song]));
@@ -85,12 +98,13 @@ export const suggestJevPlaylist = async (
   const candidates = songs.filter((song) => !excludedIds.has(song.id) && matchesTempo(song, tempo));
   const scored: { song: SongRow; score: number }[] = [];
   const deadline = AbortSignal.timeout(300_000);
+  let batchLimit = MAX_BATCH_TRACKS;
   for (let offset = 0; offset < candidates.length;) {
     if (signal.aborted) return { kind: 'rejected', reason: 'cancelled' };
     if (deadline.aborted) return { kind: 'rejected', reason: 'timed-out' };
     const batch: SongRow[] = [];
     let body = '';
-    for (const song of candidates.slice(offset, offset + MAX_BATCH_TRACKS)) {
+    for (const song of candidates.slice(offset, offset + batchLimit)) {
       const next = requestBody([...batch, song], seeds, request.mood);
       if (Buffer.byteLength(next, 'utf8') > MAX_INPUT_BYTES) break;
       batch.push(song);
@@ -106,11 +120,23 @@ export const suggestJevPlaylist = async (
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body, signal: AbortSignal.any([signal, timeout, deadline]),
       });
-      if (!response.ok) {
-        logPlaylistDebug('Jev failed', { status: response.status });
-        return { kind: 'rejected', reason: serviceFailure(response.status) };
+      const text = await response.text();
+      let result: unknown;
+      try { result = JSON.parse(text); } catch { result = null; }
+      const error = isRecord(result) && isRecord(result.error) ? result.error : null;
+      if (!response.ok || error !== null) {
+        const code = error !== null && typeof error.code === 'number' ? error.code : response.status;
+        const message = error !== null && typeof error.message === 'string' ? error.message : response.statusText;
+        const detail = redact(`OpenRouter HTTP ${response.status}${code !== response.status ? ` (error ${code})` : ''}: ${message}`);
+        const reason = serviceFailure(response.ok ? code : response.status, message);
+        logPlaylistDebug('Jev failed', { status: response.status, code, detail });
+        if (reason === 'context-too-large' && batch.length > 1) {
+          batchLimit = Math.max(1, Math.floor(batch.length / 2));
+          logPlaylistDebug('Jev smaller batch', { tracks: batchLimit });
+          continue;
+        }
+        return { kind: 'rejected', reason, detail };
       }
-      const result: unknown = await response.json();
       if (!isRecord(result) || !isRecord(result.answers)) return { kind: 'rejected', reason: 'invalid-response' };
       for (const [index, song] of batch.entries()) {
         const answer = result.answers[`track_${index}`];
@@ -118,13 +144,17 @@ export const suggestJevPlaylist = async (
           !Number.isFinite(answer.score) || answer.score < 0 || answer.score > criteria.length - 1) {
           return { kind: 'rejected', reason: 'invalid-response' };
         }
-        if (answer.score >= 2) scored.push({ song, score: answer.score / (criteria.length - 1) });
+        const score = 1 + 99 * answer.score / (criteria.length - 1);
+        if (score >= MIN_MATCH_SCORE) scored.push({ song, score });
       }
       logPlaylistDebug('Jev response', { tracks: batch.length, inputTokens: isRecord(result.usage) ? result.usage.input_tokens : undefined });
     } catch (error: unknown) {
-      return { kind: 'rejected', reason: signal.aborted ? 'cancelled'
-        : timeout.aborted || deadline.aborted ? 'timed-out'
-          : error instanceof SyntaxError ? 'invalid-response' : 'service-unavailable' };
+      if (signal.aborted) return { kind: 'rejected', reason: 'cancelled' };
+      if (timeout.aborted || deadline.aborted) return { kind: 'rejected', reason: 'timed-out' };
+      const cause = error instanceof Error && isRecord(error.cause) && typeof error.cause.code === 'string' ? ` (${error.cause.code})` : '';
+      const detail = redact(`${error instanceof Error ? error.message : 'Network request failed'}${cause}`);
+      logPlaylistDebug('Jev connection failed', { detail });
+      return { kind: 'rejected', reason: 'service-unavailable', detail };
     }
     offset += batch.length;
   }
