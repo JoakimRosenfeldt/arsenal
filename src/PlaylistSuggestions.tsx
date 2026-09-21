@@ -16,7 +16,7 @@ const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
   'insufficient-credit': 'Your OpenRouter account needs more credits.',
   'rate-limited': 'OpenRouter reached its rate limit. Try again shortly.',
   'context-too-large': 'The request exceeds Jev\'s input limit. Shorten the description or use fewer starting tracks.',
-  'invalid-response': 'Jev returned incomplete or invalid scores. Try again.',
+  'invalid-response': 'Jev returned incomplete or invalid scores or confidence. Try again.',
   'service-unavailable': 'Could not reach Jev through OpenRouter. Check your connection and try again.',
   'request-rejected': 'OpenRouter rejected the Jev request.',
   'model-unavailable': 'Jev is unavailable through OpenRouter for this account.',
@@ -167,12 +167,12 @@ export const PlaylistSuggestions = ({
             <h4>Suggested tracks</h4>
             <span role="status">{result.suggestions.length} suggestions</span>
           </div>
-          <p>Scored {result.candidateCount.toLocaleString()} library tracks with Jev. Add the ones you want.</p>
+          <p>Scored {result.candidateCount.toLocaleString()} library tracks with Jev. Ranked by match weighted by confidence. Add the ones you want.</p>
           {result.suggestions.length === 0 ? (
             <p>No matching tracks found. Try a different mood or starting tracks.</p>
           ) : (
             <ul className="playlist-suggestion-list">
-              {result.suggestions.map(({ song, score, reason }) => {
+              {result.suggestions.map(({ song, score, confidence, reason }) => {
                 const added = chosenSongs.has(song.id);
                 const isPlaying = playback.song?.id === song.id && playback.playing;
                 return (
@@ -190,7 +190,7 @@ export const PlaylistSuggestions = ({
                     <div className="track-identity">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}{song.bpm === null ? '' : ` · ${song.bpm} BPM`}{song.musicalKey === null ? '' : ` · ${song.musicalKey}`}</small>
-                      <p className="playlist-suggestion-reason">{score.toFixed(1)}/100 match · {reason}</p>
+                      <p className="playlist-suggestion-reason">{score.toFixed(1)}/100 weighted score · {(confidence * 100).toFixed(0)}% confidence · {reason}</p>
                     </div>
                     <button className="quiet-button" type="button" onClick={() => onAdd(song)} disabled={busy || added} aria-label={added ? `${song.title} added to playlist` : `Add ${song.title} to playlist`}>
                       {added ? 'Added' : 'Add to playlist'}

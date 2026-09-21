@@ -1,6 +1,7 @@
 import type { SongRow } from '../shared/dj-library';
 import {
   JEV_MODEL,
+  type PlaylistSuggestion,
   type PlaylistSuggestionFailure,
   type PlaylistSuggestionProgress,
   type PlaylistSuggestionRequest,
@@ -15,14 +16,9 @@ const MAX_INPUT_BYTES = 80_000;
 const MIN_MATCH_SCORE = 67;
 const criteria = [
   'Unrelated style; opposite mood.',
-  'Related category; opposite mood.',
-  'Distant style; mood unsupported.',
-  'Matching genre; wrong mood or energy.',
   'Partial fit; defining quality conflicts.',
   'Plausible fit; defining details unknown.',
-  'Style and mood fit; some details unknown.',
   'Style, mood and energy fit; minor differences.',
-  'All requested qualities fit; clear evidence.',
   'Exact requested sound; no evident mismatch.',
 ];
 
@@ -99,7 +95,7 @@ export const suggestJevPlaylist = async (
   const seeds = request.seedSongIds.flatMap((id) => { const song = byId.get(id); return song ? [song] : []; });
   const excludedIds = new Set([...request.seedSongIds, ...request.excludedSongIds]);
   const candidates = songs.filter((song) => !excludedIds.has(song.id) && matchesTempo(song, tempo));
-  const scored: { song: SongRow; score: number }[] = [];
+  const scored: Omit<PlaylistSuggestion, 'reason'>[] = [];
   const deadline = AbortSignal.timeout(300_000);
   let batchLimit = Infinity;
   for (let offset = 0; offset < candidates.length;) {
@@ -144,11 +140,16 @@ export const suggestJevPlaylist = async (
       for (const [index, song] of batch.entries()) {
         const answer = result.answers[`track_${index}`];
         if (!isRecord(answer) || answer.type !== 'score' || typeof answer.score !== 'number' ||
-          !Number.isFinite(answer.score) || answer.score < 0 || answer.score > criteria.length - 1) {
+          !Number.isFinite(answer.score) || answer.score < 0 || answer.score > criteria.length - 1 ||
+          typeof answer.confidence !== 'number' || !Number.isFinite(answer.confidence) ||
+          answer.confidence < 0 || answer.confidence > 1) {
           return { kind: 'rejected', reason: 'invalid-response' };
         }
-        const score = 1 + 99 * answer.score / (criteria.length - 1);
-        if (score >= MIN_MATCH_SCORE) scored.push({ song, score });
+        const matchScore = 1 + 99 * answer.score / (criteria.length - 1);
+        if (matchScore >= MIN_MATCH_SCORE) {
+          const score = 1 + (matchScore - 1) * answer.confidence;
+          scored.push({ song, score, confidence: answer.confidence });
+        }
       }
       logPlaylistDebug('Jev response', { tracks: batch.length, inputTokens: isRecord(result.usage) ? result.usage.input_tokens : undefined });
     } catch (error: unknown) {

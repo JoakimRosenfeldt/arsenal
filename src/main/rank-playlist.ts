@@ -54,12 +54,12 @@ const tempoDistance = (a: number | null, b: number | null): number =>
   a === null || b === null ? Infinity : Math.min(...[0.5, 1, 2].map((factor) => Math.abs(a * factor - b)));
 
 export const orderPlaylist = (
-  tracks: readonly Readonly<{ song: SongRow; score: number }>[],
+  tracks: readonly Omit<PlaylistSuggestion, 'reason'>[],
   previous: SongRow | undefined,
   tempo: TempoRange | null,
   reason: string,
 ): PlaylistSuggestion[] => {
-  const candidates = [...tracks].sort((a, b) => b.score - a.score || a.song.id.localeCompare(b.song.id));
+  const candidates = [...tracks].sort((a, b) => b.score - a.score || b.confidence - a.confidence || a.song.id.localeCompare(b.song.id));
   const selected: PlaylistSuggestion[] = [];
   const artistCounts = new Map<string, number>();
   for (const track of candidates) {
@@ -73,7 +73,7 @@ export const orderPlaylist = (
     if (tempo !== null && track.song.bpm !== null) reasons.push(`${track.song.bpm} BPM`);
     else if (bpmDistance <= 3) reasons.push('close tempo');
     if (compatibleKey) reasons.push('compatible key');
-    selected.push({ song: track.song, score: track.score, reason: `${reasons.join(' · ')}.` });
+    selected.push({ ...track, reason: `${reasons.join(' · ')}.` });
     artistCounts.set(artist, artistCount + 1);
     previous = track.song;
   }

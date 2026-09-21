@@ -16,6 +16,7 @@ export type PlaylistSuggestionRequest = Readonly<{
 export type PlaylistSuggestion = Readonly<{
   song: SongRow;
   score: number;
+  confidence: number;
   reason: string;
 }>;
 
