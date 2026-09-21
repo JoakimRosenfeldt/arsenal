@@ -1,6 +1,63 @@
-import { useState, type JSX } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 
 import { AppUpdates } from './AppUpdates';
+import type { OpenRouterSettings } from './shared/preferences';
+
+const OpenRouterPreferences = (): JSX.Element => {
+  const [settings, setSettings] = useState<OpenRouterSettings | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true;
+    void window.preferences.openRouter().then((value) => { if (active) setSettings(value); })
+      .catch(() => { if (active) setError('Could not load OpenRouter settings. Reopen Preferences to try again.'); });
+    return () => { active = false; };
+  }, []);
+
+  const save = async (key: string): Promise<void> => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const next = await window.preferences.saveOpenRouterKey(key);
+      setSettings(next);
+      setApiKey('');
+      setMessage(next.hasApiKey ? 'API key saved.' : 'API key removed.');
+    } catch {
+      setError('Could not save the API key. Check the key and try again.');
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="ai-model-picker">
+      <p>Jev suggests tracks from your imported library using your description, starting tracks and music metadata.</p>
+      <p>Your description and track metadata are sent to OpenRouter and TypeSafe. Audio and file paths stay on this computer. Usage is billed to your OpenRouter account.</p>
+      <form className="ai-key-form" onSubmit={(event) => { event.preventDefault(); if (apiKey.trim()) void save(apiKey); }}>
+        <fieldset disabled={saving || settings === null}>
+          <legend className="visually-hidden">OpenRouter connection</legend>
+          <label htmlFor="playlist-api-key">OpenRouter API key</label>
+          <div className="ai-input-action">
+            <input id="playlist-api-key" type="password" autoComplete="off" spellCheck={false} value={apiKey} maxLength={4_096}
+              placeholder={settings?.hasApiKey ? 'Key saved. Enter a replacement.' : 'Paste your API key'}
+              onChange={(event) => setApiKey(event.currentTarget.value)} />
+            <button className="quiet-button" type="submit" disabled={!apiKey.trim()}>Save key</button>
+            {settings?.hasApiKey && <button className="quiet-button" type="button" onClick={() => void save('')}>Remove key</button>}
+          </div>
+        </fieldset>
+      </form>
+      {settings === null ? error === null && <p role="status">Loading OpenRouter settings...</p>
+        : <p>{settings.keyStorage === 'encrypted'
+          ? 'Your key is encrypted by the operating system and kept out of the page after saving.'
+          : 'Secure storage is unavailable. Your key is kept only until you quit the app.'}</p>}
+      {message !== null && <p role="status">{message}</p>}
+      {error !== null && <p role="alert">{error}</p>}
+      <p>Add a tempo such as "124 to 128 BPM" to filter by Rekordbox BPM. Tracks can be suggested even when their audio is unavailable.</p>
+    </div>
+  );
+};
 
 export const PreferencesButton = (): JSX.Element => {
   const [failed, setFailed] = useState(false);
@@ -30,10 +87,7 @@ export const Preferences = (): JSX.Element => {
       <main className="preferences-content" id="main-content">
         <section hidden={section !== 'ai'} aria-labelledby="ai-preferences-title">
           <h2 id="ai-preferences-title">Music recommendations</h2>
-          <p>CLAP matches your description and starting tracks to the sound of your local music.</p>
-          <p>The first request downloads about 210 MB of model files and analyzes your tracks. Your audio stays on this computer. Saved analysis is reused until a file changes.</p>
-          <p>No API key or Ollama setup is needed. Describe the sound, instruments and mood. Add a tempo such as "124 to 128 BPM" to filter by Rekordbox BPM.</p>
-          <p>Streaming tracks and files that cannot be read are skipped. Starting tracks must have readable local audio.</p>
+          <OpenRouterPreferences />
         </section>
         <section hidden={section !== 'updates'} aria-labelledby="update-preferences-title">
           <h2 id="update-preferences-title">App updates</h2>

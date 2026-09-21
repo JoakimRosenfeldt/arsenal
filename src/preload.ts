@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('djLibrary', api);
 
 const preferences: PreferencesApi = Object.freeze({
   open: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.open),
+  openRouter: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.openRouter),
+  saveOpenRouterKey: (apiKey) => ipcRenderer.invoke(PREFERENCES_CHANNELS.saveOpenRouterKey, apiKey),
 });
 contextBridge.exposeInMainWorld('preferences', preferences);
 

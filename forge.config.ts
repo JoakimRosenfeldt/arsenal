@@ -9,7 +9,7 @@ import { rendererConfig } from './webpack.renderer.config';
 
 const config: ForgeConfig = {
   packagerConfig: {
-    asar: { unpack: '**/node_modules/{onnxruntime-node,@img}/**' },
+    asar: true,
     icon: './assets/icon',
     extraResource: ['./assets/icon.png'],
     osxSign: {

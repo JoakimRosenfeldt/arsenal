@@ -134,6 +134,6 @@ export const suggestJevPlaylist = async (
     kind: 'ready', model: JEV_MODEL,
     suggestions: orderPlaylist(scored, seeds.at(-1), tempo,
       request.mood ? 'Metadata fits your description' : 'Metadata fits your starting tracks'),
-    candidateCount: candidates.length, librarySongCount: songs.length, skippedCount: 0, cachedCount: 0,
+    candidateCount: candidates.length, librarySongCount: songs.length,
   };
 };

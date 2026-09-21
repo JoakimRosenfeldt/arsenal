@@ -12,30 +12,24 @@ import {
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
-  'api-key-missing': 'Add your OpenRouter API key in Preferences to use Jev, or choose local CLAP.',
+  'api-key-missing': 'Add your OpenRouter API key in Preferences to use Jev.',
   unauthorized: 'OpenRouter rejected the API key or model access. Check your key in Preferences.',
   'insufficient-credit': 'Your OpenRouter account needs more credits.',
   'rate-limited': 'OpenRouter reached its rate limit. Try again shortly.',
   'context-too-large': 'The request exceeds Jev\'s input limit. Shorten the description or use fewer starting tracks.',
   'invalid-response': 'Jev returned incomplete or invalid scores. Try again.',
   'service-unavailable': 'Could not reach Jev through OpenRouter. Check your connection and try again.',
-  'model-unavailable': 'CLAP could not load. Connect to the internet for the first download, check free disk space, then try again.',
-  'description-too-long': 'Keep the description under about 50 words. Focus on the sound, instruments and mood.',
-  'no-local-audio': 'No readable local audio was found. Make sure the files are available on this computer.',
-  'seed-audio-unavailable': 'A starting track could not be analyzed. Use starting tracks with readable local audio.',
   'invalid-tempo': 'Use a tempo from 30 to 300 BPM, with the lower number first in a range.',
-  'timed-out': 'Audio analysis stopped responding. Try again. Completed analysis has been saved.',
-  cancelled: 'Suggestions stopped. Completed analysis has been saved.',
+  'timed-out': 'Jev took too long to respond. Try again.',
+  cancelled: 'Suggestions stopped.',
   'stale-library': 'The library changed. Reopen the playlist creator to use the current tracks.',
   'invalid-request': 'Describe a mood or select some tracks before requesting suggestions.',
-  failed: 'Audio analysis could not finish. Try again. Completed analysis has been saved.',
+  failed: 'Could not finish playlist suggestions. Try again.',
 };
 
 const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
-  if (progress === null) return 'Preparing music analysis...';
+  if (progress === null) return 'Preparing Jev suggestions...';
   switch (progress.phase) {
-    case 'model': return progress.percent === null ? 'Loading CLAP. The first download is about 210 MB.' : `Downloading CLAP model: ${progress.percent}%.`;
-    case 'analyzing': return `Analyzing ${progress.completed + 1} of ${progress.total}: ${progress.title}`;
     case 'scoring': return `Jev has scored ${progress.completed} of ${progress.total} tracks...`;
     case 'ranking': return 'Choosing tracks and checking tempo and key...';
   }
@@ -129,7 +123,7 @@ export const PlaylistSuggestions = ({
         <span className="mono-label">Playlist helper</span>
       </div>
       <p>Select tracks below, describe a mood, or do both.</p>
-      <p className="playlist-ai-summary">CLAP · Local audio matching. First use downloads about 210 MB and analyzes your tracks.</p>
+      <p className="playlist-ai-summary">Jev · Your description and track metadata are sent through OpenRouter. Audio stays on this computer. Set up your API key in Preferences.</p>
       <form onSubmit={(event) => void generate(event)}>
         <label className="playlist-mood-field" htmlFor="playlist-mood">Describe the mood</label>
         <textarea
@@ -164,8 +158,7 @@ export const PlaylistSuggestions = ({
             <h4>Suggested tracks</h4>
             <span role="status">{result.suggestions.length} suggestions</span>
           </div>
-          <p>Matched {result.candidateCount.toLocaleString()} local tracks. Reused analysis for {result.cachedCount.toLocaleString()} tracks. Add the ones you want.</p>
-          {result.skippedCount > 0 && <p>{result.skippedCount.toLocaleString()} tracks skipped because local audio was unavailable or could not be analyzed.</p>}
+          <p>Scored {result.candidateCount.toLocaleString()} library tracks with Jev. Add the ones you want.</p>
           {result.suggestions.length === 0 ? (
             <p>No matching tracks found. Try a different mood or starting tracks.</p>
           ) : (
