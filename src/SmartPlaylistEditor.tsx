@@ -121,19 +121,19 @@ export const FolderCreator = ({ busy, folders, initialParentFolderId, onCancel, 
   );
 };
 
-export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, initialName = '', initialDefinition, revision, playback, onCancel, onSave }: Readonly<{
+export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, initialName = '', initialDefinition, revision, minimumSongLengthSeconds, playback, onCancel, onSave }: Readonly<{
   busy: boolean; folders: readonly PlaylistFolder[]; initialParentFolderId: string | null; initialName?: string;
-  initialDefinition?: SmartPlaylistDefinition; revision: string; playback: PlaybackController;
+  initialDefinition?: SmartPlaylistDefinition; revision: string; minimumSongLengthSeconds: number; playback: PlaybackController;
   onCancel: () => void;
   onSave: (name: string, parentFolderId: string | null, definition: SmartPlaylistDefinition) => Promise<boolean>;
 }>): JSX.Element => {
   const [name, setName] = useState(initialName);
   const [parentFolderId, setParentFolderId] = useState(initialParentFolderId);
   const [definition, setDefinition] = useState(initialDefinition ?? newSmartDefinition);
-  const [preview, setPreview] = useState<Readonly<{ definition: SmartPlaylistDefinition; result: SmartPlaylistPreview }> | null>(null);
+  const [preview, setPreview] = useState<Readonly<{ definition: SmartPlaylistDefinition; minimumSongLengthSeconds: number; result: SmartPlaylistPreview }> | null>(null);
   const [previewError, setPreviewError] = useState<SmartPlaylistDefinition | null>(null);
   const validation = smartDefinitionError(definition);
-  const currentPreview = preview?.definition === definition ? preview.result : null;
+  const currentPreview = preview?.definition === definition && preview.minimumSongLengthSeconds === minimumSongLengthSeconds ? preview.result : null;
   const failed = previewError === definition;
 
   useEffect(() => {
@@ -141,12 +141,12 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
     let active = true;
     const timer = window.setTimeout(() => {
       void window.djLibrary.previewSmartPlaylist({ revision, definition }).then(
-        (result) => { if (active) setPreview({ definition, result }); },
+        (result) => { if (active) setPreview({ definition, minimumSongLengthSeconds, result }); },
         () => { if (active) setPreviewError(definition); },
       );
     }, 200);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [definition, revision, validation]);
+  }, [definition, revision, validation, minimumSongLengthSeconds]);
 
   return (
     <section className="workspace-page playlists-page" aria-labelledby="smart-title">

@@ -4,6 +4,7 @@ import { basename, isAbsolute } from 'node:path';
 
 import { dialog, shell, type BrowserWindow } from 'electron';
 import { DEFAULT_SONG_FILTERS, songMetadataGapCount } from '../shared/dj-library';
+import { DEFAULT_MINIMUM_SONG_LENGTH_SECONDS, type LibrarySettings } from '../shared/preferences';
 
 import type {
   DuplicateGroup,
@@ -31,7 +32,7 @@ import {
 import { findDuplicateScan } from './find-duplicates';
 import { evaluateSmartPlaylist } from './smart-playlists';
 import { describeSmartRules, evaluateArsenalSmartPlaylist, smartDefinitionError, type SmartPlaylistDefinition } from '../shared/smart-playlists';
-import { suggestPlaylist } from './playlist-suggestions';
+import { suggestJevPlaylist } from './jev-playlist';
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from '../shared/playlist-suggestions';
 import {
   parseRekordboxXml,
@@ -68,7 +69,8 @@ type CurrentCatalog = Readonly<{
 }>;
 
 type RememberedLibrary = Readonly<{
-  rekordboxXmlPath: string;
+  rekordboxXmlPath: string | null;
+  minimumSongLengthSeconds: number;
   ignoredDuplicateGroups: Readonly<Record<string, readonly string[]>>;
 }>;
 
@@ -91,9 +93,9 @@ const readRememberedLibrary = async (
 
     const rememberedPath = stored.rekordboxXmlPath;
     if (
-      typeof rememberedPath !== 'string' ||
+      rememberedPath !== null && (typeof rememberedPath !== 'string' ||
       rememberedPath.length === 0 ||
-      !isAbsolute(rememberedPath)
+      !isAbsolute(rememberedPath))
     ) {
       return null;
     }
@@ -105,7 +107,10 @@ const readRememberedLibrary = async (
         }
       }
     }
-    return { rekordboxXmlPath: rememberedPath, ignoredDuplicateGroups };
+    const minimumSongLengthSeconds = typeof stored.minimumSongLengthSeconds === 'number' &&
+      Number.isSafeInteger(stored.minimumSongLengthSeconds) && stored.minimumSongLengthSeconds >= 0
+      ? stored.minimumSongLengthSeconds : DEFAULT_MINIMUM_SONG_LENGTH_SECONDS;
+    return { rekordboxXmlPath: rememberedPath, ignoredDuplicateGroups, minimumSongLengthSeconds };
   } catch {
     return null;
   }
@@ -273,6 +278,8 @@ export class RekordboxLibrary {
 
   private rememberedPath: string | null = null;
 
+  private minimumSongLengthSeconds = DEFAULT_MINIMUM_SONG_LENGTH_SECONDS;
+
   private ignoredDuplicateGroups: RememberedLibrary['ignoredDuplicateGroups'] = {};
 
   private operationTail: Promise<void> = Promise.resolve();
@@ -284,6 +291,7 @@ export class RekordboxLibrary {
     const remembered = await readRememberedLibrary(stateFilePath);
     this.rememberedPath = remembered?.rekordboxXmlPath ?? null;
     this.ignoredDuplicateGroups = remembered?.ignoredDuplicateGroups ?? {};
+    this.minimumSongLengthSeconds = remembered?.minimumSongLengthSeconds ?? DEFAULT_MINIMUM_SONG_LENGTH_SECONDS;
     if (this.rememberedPath === null) {
       return;
     }
@@ -299,6 +307,36 @@ export class RekordboxLibrary {
     return this.catalog === null
       ? { kind: 'empty' }
       : { kind: 'ready', library: summaryFor(this.catalog) };
+  }
+
+  settings(): LibrarySettings {
+    return { minimumSongLengthSeconds: this.minimumSongLengthSeconds };
+  }
+
+  saveMinimumSongLength(value: unknown): Promise<LibrarySettings> {
+    return this.enqueue(async () => {
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+        throw new Error('Enter a whole number of seconds, zero or greater.');
+      }
+      if (value === this.minimumSongLengthSeconds) return this.settings();
+      if (!await this.remember(this.rememberedPath, this.ignoredDuplicateGroups, value)) {
+        throw new Error('Could not save library settings.');
+      }
+      this.minimumSongLengthSeconds = value;
+      this.cancelSuggestions();
+      if (this.catalog !== null) {
+        this.catalog = {
+          ...this.catalog,
+          songs: this.catalog.tracks.map((track) => track.song).filter((song) => this.includesSong(song)),
+          duplicateScans: new Map(),
+        };
+      }
+      return this.settings();
+    });
+  }
+
+  private includesSong(song: SongRow): boolean {
+    return song.durationSeconds === null || song.durationSeconds >= this.minimumSongLengthSeconds;
   }
 
   listSongs(page: PageRequest): SongPage {
@@ -335,9 +373,12 @@ export class RekordboxLibrary {
 
   listPlaylists(): readonly RekordboxPlaylist[] {
     const catalog = this.requireCatalog();
-    return catalog.playlists.map((playlist) => playlist.smartDefinition === null ? playlist : {
-      ...playlist, tracks: evaluateArsenalSmartPlaylist(playlist.smartDefinition, catalog.songs).tracks,
-    });
+    return catalog.playlists.map((playlist) => ({
+      ...playlist,
+      tracks: playlist.smartDefinition === null
+        ? playlist.tracks.filter((song) => this.includesSong(song))
+        : evaluateArsenalSmartPlaylist(playlist.smartDefinition, catalog.songs).tracks,
+    }));
   }
 
   listFolders(): readonly PlaylistFolder[] {
@@ -351,7 +392,7 @@ export class RekordboxLibrary {
     return { matchingCount: result.matchingCount, total: result.tracks.length, tracks: result.tracks.slice(0, 50) };
   }
 
-  async suggestPlaylist(request: PlaylistSuggestionRequest, onProgress: (progress: PlaylistSuggestionProgress) => void): Promise<PlaylistSuggestionResult> {
+  async suggestPlaylist(request: PlaylistSuggestionRequest, apiKey: string, onProgress: (progress: PlaylistSuggestionProgress) => void): Promise<PlaylistSuggestionResult> {
     const catalog = this.catalog;
     if (catalog === null || request.revision !== catalog.revision) {
       return { kind: 'rejected', reason: 'stale-library' };
@@ -360,7 +401,7 @@ export class RekordboxLibrary {
     const controller = new AbortController();
     this.suggestionController = controller;
     try {
-      const result = await suggestPlaylist(catalog.tracks, request, controller.signal, onProgress);
+      const result = await suggestJevPlaylist(catalog.songs, request, apiKey, controller.signal, onProgress);
       return this.catalog === catalog ? result : { kind: 'rejected', reason: 'stale-library' };
     } catch {
       return { kind: 'rejected', reason: controller.signal.aborted ? 'cancelled' : 'failed' };
@@ -531,7 +572,7 @@ export class RekordboxLibrary {
     change: Extract<LibraryMutation, { kind: 'remove-songs' }>,
   ): Promise<LibraryMutationResult> {
     const songIds = new Set(change.songIds);
-    const tracks = catalog.tracks.filter((track) => songIds.has(track.song.id));
+    const tracks = catalog.tracks.filter((track) => songIds.has(track.song.id) && this.includesSong(track.song));
     if (tracks.length === 0 || tracks.length !== change.songIds.length) {
       return { kind: 'rejected', reason: 'song-not-found' };
     }
@@ -621,7 +662,7 @@ export class RekordboxLibrary {
     }
     for (const songId of songIds) {
       const track = bySongId.get(songId);
-      if (track?.rekordboxId === null || track?.rekordboxId === undefined) {
+      if (track?.rekordboxId === null || track?.rekordboxId === undefined || !this.includesSong(track.song)) {
         return { kind: 'rejected', reason: 'invalid-playlist' };
       }
       if (idCounts.get(track.rekordboxId) !== 1) {
@@ -704,7 +745,7 @@ export class RekordboxLibrary {
       importedAt: new Date().toISOString(),
       fingerprint: parsed.fingerprint,
       tracks,
-      songs: tracks.map((track) => track.song),
+      songs: tracks.map((track) => track.song).filter((song) => this.includesSong(song)),
       playlists: projectPlaylists(parsed.playlists, tracks),
       folders: parsed.folders,
       duplicateScans: new Map(),
@@ -723,14 +764,15 @@ export class RekordboxLibrary {
   }
 
   private async remember(
-    rekordboxXmlPath: string,
+    rekordboxXmlPath: string | null,
     ignoredDuplicateGroups = this.ignoredDuplicateGroups,
+    minimumSongLengthSeconds = this.minimumSongLengthSeconds,
   ): Promise<boolean> {
     if (this.stateFilePath === null) {
       return false;
     }
 
-    const state: RememberedLibrary = { rekordboxXmlPath, ignoredDuplicateGroups };
+    const state: RememberedLibrary = { rekordboxXmlPath, ignoredDuplicateGroups, minimumSongLengthSeconds };
     try {
       await writeFile(this.stateFilePath, `${JSON.stringify(state)}\n`, {
         encoding: 'utf8',

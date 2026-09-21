@@ -4,7 +4,6 @@ import { TrackArtwork, type PlaybackController } from './CueboxPlayer';
 import type { SongRow } from './shared/dj-library';
 import {
   MAX_MOOD_LENGTH,
-  MAX_SEED_SONGS,
   PLAYLIST_DEBUG_PREFIX,
   type PlaylistSuggestionFailure,
   type PlaylistSuggestionProgress,
@@ -12,23 +11,27 @@ import {
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
-  'model-unavailable': 'CLAP could not load. Connect to the internet for the first download, check free disk space, then try again.',
-  'description-too-long': 'Keep the description under about 50 words. Focus on the sound, instruments and mood.',
-  'no-local-audio': 'No readable local audio was found. Make sure the files are available on this computer.',
-  'seed-audio-unavailable': 'A starting track could not be analyzed. Use starting tracks with readable local audio.',
+  'api-key-missing': 'Add your OpenRouter API key in Preferences to use Jev.',
+  unauthorized: 'OpenRouter rejected the API key or model access. Check your key in Preferences.',
+  'insufficient-credit': 'Your OpenRouter account needs more credits.',
+  'rate-limited': 'OpenRouter reached its rate limit. Try again shortly.',
+  'context-too-large': 'The request exceeds Jev\'s input limit. Shorten the description or use fewer starting tracks.',
+  'invalid-response': 'Jev returned incomplete or invalid scores or confidence. Try again.',
+  'service-unavailable': 'Could not reach Jev through OpenRouter. Check your connection and try again.',
+  'request-rejected': 'OpenRouter rejected the Jev request.',
+  'model-unavailable': 'Jev is unavailable through OpenRouter for this account.',
   'invalid-tempo': 'Use a tempo from 30 to 300 BPM, with the lower number first in a range.',
-  'timed-out': 'Audio analysis stopped responding. Try again. Completed analysis has been saved.',
-  cancelled: 'Suggestions stopped. Completed analysis has been saved.',
+  'timed-out': 'Jev took too long to respond. Try again.',
+  cancelled: 'Suggestions stopped.',
   'stale-library': 'The library changed. Reopen the playlist creator to use the current tracks.',
   'invalid-request': 'Describe a mood or select some tracks before requesting suggestions.',
-  failed: 'Audio analysis could not finish. Try again. Completed analysis has been saved.',
+  failed: 'Could not finish playlist suggestions. Try again.',
 };
 
 const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
-  if (progress === null) return 'Preparing music analysis...';
+  if (progress === null) return 'Preparing Jev suggestions...';
   switch (progress.phase) {
-    case 'model': return progress.percent === null ? 'Loading CLAP. The first download is about 210 MB.' : `Downloading CLAP model: ${progress.percent}%.`;
-    case 'analyzing': return `Analyzing ${progress.completed + 1} of ${progress.total}: ${progress.title}`;
+    case 'scoring': return `Jev has scored ${progress.completed} of ${progress.total} tracks...`;
     case 'ranking': return 'Choosing tracks and checking tempo and key...';
   }
 };
@@ -50,7 +53,7 @@ export const PlaylistSuggestions = ({
   const [progress, setProgress] = useState<PlaylistSuggestionProgress | null>(null);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<Extract<PlaylistSuggestionResult, { kind: 'ready' }> | null>(null);
-  const [failure, setFailure] = useState<PlaylistSuggestionFailure | null>(null);
+  const [failure, setFailure] = useState<Extract<PlaylistSuggestionResult, { kind: 'rejected' }> | null>(null);
   const sequence = useRef(0);
   const pending = useRef(false);
   useEffect(() => window.djLibrary.onSuggestionProgress((next) => {
@@ -63,6 +66,15 @@ export const PlaylistSuggestions = ({
       void window.djLibrary.cancelSuggestions().catch(() => undefined);
     }
   }, []);
+
+  useEffect(() => window.preferences.onLibraryChanged(() => {
+    sequence.current += 1;
+    pending.current = false;
+    setGenerating(false);
+    setProgress(null);
+    setResult(null);
+    setFailure(null);
+  }), []);
 
   const generate = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
@@ -79,7 +91,7 @@ export const PlaylistSuggestions = ({
       const response = await window.djLibrary.suggestPlaylist({
         revision,
         mood,
-        seedSongIds: [...chosenSongs.keys()].slice(0, MAX_SEED_SONGS),
+        seedSongIds: [...chosenSongs.keys()],
         excludedSongIds: [...chosenSongs.keys()],
       });
       console.info(`${PLAYLIST_DEBUG_PREFIX} suggestion result`, response.kind === 'ready'
@@ -91,12 +103,12 @@ export const PlaylistSuggestions = ({
       if (response.kind === 'ready') {
         setResult(response);
       } else {
-        setFailure(response.reason);
+        setFailure(response);
       }
     } catch (error: unknown) {
       console.error(`${PLAYLIST_DEBUG_PREFIX} renderer request failed`, error);
       if (requestSequence === sequence.current) {
-        setFailure('failed');
+        setFailure({ kind: 'rejected', reason: 'failed' });
       }
     } finally {
       if (requestSequence === sequence.current) {
@@ -110,7 +122,7 @@ export const PlaylistSuggestions = ({
     sequence.current += 1;
     pending.current = false;
     setGenerating(false);
-    setFailure('cancelled');
+    setFailure({ kind: 'rejected', reason: 'cancelled' });
     void window.djLibrary.cancelSuggestions().catch(() => undefined);
   };
 
@@ -121,7 +133,7 @@ export const PlaylistSuggestions = ({
         <span className="mono-label">Playlist helper</span>
       </div>
       <p>Select tracks below, describe a mood, or do both.</p>
-      <p className="playlist-ai-summary">CLAP · Local audio matching. First use downloads about 210 MB and analyzes your tracks.</p>
+      <p className="playlist-ai-summary">Jev · Your description and track metadata are sent through OpenRouter. Audio stays on this computer. Set up your API key in Preferences.</p>
       <form onSubmit={(event) => void generate(event)}>
         <label className="playlist-mood-field" htmlFor="playlist-mood">Describe the mood</label>
         <textarea
@@ -136,7 +148,6 @@ export const PlaylistSuggestions = ({
         <div className="playlist-helper-actions">
           <span>
             {chosenSongs.size === 0 ? 'Mood only, or select starting tracks below'
-              : chosenSongs.size > MAX_SEED_SONGS ? `Using your first ${MAX_SEED_SONGS} selected tracks as a starting point`
                 : `Using ${chosenSongs.size} selected ${chosenSongs.size === 1 ? 'track' : 'tracks'} as a starting point`}
           </span>
           {generating ? (
@@ -149,20 +160,19 @@ export const PlaylistSuggestions = ({
         </div>
       </form>
       {generating && <p className="playlist-helper-status" role="status">{progressMessage(progress)}</p>}
-      {failure !== null && <p className="playlist-search-error" role={failure === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure]}</p>}
+      {failure !== null && <p className="playlist-search-error" role={failure.reason === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure.reason]}{failure.detail ? ` ${failure.detail}` : ''}</p>}
       {result !== null && (
         <div className="playlist-suggestions" aria-busy={generating}>
           <div className="playlist-helper-heading">
             <h4>Suggested tracks</h4>
             <span role="status">{result.suggestions.length} suggestions</span>
           </div>
-          <p>Matched {result.candidateCount.toLocaleString()} local tracks. Reused analysis for {result.cachedCount.toLocaleString()} tracks. Add the ones you want.</p>
-          {result.skippedCount > 0 && <p>{result.skippedCount.toLocaleString()} tracks skipped because local audio was unavailable or could not be analyzed.</p>}
+          <p>Scored {result.candidateCount.toLocaleString()} library tracks with Jev. Add the ones you want.</p>
           {result.suggestions.length === 0 ? (
             <p>No matching tracks found. Try a different mood or starting tracks.</p>
           ) : (
             <ul className="playlist-suggestion-list">
-              {result.suggestions.map(({ song, reason }) => {
+              {result.suggestions.map(({ song, confidence, reason }) => {
                 const added = chosenSongs.has(song.id);
                 const isPlaying = playback.song?.id === song.id && playback.playing;
                 return (
@@ -180,7 +190,7 @@ export const PlaylistSuggestions = ({
                     <div className="track-identity">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}{song.bpm === null ? '' : ` · ${song.bpm} BPM`}{song.musicalKey === null ? '' : ` · ${song.musicalKey}`}</small>
-                      <p className="playlist-suggestion-reason">{reason}</p>
+                      <p className="playlist-suggestion-reason">{(confidence * 100).toFixed(0)}% confidence · {reason}</p>
                     </div>
                     <button className="quiet-button" type="button" onClick={() => onAdd(song)} disabled={busy || added} aria-label={added ? `${song.title} added to playlist` : `Add ${song.title} to playlist`}>
                       {added ? 'Added' : 'Add to playlist'}

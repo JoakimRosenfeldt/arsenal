@@ -1193,6 +1193,7 @@ export const DuplicatesPage = ({
 
 export const PlaylistsPage = ({
   busy,
+  minimumSongLengthSeconds,
   creating,
   initialParentFolderId,
   initialSongs,
@@ -1207,6 +1208,7 @@ export const PlaylistsPage = ({
   view,
 }: CommonPageProps &
   Readonly<{
+    minimumSongLengthSeconds: number;
     creating: boolean;
     initialParentFolderId: string | null;
     initialSongs: readonly SongRow[];
@@ -1252,7 +1254,15 @@ export const PlaylistsPage = ({
     return () => {
       active = false;
     };
-  }, [creating, searchRequest]);
+  }, [creating, searchRequest, minimumSongLengthSeconds]);
+
+  useEffect(() => window.preferences.onLibraryChanged((settings) => {
+    if (settings.minimumSongLengthSeconds === minimumSongLengthSeconds) return;
+    setChosenSongs((current) => new Map([...current].filter(([, song]) =>
+      song.durationSeconds === null || song.durationSeconds >= settings.minimumSongLengthSeconds)));
+    setResults(null);
+    setLoadingSongs(creating);
+  }), [creating, minimumSongLengthSeconds]);
 
   if (view === null) {
     return (

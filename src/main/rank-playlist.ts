@@ -1,17 +1,7 @@
 import type { SongRow } from '../shared/dj-library';
 import type { PlaylistSuggestion } from '../shared/playlist-suggestions';
 
-export type EmbeddedTrack = Readonly<{ song: SongRow; embedding: readonly number[] }>;
 export type TempoRange = Readonly<{ min: number; max: number; minExclusive?: boolean; maxExclusive?: boolean }>;
-
-export const normalizeEmbedding = (values: readonly number[]): number[] => {
-  const length = Math.hypot(...values);
-  if (!Number.isFinite(length) || length === 0) throw new Error('Invalid audio embedding');
-  return values.map((value) => value / length);
-};
-
-const similarity = (a: readonly number[], b: readonly number[]): number =>
-  a.reduce((total, value, index) => total + value * (b[index] ?? 0), 0);
 
 export const tempoFromMood = (mood: string): TempoRange | null => {
   const range = /\b(?:between\s+)?(\d{2,3}(?:\.\d+)?)\s*(?:-|–|to|and)\s*(\d{2,3}(?:\.\d+)?)\s*bpm\b/i.exec(mood);
@@ -63,49 +53,29 @@ const harmonicMatch = (a: SongRow, b: SongRow): boolean => {
 const tempoDistance = (a: number | null, b: number | null): number =>
   a === null || b === null ? Infinity : Math.min(...[0.5, 1, 2].map((factor) => Math.abs(a * factor - b)));
 
-export const rankPlaylist = ({
-  tracks, seeds, textEmbedding, excludedIds, tempo,
-}: Readonly<{
-  tracks: readonly EmbeddedTrack[];
-  seeds: readonly EmbeddedTrack[];
-  textEmbedding: readonly number[] | null;
-  excludedIds: ReadonlySet<string>;
-  tempo: TempoRange | null;
-}>): PlaylistSuggestion[] => {
-  const seedEmbedding = seeds.length === 0 ? null : normalizeEmbedding(
-    seeds[0]?.embedding.map((_, i) => seeds.reduce((sum, track) => sum + (track.embedding[i] ?? 0), 0) / seeds.length) ?? [],
-  );
-  const candidates = tracks.filter(({ song }) => !excludedIds.has(song.id) && matchesTempo(song, tempo)).map((track) => {
-    const textScore = textEmbedding === null ? 0 : similarity(track.embedding, textEmbedding);
-    const seedScore = seedEmbedding === null ? 0 : similarity(track.embedding, seedEmbedding);
-    const score = textEmbedding !== null && seedEmbedding !== null ? 0.8 * textScore + 0.2 * seedScore
-      : textEmbedding !== null ? textScore : seedScore;
-    return { ...track, score };
-  });
+export const orderPlaylist = (
+  tracks: readonly Omit<PlaylistSuggestion, 'reason'>[],
+  previous: SongRow | undefined,
+  tempo: TempoRange | null,
+  reason: string,
+): PlaylistSuggestion[] => {
+  const candidates = [...tracks].sort((a, b) => b.score - a.score || b.confidence - a.confidence || a.song.id.localeCompare(b.song.id));
   const selected: PlaylistSuggestion[] = [];
   const artistCounts = new Map<string, number>();
-  let previous = seeds.at(-1)?.song;
-  while (selected.length < 12 && candidates.length > 0) {
-    const ranked = candidates.map((track, index) => {
-      const artist = normalize(track.song.artist ?? track.song.id);
-      const artistCount = artistCounts.get(artist) ?? 0;
-      const bpmDistance = previous ? tempoDistance(track.song.bpm, previous.bpm) : Infinity;
-      const compatibleKey = previous ? harmonicMatch(track.song, previous) : false;
-      return {
-        track, index, artist, artistCount, bpmDistance, compatibleKey,
-        score: track.score + Math.max(0, 1 - bpmDistance / 10) * 0.025 + (compatibleKey ? 0.015 : 0) - artistCount * 0.06,
-      };
-    }).filter((item) => item.artistCount < 2).sort((a, b) => b.score - a.score || a.track.song.id.localeCompare(b.track.song.id));
-    const best = ranked[0];
-    if (!best) break;
-    const reasons = [textEmbedding === null ? 'Similar sound to your starting tracks' : 'Sound closest to your description'];
-    if (tempo !== null && best.track.song.bpm !== null) reasons.push(`${best.track.song.bpm} BPM`);
-    else if (best.bpmDistance <= 3) reasons.push('close tempo');
-    if (best.compatibleKey) reasons.push('compatible key');
-    selected.push({ song: best.track.song, reason: `${reasons.join(' · ')}.` });
-    artistCounts.set(best.artist, best.artistCount + 1);
-    previous = best.track.song;
-    candidates.splice(best.index, 1);
+  for (const track of candidates) {
+    if (selected.length === 12) break;
+    const artist = normalize(track.song.artist ?? track.song.id);
+    const artistCount = artistCounts.get(artist) ?? 0;
+    if (artistCount >= 2) continue;
+    const bpmDistance = previous ? tempoDistance(track.song.bpm, previous.bpm) : Infinity;
+    const compatibleKey = previous ? harmonicMatch(track.song, previous) : false;
+    const reasons = [reason];
+    if (tempo !== null && track.song.bpm !== null) reasons.push(`${track.song.bpm} BPM`);
+    else if (bpmDistance <= 3) reasons.push('close tempo');
+    if (compatibleKey) reasons.push('compatible key');
+    selected.push({ ...track, reason: `${reasons.join(' · ')}.` });
+    artistCounts.set(artist, artistCount + 1);
+    previous = track.song;
   }
   return selected;
 };
