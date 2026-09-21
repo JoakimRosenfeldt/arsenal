@@ -6,6 +6,7 @@ export const PLAYLIST_DEBUG_CHANNEL = 'playlist-suggestions:debug';
 export const PLAYLIST_DEBUG_PREFIX = '[playlist-ai]';
 export const PLAYLIST_PROGRESS_CHANNEL = 'playlist-suggestions:progress';
 export const CLAP_MODEL = 'Xenova/larger_clap_music_and_speech';
+export const JEV_MODEL = '~typesafe/jev-latest';
 
 export type PlaylistSuggestionRequest = Readonly<{
   revision: string;
@@ -22,9 +23,17 @@ export type PlaylistSuggestion = Readonly<{
 export type PlaylistSuggestionProgress =
   | Readonly<{ phase: 'model'; percent: number | null }>
   | Readonly<{ phase: 'analyzing'; completed: number; total: number; title: string }>
+  | Readonly<{ phase: 'scoring'; completed: number; total: number }>
   | Readonly<{ phase: 'ranking' }>;
 
 export type PlaylistSuggestionFailure =
+  | 'api-key-missing'
+  | 'unauthorized'
+  | 'insufficient-credit'
+  | 'rate-limited'
+  | 'context-too-large'
+  | 'invalid-response'
+  | 'service-unavailable'
   | 'model-unavailable'
   | 'description-too-long'
   | 'no-local-audio'

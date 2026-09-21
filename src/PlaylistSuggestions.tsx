@@ -12,6 +12,13 @@ import {
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
+  'api-key-missing': 'Add your OpenRouter API key in Preferences to use Jev, or choose local CLAP.',
+  unauthorized: 'OpenRouter rejected the API key or model access. Check your key in Preferences.',
+  'insufficient-credit': 'Your OpenRouter account needs more credits.',
+  'rate-limited': 'OpenRouter reached its rate limit. Try again shortly.',
+  'context-too-large': 'The request exceeds Jev\'s input limit. Shorten the description or use fewer starting tracks.',
+  'invalid-response': 'Jev returned incomplete or invalid scores. Try again.',
+  'service-unavailable': 'Could not reach Jev through OpenRouter. Check your connection and try again.',
   'model-unavailable': 'CLAP could not load. Connect to the internet for the first download, check free disk space, then try again.',
   'description-too-long': 'Keep the description under about 50 words. Focus on the sound, instruments and mood.',
   'no-local-audio': 'No readable local audio was found. Make sure the files are available on this computer.',
@@ -29,6 +36,7 @@ const progressMessage = (progress: PlaylistSuggestionProgress | null): string =>
   switch (progress.phase) {
     case 'model': return progress.percent === null ? 'Loading CLAP. The first download is about 210 MB.' : `Downloading CLAP model: ${progress.percent}%.`;
     case 'analyzing': return `Analyzing ${progress.completed + 1} of ${progress.total}: ${progress.title}`;
+    case 'scoring': return `Jev has scored ${progress.completed} of ${progress.total} tracks...`;
     case 'ranking': return 'Choosing tracks and checking tempo and key...';
   }
 };

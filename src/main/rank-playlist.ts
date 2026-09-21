@@ -80,11 +80,21 @@ export const rankPlaylist = ({
     const seedScore = seedEmbedding === null ? 0 : similarity(track.embedding, seedEmbedding);
     const score = textEmbedding !== null && seedEmbedding !== null ? 0.8 * textScore + 0.2 * seedScore
       : textEmbedding !== null ? textScore : seedScore;
-    return { ...track, score };
+    return { song: track.song, score };
   });
+  return orderPlaylist(candidates, seeds.at(-1)?.song, tempo,
+    textEmbedding === null ? 'Similar sound to your starting tracks' : 'Sound closest to your description');
+};
+
+export const orderPlaylist = (
+  tracks: readonly Readonly<{ song: SongRow; score: number }>[],
+  previous: SongRow | undefined,
+  tempo: TempoRange | null,
+  reason: string,
+): PlaylistSuggestion[] => {
+  const candidates = [...tracks];
   const selected: PlaylistSuggestion[] = [];
   const artistCounts = new Map<string, number>();
-  let previous = seeds.at(-1)?.song;
   while (selected.length < 12 && candidates.length > 0) {
     const ranked = candidates.map((track, index) => {
       const artist = normalize(track.song.artist ?? track.song.id);
@@ -98,7 +108,7 @@ export const rankPlaylist = ({
     }).filter((item) => item.artistCount < 2).sort((a, b) => b.score - a.score || a.track.song.id.localeCompare(b.track.song.id));
     const best = ranked[0];
     if (!best) break;
-    const reasons = [textEmbedding === null ? 'Similar sound to your starting tracks' : 'Sound closest to your description'];
+    const reasons = [reason];
     if (tempo !== null && best.track.song.bpm !== null) reasons.push(`${best.track.song.bpm} BPM`);
     else if (best.bpmDistance <= 3) reasons.push('close tempo');
     if (best.compatibleKey) reasons.push('compatible key');
