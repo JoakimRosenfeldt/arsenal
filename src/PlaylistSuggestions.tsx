@@ -4,7 +4,6 @@ import { TrackArtwork, type PlaybackController } from './CueboxPlayer';
 import type { SongRow } from './shared/dj-library';
 import {
   MAX_MOOD_LENGTH,
-  MAX_SEED_SONGS,
   PLAYLIST_DEBUG_PREFIX,
   type PlaylistSuggestionFailure,
   type PlaylistSuggestionProgress,
@@ -83,7 +82,7 @@ export const PlaylistSuggestions = ({
       const response = await window.djLibrary.suggestPlaylist({
         revision,
         mood,
-        seedSongIds: [...chosenSongs.keys()].slice(0, MAX_SEED_SONGS),
+        seedSongIds: [...chosenSongs.keys()],
         excludedSongIds: [...chosenSongs.keys()],
       });
       console.info(`${PLAYLIST_DEBUG_PREFIX} suggestion result`, response.kind === 'ready'
@@ -140,7 +139,6 @@ export const PlaylistSuggestions = ({
         <div className="playlist-helper-actions">
           <span>
             {chosenSongs.size === 0 ? 'Mood only, or select starting tracks below'
-              : chosenSongs.size > MAX_SEED_SONGS ? `Using your first ${MAX_SEED_SONGS} selected tracks as a starting point`
                 : `Using ${chosenSongs.size} selected ${chosenSongs.size === 1 ? 'track' : 'tracks'} as a starting point`}
           </span>
           {generating ? (

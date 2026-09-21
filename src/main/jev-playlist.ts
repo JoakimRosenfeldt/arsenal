@@ -12,7 +12,6 @@ import { matchesTempo, orderPlaylist, tempoFromMood } from './rank-playlist';
 // Bound the full JSON payload. Byte size is not a token count; batches shrink
 // if OpenRouter reports that Jev's 32k context limit was exceeded.
 const MAX_INPUT_BYTES = 80_000;
-const MAX_BATCH_TRACKS = 120;
 const MIN_MATCH_SCORE = 67;
 const criteria = [
   'Unrelated style; opposite mood.',
@@ -102,7 +101,7 @@ export const suggestJevPlaylist = async (
   const candidates = songs.filter((song) => !excludedIds.has(song.id) && matchesTempo(song, tempo));
   const scored: { song: SongRow; score: number }[] = [];
   const deadline = AbortSignal.timeout(300_000);
-  let batchLimit = MAX_BATCH_TRACKS;
+  let batchLimit = Infinity;
   for (let offset = 0; offset < candidates.length;) {
     if (signal.aborted) return { kind: 'rejected', reason: 'cancelled' };
     if (deadline.aborted) return { kind: 'rejected', reason: 'timed-out' };

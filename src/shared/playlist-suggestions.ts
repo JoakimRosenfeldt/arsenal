@@ -1,7 +1,6 @@
 import type { SongRow } from './dj-library';
 
 export const MAX_MOOD_LENGTH = 1_000;
-export const MAX_SEED_SONGS = 20;
 export const PLAYLIST_DEBUG_CHANNEL = 'playlist-suggestions:debug';
 export const PLAYLIST_DEBUG_PREFIX = '[playlist-ai]';
 export const PLAYLIST_PROGRESS_CHANNEL = 'playlist-suggestions:progress';
