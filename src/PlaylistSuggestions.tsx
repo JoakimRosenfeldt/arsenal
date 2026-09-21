@@ -167,12 +167,12 @@ export const PlaylistSuggestions = ({
             <h4>Suggested tracks</h4>
             <span role="status">{result.suggestions.length} suggestions</span>
           </div>
-          <p>Scored {result.candidateCount.toLocaleString()} library tracks with Jev. Ranked by match weighted by confidence. Add the ones you want.</p>
+          <p>Scored {result.candidateCount.toLocaleString()} library tracks with Jev. Add the ones you want.</p>
           {result.suggestions.length === 0 ? (
             <p>No matching tracks found. Try a different mood or starting tracks.</p>
           ) : (
             <ul className="playlist-suggestion-list">
-              {result.suggestions.map(({ song, score, confidence, reason }) => {
+              {result.suggestions.map(({ song, confidence, reason }) => {
                 const added = chosenSongs.has(song.id);
                 const isPlaying = playback.song?.id === song.id && playback.playing;
                 return (
@@ -190,7 +190,7 @@ export const PlaylistSuggestions = ({
                     <div className="track-identity">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}{song.bpm === null ? '' : ` · ${song.bpm} BPM`}{song.musicalKey === null ? '' : ` · ${song.musicalKey}`}</small>
-                      <p className="playlist-suggestion-reason">{score.toFixed(1)}/100 weighted score · {(confidence * 100).toFixed(0)}% confidence · {reason}</p>
+                      <p className="playlist-suggestion-reason">{(confidence * 100).toFixed(0)}% confidence · {reason}</p>
                     </div>
                     <button className="quiet-button" type="button" onClick={() => onAdd(song)} disabled={busy || added} aria-label={added ? `${song.title} added to playlist` : `Add ${song.title} to playlist`}>
                       {added ? 'Added' : 'Add to playlist'}
