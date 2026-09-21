@@ -40,7 +40,6 @@ export const TrackArtwork = ({
 
   return (
     <span className={`track-artwork is-${size}`} aria-hidden>
-      <span>CB</span>
       {showArtwork && (
         <img
           src={artworkUrl}
@@ -70,13 +69,13 @@ export const CueboxPlayer = ({
     <footer className={song === null ? 'global-player is-empty' : 'global-player'} aria-label="Audio player">
       <div className="global-player-track">
         {song === null ? (
-          <span className="player-empty-art" aria-hidden>CB</span>
+          <span className="player-empty-art" aria-hidden />
         ) : (
           <TrackArtwork loadEagerly song={song} size="medium" />
         )}
         <span>
           <strong>{song?.title ?? 'Nothing playing'}</strong>
-          <small>{song?.artist ?? 'Choose a track from any list'}</small>
+          {song !== null && <small>{song.artist ?? 'Unknown artist'}</small>}
         </span>
       </div>
 
@@ -121,9 +120,7 @@ export const CueboxPlayer = ({
             <small>Key</small>
           </span>
         )}
-        <p className={playback.failed ? 'is-error' : ''} role={playback.failed ? 'alert' : undefined}>
-          {playback.failed ? 'Audio unavailable' : playback.playing ? 'Playing locally' : song === null ? 'Player ready' : 'Paused'}
-        </p>
+        {playback.failed && <p className="is-error" role="alert">Audio unavailable</p>}
         <button type="button" onClick={onStop} disabled={song === null} aria-label="Clear player">×</button>
       </div>
     </footer>

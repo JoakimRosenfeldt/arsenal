@@ -550,7 +550,6 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             onPage={(offset) => void changePage(offset)}
             playback={playback}
             query={query}
-            resultQuery={viewQuery}
             searching={searching}
             view={view}
           />
@@ -642,7 +641,6 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         )}
         {error !== null && (
           <div className="app-alert" role="alert">
-            <span>Action failed</span>
             <p>{errorMessages[error]}</p>
             <button type="button" onClick={() => setError(null)} aria-label="Dismiss error">×</button>
           </div>

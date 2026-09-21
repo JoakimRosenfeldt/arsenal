@@ -26,7 +26,7 @@ const LibraryPreferences = (): JSX.Element => {
     try {
       const settings = await window.preferences.saveMinimumSongLength(Number(seconds));
       setSeconds(String(settings.minimumSongLengthSeconds));
-      setMessage('Minimum song length saved.');
+      setMessage('Saved.');
     } catch {
       setError('Could not save the minimum song length. Try again.');
     } finally { setSaving(false); }
@@ -34,14 +34,13 @@ const LibraryPreferences = (): JSX.Element => {
 
   return (
     <form className="library-preferences" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-      <p>Hide short tracks across the library, playlists, duplicates and suggestions.</p>
       <label className="playlist-name-field" htmlFor="minimum-song-length">
         <span>Minimum song length (seconds)</span>
         <input id="minimum-song-length" type="number" min="0" step="1" required value={seconds}
           disabled={!loaded || saving} aria-describedby="minimum-song-length-help"
           onChange={(event) => { setSeconds(event.currentTarget.value); setMessage(null); }} />
       </label>
-      <p id="minimum-song-length-help">Default: 30 seconds. Use 0 to include every track. Tracks with an unknown duration stay included. Changes apply immediately.</p>
+      <p id="minimum-song-length-help">Shorter tracks are hidden throughout the app. Use 0 to show all tracks.</p>
       <button className="quiet-button" type="submit" disabled={!loaded || saving || !valid}>{saving ? 'Saving…' : 'Save'}</button>
       {message !== null && <p role="status">{message}</p>}
       {error !== null && <p role="alert">{error}</p>}
@@ -79,28 +78,24 @@ const OpenRouterPreferences = (): JSX.Element => {
 
   return (
     <div className="ai-model-picker">
-      <p>Jev suggests tracks from your imported library using your description, starting tracks and music metadata.</p>
-      <p>Your description and track metadata are sent to OpenRouter and TypeSafe. Audio and file paths stay on this computer. Usage is billed to your OpenRouter account.</p>
+      <p>Descriptions and track metadata go to OpenRouter and TypeSafe. Usage is billed to your OpenRouter account.</p>
       <form className="ai-key-form" onSubmit={(event) => { event.preventDefault(); if (apiKey.trim()) void save(apiKey); }}>
         <fieldset disabled={saving || settings === null}>
           <legend className="visually-hidden">OpenRouter connection</legend>
           <label htmlFor="playlist-api-key">OpenRouter API key</label>
           <div className="ai-input-action">
             <input id="playlist-api-key" type="password" autoComplete="off" spellCheck={false} value={apiKey} maxLength={4_096}
-              placeholder={settings?.hasApiKey ? 'Key saved. Enter a replacement.' : 'Paste your API key'}
+              placeholder={settings?.hasApiKey ? 'Replace saved key' : 'Paste API key'}
               onChange={(event) => setApiKey(event.currentTarget.value)} />
             <button className="quiet-button" type="submit" disabled={!apiKey.trim()}>Save key</button>
             {settings?.hasApiKey && <button className="quiet-button" type="button" onClick={() => void save('')}>Remove key</button>}
           </div>
         </fieldset>
       </form>
-      {settings === null ? error === null && <p role="status">Loading OpenRouter settings...</p>
-        : <p>{settings.keyStorage === 'encrypted'
-          ? 'Your key is encrypted by the operating system and kept out of the page after saving.'
-          : 'Secure storage is unavailable. Your key is kept only until you quit the app.'}</p>}
+      {settings === null && error === null && <p role="status">Loading…</p>}
+      {settings !== null && settings.keyStorage !== 'encrypted' && <p>Secure storage unavailable. Your key is kept until you quit.</p>}
       {message !== null && <p role="status">{message}</p>}
       {error !== null && <p role="alert">{error}</p>}
-      <p>Add a tempo such as "124 to 128 BPM" to filter by Rekordbox BPM. Tracks can be suggested even when their audio is unavailable.</p>
     </div>
   );
 };
@@ -124,7 +119,6 @@ export const Preferences = (): JSX.Element => {
     <div className="preferences-window">
       <header className="preferences-header">
         <h1>Preferences</h1>
-        <span>Arsenal</span>
       </header>
       <nav className="preferences-navigation" aria-label="Preferences sections">
         <button type="button" aria-current={section === 'library' ? 'page' : undefined} onClick={() => setSection('library')}>Library</button>
@@ -142,7 +136,6 @@ export const Preferences = (): JSX.Element => {
         </section>
         <section hidden={section !== 'updates'} aria-labelledby="update-preferences-title">
           <h2 id="update-preferences-title">App updates</h2>
-          <p>Arsenal checks for new releases automatically. You choose when to download and install them.</p>
           <AppUpdates />
         </section>
       </main>

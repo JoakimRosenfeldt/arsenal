@@ -94,12 +94,6 @@ const formatRating = (rating: number | null): string => {
   return `${stars} / 5`;
 };
 
-const formatImportedAt = (importedAt: string): string =>
-  new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(importedAt));
-
 const formatRowNumber = (offset: number, index: number): string =>
   String(offset + index + 1).padStart(3, '0');
 
@@ -132,16 +126,10 @@ const statusForSong = (
 
 const NoLibrary = ({
   busy,
-  description,
-  eyebrow,
   onImport,
-  title,
 }: Readonly<{
   busy: boolean;
-  description: string;
-  eyebrow: string;
   onImport: () => void;
-  title: string;
 }>): JSX.Element => (
   <section className="page-empty" aria-labelledby="empty-page-title">
     <div className="page-empty-mark" aria-hidden>
@@ -149,13 +137,10 @@ const NoLibrary = ({
       <span />
       <span />
     </div>
-    <p className="mono-label">{eyebrow}</p>
-    <h1 id="empty-page-title">{title}</h1>
-    <p>{description}</p>
+    <h1 id="empty-page-title">Import your library</h1>
     <button className="accent-button" type="button" onClick={onImport} disabled={busy}>
       {busy ? 'Reading XML' : 'Choose Rekordbox XML'}
     </button>
-    <small>Nothing is uploaded. Arsenal works with the chosen file on this Mac.</small>
   </section>
 );
 
@@ -169,7 +154,6 @@ export const LibraryPage = ({
   onSearch,
   playback,
   query,
-  resultQuery,
   searching,
   view,
 }: CommonPageProps &
@@ -180,7 +164,6 @@ export const LibraryPage = ({
     onSearch: (query: string, filters: SongFilters) => void;
     filters: SongFilters;
     query: string;
-    resultQuery: string;
     searching: boolean;
   }>): JSX.Element => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -194,9 +177,6 @@ export const LibraryPage = ({
     return (
       <NoLibrary
         busy={busy}
-        eyebrow="Collection / Local XML"
-        title="Your library starts with one export."
-        description="Open a Rekordbox Collection XML file to browse and play local tracks."
         onImport={onImport}
       />
     );
@@ -214,10 +194,6 @@ export const LibraryPage = ({
     null;
   const pageNumber = Math.floor(view.page.offset / view.page.limit) + 1;
   const pageCount = Math.max(1, Math.ceil(view.page.total / view.page.limit));
-  const pageDuration = view.page.items.reduce(
-    (total, song) => total + (song.durationSeconds ?? 0),
-    0,
-  );
 
   const selectedIsActive = selectedSong?.id === playback.song?.id;
   const displayedDuration = selectedIsActive && playback.duration > 0
@@ -280,14 +256,9 @@ export const LibraryPage = ({
       <header className="page-header library-header">
         <div className="page-title-line">
           <h1 id="library-title">Library</h1>
-          <p>
-            {view.library.songCount.toLocaleString()} tracks
-            <span aria-hidden>·</span>
-            {Math.floor(pageDuration / 3600)}h {Math.floor((pageDuration % 3600) / 60)}m on this page
-          </p>
+          <p>{view.library.songCount.toLocaleString()} tracks</p>
         </div>
         <div className="header-actions">
-          <span className="status-pill" title={`${view.library.sourceName} · Opened ${formatImportedAt(view.library.importedAt)}`}><i aria-hidden />Local XML</span>
           <button className="quiet-button inspector-toggle" type="button" onClick={() => setInspectorOpen((open) => !open)} aria-expanded={inspectorOpen}>
             Inspector
           </button>
@@ -301,7 +272,7 @@ export const LibraryPage = ({
         <label className="library-search">
           <span className="search-icon" aria-hidden />
           <span className="visually-hidden">Search tracks</span>
-          <input id="library-search" type="search" placeholder="Search title, artist, album, genre, key…"
+          <input id="library-search" type="search" placeholder="Search tracks"
             value={query} maxLength={200} disabled={busy || action !== null}
             onChange={(event) => onSearch(event.currentTarget.value, filters)} />
           <kbd aria-hidden>⌘K</kbd>
@@ -327,7 +298,7 @@ export const LibraryPage = ({
         </select>
         {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
           onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Reset</button>}
-        <span className="library-result-count" role="status">{searching ? 'Searching…' : `${view.page.total.toLocaleString()} ${view.page.total === 1 ? 'result' : 'results'}`}</span>
+        {filtered && !searching && <span className="library-result-count" role="status">{view.page.total.toLocaleString()} {view.page.total === 1 ? 'result' : 'results'}</span>}
       </div>
 
       {menuError && <p className="library-menu-error" role="alert">Could not open the menu. Use the selection actions below.</p>}
@@ -365,8 +336,7 @@ export const LibraryPage = ({
               <div className="inline-empty" role="status">Searching collection…</div>
             ) : visibleSongs.length === 0 ? (
               <div className="inline-empty">
-                <strong>{view.library.songCount === 0 ? 'Your collection has no tracks.' : 'No tracks match your search and filters.'}</strong>
-                {resultQuery && <span>Search: "{resultQuery}"</span>}
+                <strong>{view.library.songCount === 0 ? 'No tracks' : 'No matching tracks'}</strong>
                 {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
                   onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Clear search and filters</button>}
               </div>
@@ -480,15 +450,9 @@ export const LibraryPage = ({
                 >
                   {selectedIsActive && playback.playing ? 'Pause' : 'Play'}
                 </button>
-                <span>
-                  {selectedSong.audioUrl === null
-                    ? 'Local audio unavailable'
-                    : playback.failed && selectedIsActive
-                      ? 'This audio format could not be played'
-                      : selectedIsActive
-                        ? 'Playing local file'
-                        : 'Ready to play'}
-                </span>
+                {(selectedSong.audioUrl === null || (playback.failed && selectedIsActive)) && (
+                  <span>Audio unavailable</span>
+                )}
               </div>
             </div>
             <dl className="inspector-stats">
@@ -499,10 +463,6 @@ export const LibraryPage = ({
               <div><dt>Album</dt><dd>{selectedSong.album ?? 'Not set'}</dd></div>
               <div><dt>Gaps</dt><dd>{songMetadataGapCount(selectedSong)}</dd></div>
             </dl>
-            <div className="inspector-note">
-              <span className="mono-label">Local file</span>
-              <p>Playback and waveform analysis stay on this Mac.</p>
-            </div>
           </aside>
         )}
       </div>
@@ -517,14 +477,6 @@ export const LibraryPage = ({
       <nav className="page-pagination" aria-label="Song pages">
         <p>
           Page <strong>{pageNumber}</strong> of {pageCount}
-          <span>
-            {view.page.total === 0
-              ? '0 tracks shown'
-              : `${view.page.offset + 1}-${Math.min(
-                  view.page.offset + view.page.items.length,
-                  view.page.total,
-                )} shown`}
-          </span>
         </p>
         <div>
           <button type="button" onClick={() => onPage(view.page.offset - view.page.limit)} disabled={busy || searching || view.page.offset === 0}>
@@ -541,7 +493,6 @@ export const LibraryPage = ({
 
 type DuplicateModeCopy = Readonly<{
   description: string;
-  emptyDescription: string;
   emptyTitle: string;
   label: string;
 }>;
@@ -549,33 +500,28 @@ type DuplicateModeCopy = Readonly<{
 const duplicateModeCopy: Readonly<Record<DuplicateMatchMode, DuplicateModeCopy>> = {
   smart: {
     label: 'Smart',
-    description: 'Matching title, artist, duration, mix, and remixer metadata. Keep local tracks first, then tracks with hot cues.',
-    emptyTitle: 'No smart matches found.',
-    emptyDescription: 'No tracks share the required metadata and a known duration. Audio files are not fingerprinted.',
+    description: 'Matching title, artist, duration, mix, and remixer. Prefers local tracks, then hot cues.',
+    emptyTitle: 'No smart matches',
   },
   exact: {
     label: 'Exact',
     description: 'Same title and artist metadata',
-    emptyTitle: 'No exact matches found.',
-    emptyDescription: 'No title and artist pair appears more than once.',
+    emptyTitle: 'No exact matches',
   },
   versions: {
     label: 'All versions',
     description: 'Same base title with recognized version tags',
-    emptyTitle: 'No version families found.',
-    emptyDescription: 'No tracks share a base title with a recognized version tag.',
+    emptyTitle: 'No matching versions',
   },
   'dj-edits': {
     label: 'DJ edits',
     description: 'Intro, extended, clean, dirty, radio, club, and other edits',
-    emptyTitle: 'No DJ edit families found.',
-    emptyDescription: 'No track family includes a recognized DJ edit tag.',
+    emptyTitle: 'No matching DJ edits',
   },
   remixes: {
     label: 'Remixes',
     description: 'Remix, rework, bootleg, mashup, VIP, and flip tags',
-    emptyTitle: 'No remix families found.',
-    emptyDescription: 'No track family includes a recognized remix tag.',
+    emptyTitle: 'No matching remixes',
   },
 };
 
@@ -652,8 +598,8 @@ const FileRemovalOption = ({
         aria-describedby={disabledReason === null ? undefined : tooltipId}
       />
       {songs.length === 1
-        ? 'Also move the local audio file to Trash'
-        : 'Also move the linked local audio files to Trash'}
+        ? 'Also move the audio file to Trash'
+        : 'Also move audio files to Trash'}
       {disabledReason !== null && (
         <span className="file-removal-tooltip" id={tooltipId} role="tooltip">
           {disabledReason}
@@ -693,7 +639,7 @@ const LibrarySelectionActions = ({
       {action === 'remove' && (
         <div className="duplicate-selection-review" ref={actionRef} tabIndex={-1}>
           <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'}?</strong>
-          <p>This removes the tracks from the XML collection and its playlists. Local audio files are kept unless you choose below.</p>
+          <p>Removes tracks from the XML and its playlists. Audio files are kept unless selected below.</p>
           <ul aria-label="Tracks to remove">
             {songs.map((song) => <li key={song.id}>{song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}</li>)}
           </ul>
@@ -739,7 +685,7 @@ const DuplicateSelectionActions = ({
       {confirming && (
         <div className="duplicate-selection-review">
           <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'} from the XML?</strong>
-          <p>References to these tracks will also be removed from playlists.</p>
+          <p>Also removes these tracks from playlists.</p>
           <ul aria-label="Tracks to remove">
             {songs.map((song) => (
               <li key={song.id}>
@@ -870,7 +816,7 @@ const DuplicateSong = ({
               <>
                 <div>
                   <strong>Remove this track from the XML?</strong>
-                  <p>References to it will also be removed from playlists.</p>
+                  <p>Also removes this track from playlists.</p>
                   <FileRemovalOption
                     busy={busy}
                     checked={removeLocalFile}
@@ -942,9 +888,6 @@ export const DuplicatesPage = ({
     return (
       <NoLibrary
         busy={busy}
-        eyebrow="Collection / Duplicates"
-        title="Open a library before comparing tracks."
-        description="Arsenal scans the full collection for exact matches, alternate versions, DJ edits, and remixes."
         onImport={onImport}
       />
     );
@@ -1000,27 +943,17 @@ export const DuplicatesPage = ({
   }
   const copy = duplicateModeCopy[mode];
   const emptyTitle = (scan?.ignoredGroupCount ?? 0) > 0
-    ? 'No groups left to review.'
+    ? 'No groups left to review'
     : copy.emptyTitle;
-  const emptyDescription = (scan?.ignoredGroupCount ?? 0) > 0
-    ? 'Ignored groups return when a new matching track is imported.'
-    : copy.emptyDescription;
 
   return (
     <section className="workspace-page duplicates-page" aria-labelledby="duplicates-title">
       <header className="page-header stacked-header">
         <div className="page-title-line">
           <h1 id="duplicates-title">Duplicates</h1>
-          <p>
-            {scanning
-              ? 'Scanning full library'
-              : scanFailed
-                ? 'Scan unavailable'
-                : `${groups.length} ${groups.length === 1 ? 'group' : 'groups'} · ${scan?.trackCount ?? 0} tracks · full library`}
-          </p>
+          {!scanning && !scanFailed && <p>{groups.length} {groups.length === 1 ? 'group' : 'groups'} · {scan?.trackCount ?? 0} tracks</p>}
         </div>
         <div className="header-actions">
-          <span className="status-pill is-warning"><i aria-hidden />XML cleanup</span>
           <button className="quiet-button" type="button" onClick={onImport} disabled={busy}>
             {busy ? 'Reading XML' : 'Import XML'}
           </button>
@@ -1037,13 +970,13 @@ export const DuplicatesPage = ({
                 }}
                 disabled={busy}
                 aria-pressed={option === mode}
+                title={duplicateModeCopy[option].description}
                 key={option}
               >
                 {duplicateModeCopy[option].label}
               </button>
             ))}
           </div>
-          <p>{copy.description}</p>
         </div>
         {mode === 'smart' && (
           <div className="duplicate-smart-actions">
@@ -1053,12 +986,11 @@ export const DuplicatesPage = ({
               disabled={busy || scanning || suggestedIds.length === 0}
               onClick={() => setChosenIds(new Set(suggestedIds.slice(0, 10_000)))}
             >
-              Select suggested duplicates
+              Select suggested duplicates ({Math.min(suggestedIds.length, 10_000).toLocaleString()})
             </button>
             <span>
-              {suggestedIds.length} suggested across all groups.
-              {suggestedIds.length > 10_000 ? ' Selects the first 10,000. Remove those, then select the remaining suggestions.' : ' Review before removal.'}
-              {' '}Audio files are not fingerprinted.
+              Metadata matches only. Review before removal.
+              {suggestedIds.length > 10_000 && ` First 10,000 of ${suggestedIds.length.toLocaleString()}.`}
             </span>
           </div>
         )}
@@ -1067,22 +999,7 @@ export const DuplicatesPage = ({
       <div className="duplicates-body">
         <aside className="duplicate-groups" aria-label="Matched track groups">
           <div className="panel-heading"><span>Groups</span><span>Tracks</span></div>
-          {scanning ? (
-            <div className="panel-empty" role="status">
-              <strong>Scanning the library</strong>
-              <p>Checking every imported track, not only the visible page.</p>
-            </div>
-          ) : scanFailed ? (
-            <div className="panel-empty" role="alert">
-              <strong>Scan unavailable</strong>
-              <p>Choose another mode or import the XML again.</p>
-            </div>
-          ) : groups.length === 0 ? (
-            <div className="panel-empty">
-              <strong>{emptyTitle}</strong>
-              <p>{emptyDescription}</p>
-            </div>
-          ) : (
+          {!scanning && !scanFailed && (
             groups.map((group, index) => {
               const isActive = group.key === selectedGroup?.key;
               return (
@@ -1095,7 +1012,7 @@ export const DuplicatesPage = ({
                 >
                   <strong>{group.title}</strong>
                   <span>{group.artist}</span>
-                  <small>{group.candidates.length} tracks · {variantSummaryFor(group)} · group {index + 1}</small>
+                  <small>{group.candidates.length} tracks · {variantSummaryFor(group)}</small>
                 </button>
               );
             })
@@ -1106,23 +1023,18 @@ export const DuplicatesPage = ({
           {scanning ? (
             <div className="detail-empty" role="status">
               <span className="loading-mark" aria-hidden />
-              <p className="mono-label">Full library scan</p>
-              <h2>Finding {copy.label.toLocaleLowerCase()}.</h2>
-              <p>This scan uses imported track metadata. Audio files are not fingerprinted.</p>
+              <h2>Scanning library…</h2>
             </div>
           ) : scanFailed ? (
             <div className="detail-empty" role="alert">
               <span className="empty-scan" aria-hidden />
-              <p className="mono-label">Scan unavailable</p>
-              <h2>Arsenal could not compare this library.</h2>
-              <p>Import the Rekordbox XML again. Your music files have not been changed.</p>
+              <h2>Scan unavailable</h2>
+              <p>Choose another mode or import the XML again.</p>
             </div>
           ) : selectedGroup === null ? (
             <div className="detail-empty">
               <span className="empty-scan" aria-hidden />
-              <p className="mono-label">Full library scan complete</p>
               <h2>{emptyTitle}</h2>
-              <p>{emptyDescription}</p>
             </div>
           ) : (
             <>
@@ -1173,7 +1085,7 @@ export const DuplicatesPage = ({
           )}
         </div>
       </div>
-      {chosenSongs.length > 0 ? (
+      {chosenSongs.length > 0 && (
         <DuplicateSelectionActions
           busy={busy}
           onClear={() => setChosenIds(new Set())}
@@ -1181,11 +1093,6 @@ export const DuplicatesPage = ({
           songs={chosenSongs}
           key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])}
         />
-      ) : (
-        <footer className="action-rail">
-          <span>Select tracks to remove them together</span>
-          <strong>{copy.label} · full library</strong>
-        </footer>
       )}
     </section>
   );
@@ -1268,9 +1175,6 @@ export const PlaylistsPage = ({
     return (
       <NoLibrary
         busy={busy}
-        eyebrow="Collection / Playlists"
-        title="Open a library to view playlists."
-        description="Open a Rekordbox XML to create playlists and folders."
         onImport={onImport}
       />
     );
@@ -1303,10 +1207,9 @@ export const PlaylistsPage = ({
       <header className="page-header">
         <div className="page-title-line">
           <h1 id="playlists-title">{creating ? 'New playlist' : selectedPlaylist?.name ?? 'Playlist'}</h1>
-          <p>{creating ? 'Choose tracks from your collection.' : `${selectedPlaylist?.tracks.length ?? 0} tracks`}</p>
+          {!creating && <p>{selectedPlaylist?.tracks.length ?? 0} tracks</p>}
         </div>
         <div className="header-actions">
-          <span className="status-pill"><i aria-hidden />Rekordbox XML</span>
           {!creating && selectedPlaylist?.smartDefinition && <button className="quiet-button" type="button" disabled={busy} onClick={() => onEditSmart(selectedPlaylist)}>Edit rules</button>}
         </div>
       </header>
@@ -1315,11 +1218,6 @@ export const PlaylistsPage = ({
         <div className="playlist-detail">
           {creating ? (
             <div className="playlist-creator">
-              <div className="playlist-creator-heading">
-                <p className="mono-label">New playlist</p>
-                <h2>Choose a name and tracks.</h2>
-                <p>Pick tracks yourself or get suggestions from your library. Tracks keep the order you add them.</p>
-              </div>
               <label className="playlist-name-field">
                 <span>Playlist name</span>
                 <input value={name} onChange={(event) => setName(event.currentTarget.value)} maxLength={100} disabled={busy} autoFocus />
@@ -1333,9 +1231,9 @@ export const PlaylistsPage = ({
                 revision={view.library.revision}
               />
               <form className="playlist-search" onSubmit={search}>
-                <label htmlFor="playlist-track-search">Find tracks in the full collection</label>
+                <label htmlFor="playlist-track-search">Find tracks</label>
                 <div>
-                  <input id="playlist-track-search" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} maxLength={200} placeholder="Title, artist, album, genre, or key" />
+                  <input id="playlist-track-search" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} maxLength={200} />
                   <button className="quiet-button" type="submit" disabled={loadingSongs}>{loadingSongs ? 'Searching' : 'Search'}</button>
                 </div>
               </form>
@@ -1367,17 +1265,17 @@ export const PlaylistsPage = ({
                     <button type="button" disabled={loadingSongs || results.offset === 0} onClick={() => {
                       setLoadingSongs(true);
                       setSearchRequest({ ...searchRequest, offset: results.offset - results.limit });
-                    }}>Previous results</button>
+                    }}>Previous</button>
                     <button type="button" disabled={loadingSongs || !results.hasNext} onClick={() => {
                       setLoadingSongs(true);
                       setSearchRequest({ ...searchRequest, offset: results.offset + results.limit });
-                    }}>Next results</button>
+                    }}>Next</button>
                   </div>
                 </nav>
               )}
               {chosenSongs.size > 0 && (
                 <section className="playlist-draft" aria-labelledby="playlist-draft-title">
-                  <h3 id="playlist-draft-title">In your playlist <span>{chosenSongs.size}</span></h3>
+                  <h3 id="playlist-draft-title">Selected tracks</h3>
                   <ol>
                     {[...chosenSongs.values()].map((song) => (
                       <li key={song.id}>
@@ -1404,15 +1302,12 @@ export const PlaylistsPage = ({
           ) : playlists === null ? (
             <div className="detail-empty" role="status">
               <span className="loading-mark" aria-hidden />
-              <p className="mono-label">Playlist collection</p>
-              <h2>Reading the Rekordbox tree.</h2>
+              <h2>Loading playlists…</h2>
             </div>
           ) : selectedPlaylist === null ? (
             <div className="detail-empty">
               <span className="empty-scan" aria-hidden />
-              <p className="mono-label">Playlist collection</p>
-              <h2>{playlists.length === 0 ? 'No playlists in this XML.' : 'Choose a playlist.'}</h2>
-              <p>{playlists.length === 0 ? 'Create one from tracks in the collection.' : 'Use the Rekordbox folder tree in the sidebar.'}</p>
+              <h2>{playlists.length === 0 ? 'No playlists' : 'Choose a playlist'}</h2>
             </div>
           ) : (
             <>

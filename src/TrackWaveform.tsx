@@ -100,7 +100,7 @@ export const TrackWaveform = ({
     <div className="interactive-waveform">
       {bars === null ? (
         <p className="waveform-status" role="status">
-          {failed ? 'Waveform unavailable for this file' : 'Reading waveform…'}
+          {failed ? 'Waveform unavailable' : 'Loading waveform…'}
         </p>
       ) : (
         <div className="track-profile-bars" role="img" aria-label={`Audio waveform of ${song.title}`}>

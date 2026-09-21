@@ -29,10 +29,10 @@ const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
 };
 
 const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
-  if (progress === null) return 'Preparing Jev suggestions...';
+  if (progress === null) return 'Finding suggestions…';
   switch (progress.phase) {
-    case 'scoring': return `Jev has scored ${progress.completed} of ${progress.total} tracks...`;
-    case 'ranking': return 'Choosing tracks and checking tempo and key...';
+    case 'scoring': return `Scoring ${progress.completed} / ${progress.total} tracks…`;
+    case 'ranking': return 'Ranking tracks…';
   }
 };
 
@@ -129,13 +129,11 @@ export const PlaylistSuggestions = ({
   return (
     <section className="playlist-helper" aria-labelledby="playlist-helper-title">
       <div className="playlist-helper-heading">
-        <h3 id="playlist-helper-title">Find the next tracks</h3>
-        <span className="mono-label">Playlist helper</span>
+        <h3 id="playlist-helper-title">Suggestions</h3>
       </div>
-      <p>Select tracks below, describe a mood, or do both.</p>
-      <p className="playlist-ai-summary">Jev · Your description and track metadata are sent through OpenRouter. Audio stays on this computer. Set up your API key in Preferences.</p>
+      <p className="playlist-ai-summary">Sends your description and track metadata to OpenRouter.</p>
       <form onSubmit={(event) => void generate(event)}>
-        <label className="playlist-mood-field" htmlFor="playlist-mood">Describe the mood</label>
+        <label className="playlist-mood-field" htmlFor="playlist-mood">Mood</label>
         <textarea
           id="playlist-mood"
           value={mood}
@@ -143,12 +141,12 @@ export const PlaylistSuggestions = ({
           maxLength={MAX_MOOD_LENGTH}
           rows={3}
           disabled={busy || generating}
-          placeholder="Warm, laid-back house for a sunset set. Keep it around 115 BPM."
+          placeholder="Sunset house, 115 BPM"
         />
         <div className="playlist-helper-actions">
           <span>
-            {chosenSongs.size === 0 ? 'Mood only, or select starting tracks below'
-                : `Using ${chosenSongs.size} selected ${chosenSongs.size === 1 ? 'track' : 'tracks'} as a starting point`}
+            {chosenSongs.size === 0 ? 'Describe a mood or select tracks'
+                : `${chosenSongs.size} starting ${chosenSongs.size === 1 ? 'track' : 'tracks'}`}
           </span>
           {generating ? (
             <button className="quiet-button" type="button" onClick={cancel}>Stop</button>
@@ -165,11 +163,10 @@ export const PlaylistSuggestions = ({
         <div className="playlist-suggestions" aria-busy={generating}>
           <div className="playlist-helper-heading">
             <h4>Suggested tracks</h4>
-            <span role="status">{result.suggestions.length} suggestions</span>
+            <span role="status" aria-label={`${result.suggestions.length} suggestions`}>{result.suggestions.length}</span>
           </div>
-          <p>Scored {result.candidateCount.toLocaleString()} library tracks with Jev. Add the ones you want.</p>
           {result.suggestions.length === 0 ? (
-            <p>No matching tracks found. Try a different mood or starting tracks.</p>
+            <p>No matching tracks</p>
           ) : (
             <ul className="playlist-suggestion-list">
               {result.suggestions.map(({ song, confidence, reason }) => {
@@ -190,10 +187,10 @@ export const PlaylistSuggestions = ({
                     <div className="track-identity">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}{song.bpm === null ? '' : ` · ${song.bpm} BPM`}{song.musicalKey === null ? '' : ` · ${song.musicalKey}`}</small>
-                      <p className="playlist-suggestion-reason">{(confidence * 100).toFixed(0)}% confidence · {reason}</p>
+                      <p className="playlist-suggestion-reason" title={`${(confidence * 100).toFixed(0)}% confidence`}>{reason}</p>
                     </div>
                     <button className="quiet-button" type="button" onClick={() => onAdd(song)} disabled={busy || added} aria-label={added ? `${song.title} added to playlist` : `Add ${song.title} to playlist`}>
-                      {added ? 'Added' : 'Add to playlist'}
+                      {added ? 'Added' : 'Add'}
                     </button>
                   </li>
                 );

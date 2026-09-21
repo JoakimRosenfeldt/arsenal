@@ -33,16 +33,13 @@ const collectionItems: readonly NavigationItem[] = [
 const NavigationGroup = ({
   activePage,
   items,
-  label,
   onNavigate,
 }: Readonly<{
   activePage: PageId;
   items: readonly NavigationItem[];
-  label: string;
   onNavigate: (page: PageId) => void;
 }>): JSX.Element => (
   <div className="sidebar-group">
-    <p className="sidebar-section-label">{label}</p>
     <div className="sidebar-nav-list">
       {items.map((item) => {
         const isActive = item.page === activePage;
@@ -196,7 +193,6 @@ export const CueboxSidebar = ({
         <div className="cuebox-brand" aria-label="Arsenal">
           <span className="cuebox-mark" aria-hidden />
           <span className="sidebar-brand-text">Arsenal</span>
-          <span className="sidebar-version">LOCAL</span>
         </div>
 
         <button className="sidebar-search" type="button" aria-label="Search collection"
@@ -206,7 +202,7 @@ export const CueboxSidebar = ({
             requestAnimationFrame(() => document.getElementById('library-search')?.focus());
           }}>
           <span className="search-icon" aria-hidden />
-          <span className="sidebar-search-label">Search collection</span>
+          <span className="sidebar-search-label">Search</span>
           <span className="search-shortcut" aria-hidden>⌘K</span>
         </button>
       </div>
@@ -215,7 +211,6 @@ export const CueboxSidebar = ({
         <NavigationGroup
           activePage={activePage}
           items={collection}
-          label="Collection"
           onNavigate={onNavigate}
         />
 
@@ -237,9 +232,6 @@ export const CueboxSidebar = ({
                 playlists={playlists}
                 selectedPlaylistId={selectedPlaylistId}
               />
-            )}
-            {playlists !== null && playlists.length === 0 && folders.length === 0 && (
-              <p className="sidebar-playlist-empty">Use + to create a playlist or folder.</p>
             )}
           </div>
         </div>

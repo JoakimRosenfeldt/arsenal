@@ -76,8 +76,7 @@ const RuleGroupEditor = ({ group, onChange, depth = 0 }: Readonly<{
           if (match === 'all' || match === 'any' || match === 'none') onChange({ ...group, match });
         }}>
           <option value="all">all</option><option value="any">any</option><option value="none">none</option>
-        </select> of the following</label>
-        <span>{group.match === 'all' ? 'AND' : group.match === 'any' ? 'OR' : 'EXCLUDE'}</span>
+        </select> rules</label>
       </div>
       <div className="smart-group-rules">
         {group.rules.map((rule, index) => (
@@ -151,7 +150,7 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
   return (
     <section className="workspace-page playlists-page" aria-labelledby="smart-title">
       <header className="page-header">
-        <div className="page-title-line"><h1 id="smart-title">{initialDefinition ? 'Edit smart playlist' : 'New smart playlist'}</h1><p>Match tracks automatically.</p></div>
+        <div className="page-title-line"><h1 id="smart-title">{initialDefinition ? 'Edit smart playlist' : 'New smart playlist'}</h1></div>
       </header>
       <div className="playlists-body"><div className="playlist-detail">
         <div className="playlist-creator smart-playlist-editor">
@@ -160,7 +159,6 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
               <label className="playlist-name-field"><span>Playlist name</span><input value={name} onChange={(event) => setName(event.currentTarget.value)} maxLength={100} autoFocus /></label>
               <PlaylistDestination folders={folders} value={parentFolderId} onChange={setParentFolderId} disabled={busy || initialDefinition !== undefined} />
             </div>
-            <p className="smart-editor-help">Combine groups with "all" or "any". Use "none" to exclude matches. Text ignores case. Use "is missing" to find empty metadata.</p>
             <RuleGroupEditor group={definition.rules} onChange={(rules) => setDefinition({ ...definition, rules })} />
             <div className="smart-output-controls">
               <label>Sort by<select value={definition.sort.field} onChange={(event) => {
@@ -184,7 +182,6 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
               {failed && <button className="quiet-button" type="button" onClick={() => setDefinition({ ...definition })}>Retry</button>}
             </div>
             {currentPreview !== null && <>
-              {currentPreview.tracks.length === 0 && <p className="smart-editor-help">No tracks match. Adjust a rule or switch a group to "any".</p>}
               {currentPreview.tracks.map((song) => (
                 <div className="smart-preview-track" key={song.id}>
                   <button type="button" className="track-play" disabled={song.audioUrl === null} onClick={() => playback.play(song)} aria-label={`${playback.song?.id === song.id && playback.playing ? 'Pause' : 'Play'} ${song.title}`}><TrackArtwork song={song} /></button>
@@ -195,7 +192,7 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
               {currentPreview.total > currentPreview.tracks.length && <p className="smart-editor-help">Showing the first {currentPreview.tracks.length} tracks.</p>}
             </>}
           </section>
-          <p className="smart-editor-help">Arsenal reevaluates rules when the collection opens or changes. Saving writes the current matches to the XML as a regular playlist for Rekordbox. Keep this XML to retain your rules. A fresh Rekordbox export does not carry Arsenal rules.</p>
+          <p className="smart-editor-help">Writes matches to XML as a regular playlist. Fresh Rekordbox exports omit Arsenal rules.</p>
           <div className="playlist-create-actions">
             <button className="quiet-button" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
             <button className="accent-button compact" type="button" disabled={busy || !name.trim() || validation !== null || currentPreview === null}
