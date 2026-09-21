@@ -41,7 +41,6 @@ const metadata = (song: SongRow) => ({
   title: compactText(song.title, 96), artist: compactText(song.artist, 96),
   genre: compactText(song.genre, 64), album: compactText(song.album, 64),
   mix: compactText(song.mixName, 64), remixer: compactText(song.remixer, 64),
-  label: compactText(song.label, 64), comments: compactText(song.comments, 160),
   bpm: song.bpm, key: compactText(song.musicalKey, 24), year: song.year,
 });
 
