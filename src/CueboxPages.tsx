@@ -172,6 +172,20 @@ export const LibraryPage = ({
   const [action, setAction] = useState<'remove' | null>(null);
   const [menuError, setMenuError] = useState(false);
   const anchorId = useRef<string | null>(null);
+  const inspectorRef = useRef<HTMLElement>(null);
+  const inspectorToggleRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!inspectorOpen) return;
+    const dismissOutside = (event: MouseEvent): void => {
+      if (!window.matchMedia('(max-width: 1150px)').matches || !(event.target instanceof Node)) return;
+      if (!inspectorRef.current?.contains(event.target) && !inspectorToggleRef.current?.contains(event.target)) {
+        setInspectorOpen(false);
+      }
+    };
+    document.addEventListener('click', dismissOutside, true);
+    return () => document.removeEventListener('click', dismissOutside, true);
+  }, [inspectorOpen]);
 
   if (view === null) {
     return (
@@ -259,7 +273,8 @@ export const LibraryPage = ({
           <p>{view.library.songCount.toLocaleString()} tracks</p>
         </div>
         <div className="header-actions">
-          <button className="quiet-button inspector-toggle" type="button" onClick={() => setInspectorOpen((open) => !open)} aria-expanded={inspectorOpen}>
+          <button className="quiet-button inspector-toggle" type="button" ref={inspectorToggleRef}
+            onClick={() => setInspectorOpen((open) => !open)} aria-expanded={inspectorOpen}>
             Inspector
           </button>
           <button className="quiet-button" type="button" onClick={onImport} disabled={busy}>
@@ -420,7 +435,7 @@ export const LibraryPage = ({
         </div>
 
         {selectedSong !== null && (
-          <aside className={inspectorOpen ? 'library-inspector is-open' : 'library-inspector'} aria-label="Selected track inspector">
+          <aside className={inspectorOpen ? 'library-inspector is-open' : 'library-inspector'} aria-label="Selected track inspector" ref={inspectorRef}>
             <button className="inspector-close" type="button" onClick={() => setInspectorOpen(false)} aria-label="Close inspector">×</button>
             <div className="inspector-title">
               <TrackArtwork loadEagerly song={selectedSong} size="large" />

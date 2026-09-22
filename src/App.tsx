@@ -120,6 +120,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [exportPlaylistId, setExportPlaylistId] = useState<string | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const feedbackRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState(DEFAULT_SONG_FILTERS);
   const [viewQuery, setViewQuery] = useState('');
@@ -139,6 +141,17 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [playbackFailed, setPlaybackFailed] = useState(false);
   const hasLibrary = view !== null;
   const libraryVersion = view?.library.revision ?? 'empty';
+
+  useEffect(() => {
+    if (error === null && feedback === null) return;
+    const dismissOutside = (event: MouseEvent): void => {
+      if (!(event.target instanceof Node)) return;
+      if (errorRef.current && !errorRef.current.contains(event.target)) setError(null);
+      if (feedbackRef.current && !feedbackRef.current.contains(event.target)) setFeedback(null);
+    };
+    document.addEventListener('click', dismissOutside, true);
+    return () => document.removeEventListener('click', dismissOutside, true);
+  }, [error, feedback]);
 
   useEffect(() => {
     let active = true;
@@ -642,13 +655,13 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       />}
       <main className="workspace" id="main-content">
         {feedback !== null && (
-          <div className={`app-feedback is-${feedback.tone}`} role="status">
+          <div className={`app-feedback is-${feedback.tone}`} role="status" ref={feedbackRef}>
             <p>{feedback.message}</p>
             <button type="button" onClick={() => setFeedback(null)} aria-label="Dismiss message">×</button>
           </div>
         )}
         {error !== null && (
-          <div className="app-alert" role="alert">
+          <div className="app-alert" role="alert" ref={errorRef}>
             <p>{errorMessages[error]}</p>
             <button type="button" onClick={() => setError(null)} aria-label="Dismiss error">×</button>
           </div>
