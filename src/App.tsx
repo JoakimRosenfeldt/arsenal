@@ -33,6 +33,7 @@ import {
 } from './shared/dj-library';
 
 import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
+import { TracklistExportDialog } from './TracklistExportDialog';
 
 type DisplayError = ImportFailure | MutationFailure | 'unexpected';
 
@@ -116,6 +117,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
   const [folders, setFolders] = useState<readonly PlaylistFolder[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
+  const [exportPlaylistId, setExportPlaylistId] = useState<string | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [query, setQuery] = useState('');
@@ -512,11 +514,15 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setActivePage('playlists');
   };
 
-  const openPlaylistMenu = async (parentFolderId: string | null): Promise<void> => {
+  const openPlaylistMenu = async (parentFolderId: string | null, playlistId: string | null): Promise<void> => {
     if (busy || view === null) return;
     try {
-      const kind = await window.djLibrary.playlistMenu();
-      if (kind !== null) openPlaylistEditor({ parentFolderId, revision: libraryVersion, ...(kind === 'playlist' ? { kind, songIds: [] } : { kind }) });
+      const kind = await window.djLibrary.playlistMenu(playlistId);
+      if (kind === 'export-tracklist') {
+        setExportPlaylistId(playlistId);
+      } else if (kind !== null) {
+        openPlaylistEditor({ parentFolderId, revision: libraryVersion, ...(kind === 'playlist' ? { kind, songIds: [] } : { kind }) });
+      }
     } catch {
       setError('unexpected');
     }
@@ -601,6 +607,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             folders={folders}
             onCancel={cancelPlaylistEditor}
             onEditSmart={(playlist) => openPlaylistEditor({ kind: 'edit-smart-playlist', playlistId: playlist.id, parentFolderId: playlist.parentFolderId, revision: libraryVersion })}
+            onExport={(playlist) => setExportPlaylistId(playlist.id)}
             onCreate={createPlaylist}
             onImport={() => void importLibrary()}
             playback={playback}
@@ -616,6 +623,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       }
     }
   })();
+  const exportPlaylist = playlists?.find((playlist) => playlist.id === exportPlaylistId) ?? null;
 
   return (
     <div className={playlistWindow ? 'playlist-action-window' : 'cuebox-app'}>
@@ -624,7 +632,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         busy={busy}
         duplicateCount={duplicateCount}
         folders={folders}
-        onMenu={(parentFolderId) => void openPlaylistMenu(parentFolderId)}
+        onMenu={(parentFolderId, playlistId) => void openPlaylistMenu(parentFolderId, playlistId)}
         hasLibrary={view !== null}
         onNavigate={navigate}
         onPlaylistSelect={selectPlaylist}
@@ -669,6 +677,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         onError={() => setPlaybackFailed(true)}
       />
       {playlistWindow === undefined && <CueboxPlayer onStop={stopPlayback} playback={playback} />}
+      {playlistWindow === undefined && exportPlaylist !== null && (
+        <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onClose={() => setExportPlaylistId(null)} />
+      )}
     </div>
   );
 };

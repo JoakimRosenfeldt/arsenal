@@ -9,6 +9,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   listPlaylists: 'dj-library:list-playlists',
   listFolders: 'dj-library:list-folders',
   playlistMenu: 'dj-library:playlist-menu',
+  copyTracklist: 'dj-library:copy-tracklist',
   openPlaylistWindow: 'dj-library:open-playlist-window',
   playlistWindowContext: 'dj-library:playlist-window-context',
   previewSmartPlaylist: 'dj-library:preview-smart-playlist',
@@ -160,6 +161,7 @@ export type PlaylistFolder = Readonly<{
 }>;
 
 export type PlaylistCreationKind = 'playlist' | 'folder' | 'smart-playlist';
+export type PlaylistMenuAction = PlaylistCreationKind | 'export-tracklist';
 export type PlaylistWindowRequest = Readonly<{ revision: string; parentFolderId: string | null }> & (
   | Readonly<{ kind: 'playlist'; songIds: readonly string[] }>
   | Readonly<{ kind: 'folder' | 'smart-playlist' }>
@@ -301,7 +303,8 @@ export type DjLibraryApi = Readonly<{
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;
   listFolders(): Promise<readonly PlaylistFolder[]>;
-  playlistMenu(): Promise<PlaylistCreationKind | null>;
+  playlistMenu(playlistId: string | null): Promise<PlaylistMenuAction | null>;
+  copyTracklist(text: string): Promise<void>;
   openPlaylistWindow(request: PlaylistWindowRequest): Promise<LibraryMutationResult | null>;
   playlistWindowContext(): Promise<PlaylistWindowContext>;
   previewSmartPlaylist(request: Readonly<{ revision: string; definition: SmartPlaylistDefinition }>): Promise<SmartPlaylistPreview>;
