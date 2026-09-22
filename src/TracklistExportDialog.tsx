@@ -71,7 +71,14 @@ export const TracklistExportDialog = ({ playlist, onClose }: Readonly<{
   };
 
   return (
-    <dialog className="tracklist-export-dialog" ref={dialogRef} onClose={onClose} aria-labelledby="tracklist-export-title">
+    <dialog className="tracklist-export-dialog" ref={dialogRef} onClose={onClose} aria-labelledby="tracklist-export-title"
+      onClick={(event) => {
+        if (event.target !== event.currentTarget) return;
+        const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect();
+        if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) {
+          event.currentTarget.close();
+        }
+      }}>
       <div className="tracklist-export-heading">
         <div>
           <h2 id="tracklist-export-title">Export tracklist</h2>

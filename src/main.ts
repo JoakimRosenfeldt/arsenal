@@ -663,7 +663,7 @@ const createWindow = (updates: AppUpdates, content: WindowContent = { kind: 'mai
     minWidth: folder ? 420 : preferences ? 560 : 760,
     minHeight: folder ? 340 : 560,
     autoHideMenuBar: content.kind !== 'main',
-    ...(editor && mainWindow !== null ? { parent: mainWindow, modal: true } : {}),
+    ...(editor && mainWindow !== null ? { parent: mainWindow } : {}),
     show: false,
     icon: APP_ICON_PATH,
     backgroundColor: '#0b0b0d',
@@ -717,6 +717,11 @@ const createWindow = (updates: AppUpdates, content: WindowContent = { kind: 'mai
   });
   window.once('ready-to-show', () => {
     window.show();
+  });
+
+  window.on('focus', () => {
+    if (window !== playlistWindow && playlistWindow?.isVisible()) playlistWindow.close();
+    if (window !== preferencesWindow && preferencesWindow?.isVisible()) preferencesWindow.close();
   });
 
   window.on('closed', () => {
