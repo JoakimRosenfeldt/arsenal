@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   app,
   BrowserWindow,
+  clipboard,
   Menu,
   type IpcMainInvokeEvent,
   net,
@@ -36,7 +37,7 @@ import {
   type PageRequest,
   type SongSearchRequest,
   type TrackMenuAction,
-  type PlaylistCreationKind,
+  type PlaylistMenuAction,
   type PlaylistWindowContext,
   type PlaylistWindowRequest,
   type LibraryMutationResult,
@@ -370,16 +371,32 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     return library.previewSmartPlaylist(request.revision, definition);
   });
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.playlistMenu, (event) => {
+  ipc.handle(DJ_LIBRARY_CHANNELS.playlistMenu, (event, playlistId: unknown) => {
     assertTrustedSender(event, owner);
-    return new Promise<PlaylistCreationKind | null>((resolve) => {
+    if (playlistId !== null && (typeof playlistId !== 'string' ||
+      !library.listPlaylists().some((playlist) => playlist.id === playlistId))) {
+      throw new Error('Playlist not found');
+    }
+    return new Promise<PlaylistMenuAction | null>((resolve) => {
       Menu.buildFromTemplate([
+        ...(playlistId === null ? [] : [
+          { label: 'Export tracklist…', click: () => resolve('export-tracklist' as const) },
+          { type: 'separator' as const },
+        ]),
         { label: 'New playlist…', click: () => resolve('playlist') },
         { label: 'New smart playlist…', click: () => resolve('smart-playlist') },
         { type: 'separator' },
         { label: 'New folder…', click: () => resolve('folder') },
       ]).popup({ window: owner, callback: () => resolve(null) });
     });
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.copyTracklist, (event, text: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main' || typeof text !== 'string' || text.length > 5_000_000) {
+      throw new Error('Invalid tracklist');
+    }
+    clipboard.writeText(text);
   });
 
   ipc.handle(

@@ -91,7 +91,7 @@ const PlaylistBranch = ({
   onSelect: (playlistId: string) => void;
   parentFolderId: string | null;
   folders: readonly PlaylistFolder[];
-  onMenu: (parentFolderId: string | null) => void;
+  onMenu: (parentFolderId: string | null, playlistId: string | null) => void;
   playlists: readonly RekordboxPlaylist[];
   selectedPlaylistId: string | null;
 }>): JSX.Element => {
@@ -107,7 +107,7 @@ const PlaylistBranch = ({
               className={active ? 'sidebar-playlist is-active' : 'sidebar-playlist'}
               type="button"
               onClick={() => onSelect(playlist.id)}
-              {...playlistMenuEvents(() => onMenu(parentFolderId))}
+              {...playlistMenuEvents(() => onMenu(parentFolderId, playlist.id))}
               aria-current={active ? 'page' : undefined}
               title={playlist.kind === 'smart' ? `${playlist.name}, smart playlist` : playlist.name}
               key={playlist.id}
@@ -126,7 +126,7 @@ const PlaylistBranch = ({
         const playlistCount = playlists.filter((playlist) => playlist.parentFolderId !== null && descendants.has(playlist.parentFolderId)).length;
         return (
           <details className="sidebar-playlist-folder" open key={folder.id}>
-            <summary {...playlistMenuEvents(() => onMenu(folder.id))}>
+            <summary {...playlistMenuEvents(() => onMenu(folder.id, null))}>
               <span className="folder-caret" aria-hidden>›</span>
               <span>{folder.name}</span>
               <small>{playlistCount}</small>
@@ -165,7 +165,7 @@ export const CueboxSidebar = ({
   duplicateCount: number | null;
   hasLibrary: boolean;
   folders: readonly PlaylistFolder[];
-  onMenu: (parentFolderId: string | null) => void;
+  onMenu: (parentFolderId: string | null, playlistId: string | null) => void;
   onNavigate: (page: PageId) => void;
   onPlaylistSelect: (playlistId: string) => void;
   playlists: readonly RekordboxPlaylist[] | null;
@@ -215,13 +215,13 @@ export const CueboxSidebar = ({
         />
 
         <div className="sidebar-group sidebar-playlist-group">
-          <div className="sidebar-playlist-title" {...playlistMenuEvents(() => onMenu(null))}>
+          <div className="sidebar-playlist-title" {...playlistMenuEvents(() => onMenu(null, null))}>
             <p className="sidebar-section-label">Playlists</p>
             <button className="sidebar-add" type="button" aria-label="Create playlist or folder" aria-haspopup="menu"
-              title="New playlist, smart playlist, or folder" disabled={!hasLibrary || busy} onClick={() => onMenu(null)}>+</button>
+              title="New playlist, smart playlist, or folder" disabled={!hasLibrary || busy} onClick={() => onMenu(null, null)}>+</button>
           </div>
 
-          <div className="sidebar-playlist-tree" {...playlistMenuEvents(() => onMenu(null))}>
+          <div className="sidebar-playlist-tree" {...playlistMenuEvents(() => onMenu(null, null))}>
             {playlists !== null && (
               <PlaylistBranch
                 activePage={activePage}

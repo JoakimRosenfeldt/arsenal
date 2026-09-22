@@ -1097,6 +1097,7 @@ export const PlaylistsPage = ({
   folders,
   onCancel,
   onEditSmart,
+  onExport,
   onCreate,
   onImport,
   playback,
@@ -1112,6 +1113,7 @@ export const PlaylistsPage = ({
     folders: readonly PlaylistFolder[];
     onCancel: () => void;
     onEditSmart: (playlist: RekordboxPlaylist) => void;
+    onExport: (playlist: RekordboxPlaylist) => void;
     onCreate: (name: string, songIds: readonly string[], parentFolderId: string | null) => Promise<boolean>;
     playlists: readonly RekordboxPlaylist[] | null;
     selectedPlaylistId: string | null;
@@ -1200,6 +1202,7 @@ export const PlaylistsPage = ({
           {!creating && <p>{selectedPlaylist?.tracks.length ?? 0} tracks</p>}
         </div>
         <div className="header-actions">
+          {!creating && selectedPlaylist !== null && <button className="quiet-button" type="button" onClick={() => onExport(selectedPlaylist)}>Export tracklist</button>}
           {!creating && selectedPlaylist?.smartDefinition && <button className="quiet-button" type="button" disabled={busy} onClick={() => onEditSmart(selectedPlaylist)}>Edit rules</button>}
         </div>
       </header>

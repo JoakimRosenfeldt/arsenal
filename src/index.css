@@ -2420,6 +2420,126 @@ button.sidebar-search {
   font-size: 10.5px;
 }
 
+.tracklist-export-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 22px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--panel-raised);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 65%);
+}
+
+.tracklist-export-dialog::backdrop {
+  background: rgb(0 0 0 / 72%);
+}
+
+.tracklist-export-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.tracklist-export-heading h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.tracklist-export-heading p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tracklist-export-heading .inspector-close {
+  position: static;
+  display: block;
+  flex: none;
+}
+
+.tracklist-export-options {
+  margin: 22px 0;
+  padding: 0;
+  border: 0;
+}
+
+.tracklist-export-options legend,
+.tracklist-export-preview {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font: 500 10px/1 "IBM Plex Mono", monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tracklist-export-options > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.tracklist-export-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.tracklist-export-options input {
+  accent-color: var(--accent);
+}
+
+.tracklist-export-preview {
+  display: block;
+}
+
+.tracklist-export-dialog textarea {
+  display: block;
+  width: 100%;
+  height: min(36vh, 280px);
+  min-height: 160px;
+  padding: 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  outline: 0;
+  color: var(--text);
+  background: var(--canvas);
+  font: 12px/1.6 "IBM Plex Mono", monospace;
+  resize: vertical;
+}
+
+.tracklist-export-dialog textarea:focus-visible {
+  border-color: var(--accent);
+}
+
+.tracklist-export-note {
+  margin: 8px 0 0;
+  color: var(--warning);
+  font-size: 11px;
+}
+
+.tracklist-export-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.tracklist-export-actions > span:nth-child(2) {
+  flex: 1;
+  text-align: right;
+}
+
+.tracklist-export-actions .accent-button {
+  flex: none;
+}
+
 .playlist-name-field select,
 .smart-playlist-editor select,
 .smart-playlist-editor input {
