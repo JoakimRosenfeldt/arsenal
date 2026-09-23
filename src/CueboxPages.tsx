@@ -970,11 +970,18 @@ export const DuplicatesPage = ({
             : <>
               <div className="focused-duplicate-content">
                 <div className="focused-comparison-heading">
-                  <div><h2>{selectedGroup.title}</h2><p>{selectedGroup.artist}</p></div>
+                  <div>
+                    <div className="help-label">
+                      <h2>{selectedGroup.title}</h2>
+                      <HelpTooltip label="Duplicate match" symbol="!">
+                        {new Set(selectedGroup.candidates.map(({ song }) => song.durationSeconds)).size > 1
+                          ? 'These mixes have different lengths. Preview both before removing a version.'
+                          : selectedGroup.matchReason || 'Preview these tracks before removing a version.'}
+                      </HelpTooltip>
+                    </div>
+                    <p>{selectedGroup.artist}</p>
+                  </div>
                 </div>
-                <p className="focused-comparison-notice"><UiIcon name="info" size={16} />{new Set(selectedGroup.candidates.map(({ song }) => song.durationSeconds)).size > 1
-                  ? 'These mixes have different lengths. Preview both before removing a version.'
-                  : selectedGroup.matchReason || 'Preview these tracks before removing a version.'}</p>
                 <div className="focused-comparison-scroll">
                   <div className="focused-comparison-table" role="table" aria-label="Compare duplicate versions">
                     <div className="focused-comparison-row focused-comparison-track" role="row" style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
@@ -982,7 +989,7 @@ export const DuplicatesPage = ({
                       {selectedGroup.candidates.map((candidate) => {
                         const song = candidate.song;
                         const playing = playback.song?.id === song.id && playback.playing;
-                        return <div role="columnheader" className="focused-comparison-version" key={song.id}>
+                        return <div role="columnheader" className={chosenIds.has(song.id) ? 'focused-comparison-version is-selected' : 'focused-comparison-version'} key={song.id}>
                           <label><input type="checkbox" checked={chosenIds.has(song.id)} disabled={busy}
                             aria-label={`Select ${song.title} for removal`} onChange={(event) => {
                               const next = new Set(chosenIds);
@@ -1002,7 +1009,7 @@ export const DuplicatesPage = ({
                       return <div className={different ? 'focused-comparison-row is-different' : 'focused-comparison-row'} role="row" key={row.label}
                         style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
                         <span role="rowheader">{row.label}</span>
-                        {selectedGroup.candidates.map(({ song }) => <span role="cell" key={song.id}>{row.value(song)}</span>)}
+                        {selectedGroup.candidates.map(({ song }) => <span role="cell" className={chosenIds.has(song.id) ? 'is-selected' : undefined} key={song.id}>{row.value(song)}</span>)}
                       </div>;
                     })}
                   </div>
