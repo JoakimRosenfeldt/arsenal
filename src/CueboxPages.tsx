@@ -662,11 +662,13 @@ const LibrarySelectionActions = ({
 
 const DuplicateSelectionActions = ({
   busy,
+  navigation,
   onClear,
   onRemove,
   songs,
 }: Readonly<{
   busy: boolean;
+  navigation: JSX.Element;
   onClear: () => void;
   onRemove: RemoveSongs;
   songs: readonly SongRow[];
@@ -675,7 +677,7 @@ const DuplicateSelectionActions = ({
   const [removeLocalFile, setRemoveLocalFile] = useState(false);
 
   return (
-    <footer className="duplicate-selection-actions" aria-label="Selected tracks">
+    <footer className="duplicate-selection-actions focused-duplicate-footer" aria-label="Duplicate review actions">
       {confirming && (
         <div className="duplicate-selection-review">
           <div className="help-label">
@@ -699,13 +701,14 @@ const DuplicateSelectionActions = ({
         </div>
       )}
       <div className="duplicate-selection-toolbar">
+        {navigation}
         <span role="status">
           {songs.length} selected
           {songs.length > 10_000 && <> <HelpTooltip label="Selection limit">Select at most 10,000 tracks per removal.</HelpTooltip></>}
         </span>
-        <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>
+        {songs.length > 0 && <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>
           Clear selection
-        </button>
+        </button>}
         {confirming ? (
           <>
             <button className="quiet-button" type="button" onClick={() => setConfirming(false)} disabled={busy}>
@@ -727,7 +730,7 @@ const DuplicateSelectionActions = ({
             </button>
           </>
         ) : (
-          <button className="danger-button" type="button" onClick={() => setConfirming(true)} disabled={busy || songs.length > 10_000}>
+          <button className={songs.length === 0 ? 'quiet-button' : 'danger-button'} type="button" onClick={() => setConfirming(true)} disabled={busy || songs.length === 0 || songs.length > 10_000}>
             Remove selected
           </button>
         )}
@@ -965,62 +968,62 @@ export const DuplicatesPage = ({
             : scanFailed ? <div className="detail-empty" role="alert"><h2>Scan unavailable</h2><p>Try scanning again.</p></div>
             : selectedGroup === null ? <div className="detail-empty"><h2>{emptyTitle}</h2></div>
             : <>
-              <div className="focused-comparison-heading">
-                <div><h2>{selectedGroup.title}</h2><p>{selectedGroup.artist}</p></div>
-                <div className="focused-comparison-actions">
-                  <span>{selectedIndex + 1} of {groups.length}</span>
-                  <button className="quiet-button" type="button" disabled={busy || nextGroup === undefined}
-                    onClick={() => {
-                      if (nextGroup) setSelection({ key: nextGroup.key, index: selectedIndex + 1, groups });
-                    }}>
-                    Next song <UiIcon name="chevron-right" size={16} />
-                  </button>
-                  <button className="accent-button" type="button" disabled={busy} onClick={() => void onIgnore(selectedGroup.key)}>
-                    <UiIcon name="check" size={16} /> Keep {selectedGroup.candidates.length === 2 ? 'both' : 'all'}
-                  </button>
+              <div className="focused-duplicate-content">
+                <div className="focused-comparison-heading">
+                  <div><h2>{selectedGroup.title}</h2><p>{selectedGroup.artist}</p></div>
                 </div>
-              </div>
-              <p className="focused-comparison-notice"><UiIcon name="info" size={16} />{new Set(selectedGroup.candidates.map(({ song }) => song.durationSeconds)).size > 1
-                ? 'These mixes have different lengths. Preview both before removing a version.'
-                : selectedGroup.matchReason || 'Preview these tracks before removing a version.'}</p>
-              <div className="focused-comparison-scroll">
-                <div className="focused-comparison-table" role="table" aria-label="Compare duplicate versions">
-                  <div className="focused-comparison-row focused-comparison-track" role="row" style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
-                    <span role="columnheader"><span className="visually-hidden">Track</span></span>
-                    {selectedGroup.candidates.map((candidate) => {
-                      const song = candidate.song;
-                      const playing = playback.song?.id === song.id && playback.playing;
-                      return <div role="columnheader" className="focused-comparison-version" key={song.id}>
-                        <label><input type="checkbox" checked={chosenIds.has(song.id)} disabled={busy}
-                          aria-label={`Select ${song.title} for removal`} onChange={(event) => {
-                            const next = new Set(chosenIds);
-                            if (event.currentTarget.checked) next.add(song.id); else next.delete(song.id);
-                            setChosenIds(next);
-                          }} /><span>{song.title}</span></label>
-                        <button className={playing ? 'focused-preview is-playing' : 'focused-preview'} type="button"
-                          onClick={() => playback.play(song)} disabled={song.audioUrl === null}>
-                          <UiIcon name={playing ? 'pause' : 'play'} size={16} />{playing ? 'Pause' : 'Preview'}
-                        </button>
-                        {selectedKeeperId === song.id && <small className="focused-keeper">Suggested keeper</small>}
+                <p className="focused-comparison-notice"><UiIcon name="info" size={16} />{new Set(selectedGroup.candidates.map(({ song }) => song.durationSeconds)).size > 1
+                  ? 'These mixes have different lengths. Preview both before removing a version.'
+                  : selectedGroup.matchReason || 'Preview these tracks before removing a version.'}</p>
+                <div className="focused-comparison-scroll">
+                  <div className="focused-comparison-table" role="table" aria-label="Compare duplicate versions">
+                    <div className="focused-comparison-row focused-comparison-track" role="row" style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
+                      <span role="columnheader"><span className="visually-hidden">Track</span></span>
+                      {selectedGroup.candidates.map((candidate) => {
+                        const song = candidate.song;
+                        const playing = playback.song?.id === song.id && playback.playing;
+                        return <div role="columnheader" className="focused-comparison-version" key={song.id}>
+                          <label><input type="checkbox" checked={chosenIds.has(song.id)} disabled={busy}
+                            aria-label={`Select ${song.title} for removal`} onChange={(event) => {
+                              const next = new Set(chosenIds);
+                              if (event.currentTarget.checked) next.add(song.id); else next.delete(song.id);
+                              setChosenIds(next);
+                            }} /><span>{song.title}</span></label>
+                          <button className={playing ? 'focused-preview is-playing' : 'focused-preview'} type="button"
+                            onClick={() => playback.play(song)} disabled={song.audioUrl === null}>
+                            <UiIcon name={playing ? 'pause' : 'play'} size={16} />{playing ? 'Pause' : 'Preview'}
+                          </button>
+                          {selectedKeeperId === song.id && <small className="focused-keeper">Suggested keeper</small>}
+                        </div>;
+                      })}
+                    </div>
+                    {comparisonRows.map((row) => {
+                      const different = new Set(selectedGroup.candidates.map(({ song }) => row.value(song))).size > 1;
+                      return <div className={different ? 'focused-comparison-row is-different' : 'focused-comparison-row'} role="row" key={row.label}
+                        style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
+                        <span role="rowheader">{row.label}</span>
+                        {selectedGroup.candidates.map(({ song }) => <span role="cell" key={song.id}>{row.value(song)}</span>)}
                       </div>;
                     })}
                   </div>
-                  {comparisonRows.map((row) => {
-                    const different = new Set(selectedGroup.candidates.map(({ song }) => row.value(song))).size > 1;
-                    return <div className={different ? 'focused-comparison-row is-different' : 'focused-comparison-row'} role="row" key={row.label}
-                      style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
-                      <span role="rowheader">{row.label}</span>
-                      {selectedGroup.candidates.map(({ song }) => <span role="cell" key={song.id}>{row.value(song)}</span>)}
-                    </div>;
-                  })}
                 </div>
               </div>
-              <div className="focused-duplicate-footer">
-                {chosenSongs.length > 0 ? <DuplicateSelectionActions busy={busy} onClear={() => setChosenIds(new Set())} onRemove={onRemove}
-                  songs={chosenSongs} key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])} />
-                  : <><p>Select a version to remove from the library.<br />Audio files stay on disk.</p>
-                    <button className="quiet-button" type="button" disabled>Remove selected</button></>}
-              </div>
+              <DuplicateSelectionActions busy={busy} onClear={() => setChosenIds(new Set())} onRemove={onRemove}
+                songs={chosenSongs} key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])}
+                navigation={
+                  <div className="focused-comparison-actions">
+                    <span>{selectedIndex + 1} of {groups.length}</span>
+                    <button className="accent-button" type="button" disabled={busy || nextGroup === undefined}
+                      onClick={() => {
+                        if (nextGroup) setSelection({ key: nextGroup.key, index: selectedIndex + 1, groups });
+                      }}>
+                      Next song <UiIcon name="chevron-right" size={16} />
+                    </button>
+                    <button className="quiet-button" type="button" disabled={busy} onClick={() => void onIgnore(selectedGroup.key)}>
+                      <UiIcon name="check" size={16} /> Keep {selectedGroup.candidates.length === 2 ? 'both' : 'all'}
+                    </button>
+                  </div>
+                } />
             </>}
         </div>
       </div>
