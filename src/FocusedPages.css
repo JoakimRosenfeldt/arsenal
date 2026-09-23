@@ -168,14 +168,14 @@
 .focused-duplicates .duplicate-group small { margin: 0; color: var(--muted); font: 400 11px "Archivo Variable", sans-serif; letter-spacing: 0; text-transform: none; }
 .focused-duplicates .duplicate-group .focused-group-viewed { color: var(--accent); }
 .focused-duplicates .duplicate-detail { display: flex; min-height: 0; flex-direction: column; overflow: hidden; padding: 24px 28px; }
-.focused-duplicate-content { flex: 1; min-height: 0; overflow: auto; padding-bottom: 16px; }
+.focused-duplicate-content { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: hidden; }
 .focused-comparison-heading { display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
 .focused-comparison-heading h2 { margin: 0; color: var(--text); font-size: 22px; font-weight: 600; }
 .focused-comparison-heading p { margin: 5px 0 0; color: #aaa9b4; font-size: 13px; }
 .focused-comparison-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .focused-comparison-actions > span { margin-right: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .focused-comparison-actions > button { white-space: nowrap; }
-.focused-comparison-scroll { flex: none; min-width: 0; overflow-x: auto; }
+.focused-comparison-scroll { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
 .focused-comparison-table { border-block: 1px solid var(--line-strong); }
 .focused-comparison-row { display: grid; min-height: 38px; align-items: center; gap: 16px; padding: 0 12px; border-bottom: 1px solid var(--line); color: var(--text-soft); font-size: 13px; }
 .focused-comparison-row:last-child { border-bottom: 0; }
