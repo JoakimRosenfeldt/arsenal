@@ -748,6 +748,8 @@ const DuplicateSelectionActions = ({
   );
 };
 
+const DUPLICATE_SERVICE_KEY = 'arsenal.duplicatePreferredService';
+
 const DuplicateServiceDialog = ({ sources, preferredSource, onSelect, onClose }: Readonly<{
   sources: readonly SongSource[];
   preferredSource: SongSource | null;
@@ -755,7 +757,15 @@ const DuplicateServiceDialog = ({ sources, preferredSource, onSelect, onClose }:
   onClose: () => void;
 }>): JSX.Element => {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [source, setSource] = useState(preferredSource !== null && sources.includes(preferredSource) ? preferredSource : null);
+  const [source, setSource] = useState(() => {
+    if (preferredSource !== null && sources.includes(preferredSource)) return preferredSource;
+    try {
+      const savedSource = localStorage.getItem(DUPLICATE_SERVICE_KEY);
+      return sources.find((option) => option === savedSource) ?? null;
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -773,7 +783,13 @@ const DuplicateServiceDialog = ({ sources, preferredSource, onSelect, onClose }:
     }}>
     <form onSubmit={(event) => {
       event.preventDefault();
-      if (source !== null) onSelect(source);
+      if (source === null) return;
+      try {
+        localStorage.setItem(DUPLICATE_SERVICE_KEY, source);
+      } catch {
+        // Selection still works when storage is unavailable.
+      }
+      onSelect(source);
     }}>
       <h2 id="duplicate-service-title">Prioritize a streaming service</h2>
       <p id="duplicate-service-description">Keep copies from this service and select the others for removal. Local files still take priority.</p>

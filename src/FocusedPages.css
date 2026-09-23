@@ -176,7 +176,7 @@
 .focused-comparison-actions > span { margin-right: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .focused-comparison-actions > button { white-space: nowrap; }
 .focused-comparison-scroll { flex: 1; min-width: 0; min-height: 0; overflow: auto; }
-.focused-comparison-table { border-block: 1px solid var(--line-strong); }
+.focused-comparison-table { min-width: min-content; border-block: 1px solid var(--line-strong); }
 .focused-comparison-row { display: grid; min-height: 38px; align-items: center; gap: 16px; padding: 0 12px; border-bottom: 1px solid var(--line); color: var(--text-soft); font-size: 13px; }
 .focused-comparison-row:last-child { border-bottom: 0; }
 .focused-comparison-row.is-different { background: #211d24; }
