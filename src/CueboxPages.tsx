@@ -14,6 +14,7 @@ import { TrackWaveform } from './TrackWaveform';
 import { HelpTooltip } from './HelpTooltip';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
 import { PlaylistIdentity } from './SmartPlaylistEditor';
+import { recommendedKeepSongIdFor } from './shared/duplicate-selection';
 import {
   TrackArtwork,
   type PlaybackController,
@@ -33,6 +34,7 @@ import {
   type PlaylistFolder,
   type SongPage,
   type SongRow,
+  type SongSource,
   type SongSearchRequest,
   type SongFilters,
 } from './shared/dj-library';
@@ -660,28 +662,32 @@ const LibrarySelectionActions = ({
 
 const DuplicateSelectionActions = ({
   busy,
+  navigation,
   onClear,
   onRemove,
   songs,
+  viewedSongs,
 }: Readonly<{
   busy: boolean;
+  navigation: JSX.Element;
   onClear: () => void;
   onRemove: RemoveSongs;
   songs: readonly SongRow[];
+  viewedSongs: readonly SongRow[];
 }>): JSX.Element => {
-  const [confirming, setConfirming] = useState(false);
+  const [removalSongs, setRemovalSongs] = useState<readonly SongRow[] | null>(null);
   const [removeLocalFile, setRemoveLocalFile] = useState(false);
 
   return (
-    <footer className="duplicate-selection-actions" aria-label="Selected tracks">
-      {confirming && (
+    <footer className="duplicate-selection-actions focused-duplicate-footer" aria-label="Duplicate review actions">
+      {removalSongs !== null && (
         <div className="duplicate-selection-review">
           <div className="help-label">
-            <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'}?</strong>
+            <strong>Remove {removalSongs.length} selected {removalSongs.length === 1 ? 'track' : 'tracks'}?</strong>
             <HelpTooltip label="Removing tracks">Also removes these tracks from playlists.</HelpTooltip>
           </div>
           <ul aria-label="Tracks to remove">
-            {songs.map((song) => (
+            {removalSongs.map((song) => (
               <li key={song.id}>
                 {song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}
                 <SongLabels song={song} />
@@ -692,21 +698,22 @@ const DuplicateSelectionActions = ({
             busy={busy}
             checked={removeLocalFile}
             onChange={setRemoveLocalFile}
-            songs={songs}
+            songs={removalSongs}
           />
         </div>
       )}
       <div className="duplicate-selection-toolbar">
+        {navigation}
         <span role="status">
           {songs.length} selected
           {songs.length > 10_000 && <> <HelpTooltip label="Selection limit">Select at most 10,000 tracks per removal.</HelpTooltip></>}
         </span>
-        <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>
+        {songs.length > 0 && <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>
           Clear selection
-        </button>
-        {confirming ? (
+        </button>}
+        {removalSongs !== null ? (
           <>
-            <button className="quiet-button" type="button" onClick={() => setConfirming(false)} disabled={busy}>
+            <button className="quiet-button" type="button" onClick={() => { setRemovalSongs(null); setRemoveLocalFile(false); }} disabled={busy}>
               Cancel
             </button>
             <button
@@ -714,24 +721,91 @@ const DuplicateSelectionActions = ({
               type="button"
               disabled={busy}
               onClick={() => {
-                void onRemove(songs.map((song) => song.id), removeLocalFile).then((removed) => {
+                void onRemove(removalSongs.map((song) => song.id), removeLocalFile).then((removed) => {
                   if (removed) {
                     onClear();
                   }
                 });
               }}
             >
-              {busy ? 'Removing' : `Remove ${songs.length} ${songs.length === 1 ? 'track' : 'tracks'}`}
+              {busy ? 'Removing' : `Remove ${removalSongs.length} ${removalSongs.length === 1 ? 'track' : 'tracks'}`}
             </button>
           </>
         ) : (
-          <button className="danger-button" type="button" onClick={() => setConfirming(true)} disabled={busy || songs.length > 10_000}>
-            Remove selected
-          </button>
+          <>
+            <button className={viewedSongs.length === 0 ? 'quiet-button' : 'danger-button'} type="button"
+              title="Remove selected tracks from viewed groups"
+              onClick={() => setRemovalSongs([...viewedSongs])} disabled={busy || viewedSongs.length === 0 || viewedSongs.length > 10_000}>
+              Remove viewed ({viewedSongs.length})
+            </button>
+            <button className={songs.length === 0 ? 'quiet-button' : 'danger-button'} type="button" onClick={() => setRemovalSongs([...songs])} disabled={busy || songs.length === 0 || songs.length > 10_000}>
+              Remove selected
+            </button>
+          </>
         )}
       </div>
     </footer>
   );
+};
+
+const DUPLICATE_SERVICE_KEY = 'arsenal.duplicatePreferredService';
+
+const DuplicateServiceDialog = ({ sources, preferredSource, onSelect, onClose }: Readonly<{
+  sources: readonly SongSource[];
+  preferredSource: SongSource | null;
+  onSelect: (source: SongSource) => void;
+  onClose: () => void;
+}>): JSX.Element => {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [source, setSource] = useState(() => {
+    if (preferredSource !== null && sources.includes(preferredSource)) return preferredSource;
+    try {
+      const savedSource = localStorage.getItem(DUPLICATE_SERVICE_KEY);
+      return sources.find((option) => option === savedSource) ?? null;
+    } catch {
+      return null;
+    }
+  });
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+
+  return <dialog className="duplicate-service-dialog" ref={dialogRef} onClose={onClose}
+    aria-labelledby="duplicate-service-title" aria-describedby="duplicate-service-description"
+    onClick={(event) => {
+      if (event.target !== event.currentTarget) return;
+      const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) {
+        event.currentTarget.close();
+      }
+    }}>
+    <form onSubmit={(event) => {
+      event.preventDefault();
+      if (source === null) return;
+      try {
+        localStorage.setItem(DUPLICATE_SERVICE_KEY, source);
+      } catch {
+        // Selection still works when storage is unavailable.
+      }
+      onSelect(source);
+    }}>
+      <h2 id="duplicate-service-title">Prioritize a streaming service</h2>
+      <p id="duplicate-service-description">Keep copies from this service and select the others for removal. Local files still take priority.</p>
+      <label htmlFor="duplicate-preferred-service">Service to keep</label>
+      <select id="duplicate-preferred-service" value={source ?? ''} required onChange={(event) => {
+        setSource(sources.find((option) => option === event.currentTarget.value) ?? null);
+      }}>
+        <option value="" disabled>Choose a service</option>
+        {sources.map((option) => <option value={option} key={option}>{SONG_SOURCE_LABELS[option]}</option>)}
+      </select>
+      <div className="duplicate-service-actions">
+        <button className="quiet-button" type="button" onClick={() => dialogRef.current?.close()}>Cancel</button>
+        <button className="accent-button" type="submit" disabled={source === null}>Select suggested</button>
+      </div>
+    </form>
+  </dialog>;
 };
 
 export const DuplicatesPage = ({
@@ -765,6 +839,14 @@ export const DuplicatesPage = ({
   });
   const [chosenIds, setChosenIds] = useState<ReadonlySet<string>>(() => new Set());
   const [selectionVersion, setSelectionVersion] = useState<string | null>(null);
+  const [viewedKeys, setViewedKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [preferredSource, setPreferredSource] = useState<SongSource | null>(null);
+  const [choosingService, setChoosingService] = useState(false);
+  const activeGroupRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    activeGroupRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [selection.key]);
 
   if (view === null) {
     return (
@@ -796,19 +878,37 @@ export const DuplicatesPage = ({
     state.libraryVersion === view.library.revision &&
     state.mode === mode;
   const groups = scan?.groups ?? [];
-  const suggestedIds = groups.flatMap((group) =>
-    group.recommendedKeepSongId === null
-      ? []
-      : group.candidates
-        .filter((candidate) => candidate.song.id !== group.recommendedKeepSongId)
-        .map((candidate) => candidate.song.id),
-  );
+  const streamingSources = [...new Set(groups.flatMap((group) => {
+    if (group.recommendedKeepSongId === null) return [];
+    const sources = [...new Set(group.candidates.map(({ song }) => song.source)
+      .filter((source) => source !== 'local' && source !== 'unknown' && source !== 'streaming'))];
+    return sources.length > 1 ? sources : [];
+  }))].sort((left, right) => SONG_SOURCE_LABELS[left].localeCompare(SONG_SOURCE_LABELS[right]));
+  const suggestedIdsFor = (source: SongSource | null): string[] => groups.flatMap((group) => {
+    if (group.recommendedKeepSongId === null) return [];
+    const keeperId = recommendedKeepSongIdFor(group.candidates, source);
+    return group.candidates.filter(({ song }) => song.id !== keeperId).map(({ song }) => song.id);
+  });
+  const suggestedIds = suggestedIdsFor(preferredSource);
+  const selectSuggested = (source: SongSource | null): void => {
+    setPreferredSource(source);
+    setChosenIds(new Set(suggestedIdsFor(source).slice(0, 10_000)));
+    setViewedKeys(new Set());
+    setChoosingService(false);
+  };
   const currentSelectionVersion = JSON.stringify([view.library.revision, mode]);
   if (selectionVersion !== currentSelectionVersion) {
     setSelectionVersion(currentSelectionVersion);
     setChosenIds(new Set());
+    setViewedKeys(new Set());
+    setPreferredSource(null);
+    setChoosingService(false);
   }
   const chosenSongs = groups.flatMap((group) => group.candidates)
+    .filter((candidate) => chosenIds.has(candidate.song.id))
+    .map((candidate) => candidate.song);
+  const viewedGroups = groups.filter((group) => viewedKeys.has(group.key));
+  const viewedSongs = viewedGroups.flatMap((group) => group.candidates)
     .filter((candidate) => chosenIds.has(candidate.song.id))
     .map((candidate) => candidate.song);
   const remainingKeys = new Set(groups.map((group) => group.key));
@@ -820,8 +920,15 @@ export const DuplicatesPage = ({
     groups.find((group) => group.key === selection.key) ??
     groups.find((group) => group.key === nearbyGroup?.key) ?? groups[0] ?? null;
   const selectedIndex = selectedGroup === null ? 0 : groups.indexOf(selectedGroup);
+  const nextGroup = groups[selectedIndex + 1];
+  const selectedKeeperId = selectedGroup?.recommendedKeepSongId == null
+    ? null
+    : recommendedKeepSongIdFor(selectedGroup.candidates, preferredSource);
   if (scan !== null && (selection.groups !== groups || selection.key !== (selectedGroup?.key ?? null) || selection.index !== selectedIndex)) {
     setSelection({ key: selectedGroup?.key ?? null, index: selectedIndex, groups });
+  }
+  if (selectionVersion === currentSelectionVersion && selectedGroup !== null && !viewedKeys.has(selectedGroup.key)) {
+    setViewedKeys(new Set([...viewedKeys, selectedGroup.key]));
   }
   const copy = duplicateModeCopy[mode];
   const emptyTitle = (scan?.ignoredGroupCount ?? 0) > 0
@@ -870,20 +977,26 @@ export const DuplicatesPage = ({
         </select>
         <span>{modeDescription[mode]}</span>
         {mode === 'smart' && <button className="quiet-button" type="button" disabled={busy || scanning || suggestedIds.length === 0}
-          onClick={() => setChosenIds(new Set(suggestedIds.slice(0, 10_000)))}>
+          onClick={() => {
+            if (streamingSources.length > 1) setChoosingService(true);
+            else selectSuggested(preferredSource);
+          }}>
           Select suggested ({Math.min(suggestedIds.length, 10_000).toLocaleString()})
         </button>}
       </div>
 
       <div className="duplicates-body">
         <aside className="duplicate-groups" aria-label="Matched track groups">
-          <div className="panel-heading">To review</div>
+          <div className="panel-heading">{groups.length > 0 ? `${viewedGroups.length} of ${groups.length} viewed` : 'To review'}</div>
           {!scanning && !scanFailed && groups.map((group, index) => {
             const isActive = group.key === selectedGroup?.key;
             return <button className={isActive ? 'duplicate-group is-active' : 'duplicate-group'} type="button"
+              ref={isActive ? activeGroupRef : null}
               onClick={() => setSelection({ key: group.key, index, groups })} aria-current={isActive ? 'true' : undefined} key={group.key}>
               <strong>{group.title}</strong><span className="focused-group-count">{group.candidates.length}</span>
-              <span>{group.artist}</span><small>{variantSummaryFor(group)}</small>
+              <span>{group.artist}</span><small>{variantSummaryFor(group)}
+                {viewedKeys.has(group.key) && <span className="focused-group-viewed"> · Viewed</span>}
+              </small>
             </button>;
           })}
         </aside>
@@ -892,56 +1005,76 @@ export const DuplicatesPage = ({
             : scanFailed ? <div className="detail-empty" role="alert"><h2>Scan unavailable</h2><p>Try scanning again.</p></div>
             : selectedGroup === null ? <div className="detail-empty"><h2>{emptyTitle}</h2></div>
             : <>
-              <div className="focused-comparison-heading">
-                <div><h2>{selectedGroup.title}</h2><p>{selectedGroup.artist}</p></div>
-                <button className="accent-button" type="button" disabled={busy} onClick={() => void onIgnore(selectedGroup.key)}>
-                  <UiIcon name="check" size={16} /> Keep {selectedGroup.candidates.length === 2 ? 'both' : 'all'}
-                </button>
-              </div>
-              <p className="focused-comparison-notice"><UiIcon name="info" size={16} />{new Set(selectedGroup.candidates.map(({ song }) => song.durationSeconds)).size > 1
-                ? 'These mixes have different lengths. Preview both before removing a version.'
-                : selectedGroup.matchReason || 'Preview these tracks before removing a version.'}</p>
-              <div className="focused-comparison-scroll">
-                <div className="focused-comparison-table" role="table" aria-label="Compare duplicate versions">
-                  <div className="focused-comparison-row focused-comparison-track" role="row" style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
-                    <span role="columnheader"><span className="visually-hidden">Track</span></span>
-                    {selectedGroup.candidates.map((candidate) => {
-                      const song = candidate.song;
-                      const playing = playback.song?.id === song.id && playback.playing;
-                      return <div role="columnheader" className="focused-comparison-version" key={song.id}>
-                        <label><input type="checkbox" checked={chosenIds.has(song.id)} disabled={busy}
-                          aria-label={`Select ${song.title} for removal`} onChange={(event) => {
-                            const next = new Set(chosenIds);
-                            if (event.currentTarget.checked) next.add(song.id); else next.delete(song.id);
-                            setChosenIds(next);
-                          }} /><span>{song.title}</span></label>
-                        <button className={playing ? 'focused-preview is-playing' : 'focused-preview'} type="button"
-                          onClick={() => playback.play(song)} disabled={song.audioUrl === null}>
-                          <UiIcon name={playing ? 'pause' : 'play'} size={16} />{playing ? 'Pause' : 'Preview'}
-                        </button>
-                        {selectedGroup.recommendedKeepSongId === song.id && <small className="focused-keeper">Suggested keeper</small>}
+              <div className="focused-duplicate-content">
+                <div className="focused-comparison-heading">
+                  <div>
+                    <div className="help-label">
+                      <h2>{selectedGroup.title}</h2>
+                      <HelpTooltip label="Duplicate match" symbol="!">
+                        {new Set(selectedGroup.candidates.map(({ song }) => song.durationSeconds)).size > 1
+                          ? 'These mixes have different lengths. Preview both before removing a version.'
+                          : selectedGroup.matchReason || 'Preview these tracks before removing a version.'}
+                      </HelpTooltip>
+                    </div>
+                    <p>{selectedGroup.artist}</p>
+                  </div>
+                </div>
+                <div className="focused-comparison-scroll">
+                  <div className="focused-comparison-table" role="table" aria-label="Compare duplicate versions">
+                    <div className="focused-comparison-row focused-comparison-track" role="row" style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
+                      <span role="columnheader"><span className="visually-hidden">Track</span></span>
+                      {selectedGroup.candidates.map((candidate) => {
+                        const song = candidate.song;
+                        const playing = playback.song?.id === song.id && playback.playing;
+                        return <div role="columnheader" className={chosenIds.has(song.id) ? 'focused-comparison-version is-selected' : 'focused-comparison-version'} key={song.id}>
+                          <label><input type="checkbox" checked={chosenIds.has(song.id)} disabled={busy}
+                            aria-label={`Select ${song.title} for removal`} onChange={(event) => {
+                              const next = new Set(chosenIds);
+                              if (event.currentTarget.checked) next.add(song.id); else next.delete(song.id);
+                              setChosenIds(next);
+                            }} /><span>{song.title}</span></label>
+                          <button className={playing ? 'focused-preview is-playing' : 'focused-preview'} type="button"
+                            onClick={() => playback.play(song)} disabled={song.audioUrl === null}>
+                            <UiIcon name={playing ? 'pause' : 'play'} size={16} />{playing ? 'Pause' : 'Preview'}
+                          </button>
+                          {selectedKeeperId === song.id && <small className="focused-keeper">Suggested keeper</small>}
+                        </div>;
+                      })}
+                    </div>
+                    {comparisonRows.map((row) => {
+                      const different = new Set(selectedGroup.candidates.map(({ song }) => row.value(song))).size > 1;
+                      return <div className={different ? 'focused-comparison-row is-different' : 'focused-comparison-row'} role="row" key={row.label}
+                        style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
+                        <span role="rowheader">{row.label}</span>
+                        {selectedGroup.candidates.map(({ song }) => <span role="cell" className={chosenIds.has(song.id) ? 'is-selected' : undefined} key={song.id}>{row.value(song)}</span>)}
                       </div>;
                     })}
                   </div>
-                  {comparisonRows.map((row) => {
-                    const different = new Set(selectedGroup.candidates.map(({ song }) => row.value(song))).size > 1;
-                    return <div className={different ? 'focused-comparison-row is-different' : 'focused-comparison-row'} role="row" key={row.label}
-                      style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
-                      <span role="rowheader">{row.label}</span>
-                      {selectedGroup.candidates.map(({ song }) => <span role="cell" key={song.id}>{row.value(song)}</span>)}
-                    </div>;
-                  })}
                 </div>
               </div>
-              <div className="focused-duplicate-footer">
-                {chosenSongs.length > 0 ? <DuplicateSelectionActions busy={busy} onClear={() => setChosenIds(new Set())} onRemove={onRemove}
-                  songs={chosenSongs} key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])} />
-                  : <><p>Select a version to remove from the library.<br />Audio files stay on disk.</p>
-                    <button className="quiet-button" type="button" disabled>Remove selected</button></>}
-              </div>
+              <DuplicateSelectionActions busy={busy} onClear={() => setChosenIds(new Set())} onRemove={onRemove}
+                songs={chosenSongs} viewedSongs={viewedSongs} key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])}
+                navigation={
+                  <div className="focused-comparison-actions">
+                    <span>{selectedIndex + 1} of {groups.length}</span>
+                    <button className="accent-button" type="button" disabled={busy || nextGroup === undefined}
+                      onClick={() => {
+                        if (nextGroup) setSelection({ key: nextGroup.key, index: selectedIndex + 1, groups });
+                      }}>
+                      Next song <UiIcon name="chevron-right" size={16} />
+                    </button>
+                    <button className="quiet-button" type="button" disabled={busy} onClick={() => void onIgnore(selectedGroup.key)}>
+                      <UiIcon name="check" size={16} /> Keep {selectedGroup.candidates.length === 2 ? 'both' : 'all'}
+                    </button>
+                  </div>
+                } />
             </>}
         </div>
       </div>
+      {choosingService && !scanning && !scanFailed && streamingSources.length > 1 && (
+        <DuplicateServiceDialog sources={streamingSources} preferredSource={preferredSource}
+          onSelect={selectSuggested} onClose={() => setChoosingService(false)} />
+      )}
     </section>
   );
 };

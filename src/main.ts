@@ -47,7 +47,7 @@ import { readSmartDefinition } from './shared/smart-playlists';
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
-const APP_SESSION_PARTITION = 'arsenal';
+const APP_SESSION_PARTITION = 'persist:arsenal';
 const APP_SCHEME = 'arsenal';
 const PACKAGED_RENDERER_URL = `${APP_SCHEME}://app/main_window/index.html`;
 const APP_ICON_PATH = app.isPackaged
