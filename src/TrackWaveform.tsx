@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX, type PointerEvent } from 'react';
 
 import type { SongRow } from './shared/dj-library';
 
@@ -132,9 +132,30 @@ export const TrackWaveform = ({
   }, [profile, barCount]);
   const failed = url === null || (state?.url === url && state.kind === 'failed');
   const progress = duration <= 0 ? 0 : position / duration;
+  const seekFromPointer = (event: PointerEvent<HTMLDivElement>): void => {
+    const { left, width } = event.currentTarget.getBoundingClientRect();
+    if (width > 0) {
+      onSeek(Math.max(0, Math.min(1, (event.clientX - left) / width)) * duration);
+    }
+  };
 
   return (
-    <div className="interactive-waveform" ref={waveformRef}>
+    <div
+      className="interactive-waveform"
+      ref={waveformRef}
+      onPointerDown={(event) => {
+        if (disabled || event.button !== 0) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        event.currentTarget.querySelector('input')?.focus();
+        seekFromPointer(event);
+      }}
+      onPointerMove={(event) => {
+        if (!disabled && event.currentTarget.hasPointerCapture(event.pointerId)) seekFromPointer(event);
+      }}
+      onPointerUp={(event) => {
+        if (!disabled && event.currentTarget.hasPointerCapture(event.pointerId)) seekFromPointer(event);
+      }}
+    >
       {bars === null ? (
         <p className="waveform-status" role="status">
           {failed ? 'Waveform unavailable' : 'Loading waveform…'}
