@@ -1,9 +1,10 @@
-import { useEffect, useState, type JSX } from 'react';
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
 
 import type { SongRow } from './shared/dj-library';
 
 const cache = new Map<string, readonly number[]>();
 let decoding = Promise.resolve();
+const waveformBuckets = 256;
 
 const readWaveform = (url: string, signal: AbortSignal): Promise<readonly number[]> => {
   const task = decoding.then(async () => {
@@ -23,9 +24,9 @@ const readWaveform = (url: string, signal: AbortSignal): Promise<readonly number
     const audio = await context.decodeAudioData(bytes);
     signal.throwIfAborted();
 
-    const bars = Array.from({ length: 72 }, (_, index) => {
-      const start = Math.floor(index * audio.length / 72);
-      const end = Math.floor((index + 1) * audio.length / 72);
+    const bars = Array.from({ length: waveformBuckets }, (_, index) => {
+      const start = Math.floor(index * audio.length / waveformBuckets);
+      const end = Math.floor((index + 1) * audio.length / waveformBuckets);
       let energy = 0;
       for (let channel = 0; channel < audio.numberOfChannels; channel += 1) {
         const samples = audio.getChannelData(channel);
@@ -70,7 +71,27 @@ export const TrackWaveform = ({
   song: SongRow;
 }>): JSX.Element => {
   const [state, setState] = useState<WaveformState | null>(null);
+  const [barCount, setBarCount] = useState(72);
+  const waveformRef = useRef<HTMLDivElement>(null);
   const url = song.audioUrl;
+
+  useEffect(() => {
+    const waveform = waveformRef.current;
+    if (waveform === null) {
+      return;
+    }
+    const updateBarCount = (width: number) => {
+      setBarCount(Math.max(1, Math.min(waveformBuckets, Math.floor((width + 1) / 2))));
+    };
+    updateBarCount(waveform.clientWidth);
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) {
+        updateBarCount(entry.contentRect.width);
+      }
+    });
+    observer.observe(waveform);
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     if (url === null) {
@@ -92,12 +113,28 @@ export const TrackWaveform = ({
     return () => controller.abort();
   }, [url]);
 
-  const bars = state?.url === url && state.kind === 'ready' ? state.bars : null;
+  const profile = state?.url === url && state.kind === 'ready' ? state.bars : null;
+  const bars = useMemo(() => {
+    if (profile === null) {
+      return null;
+    }
+    const heights = Array.from({ length: barCount }, (_, index) => {
+      const start = Math.floor(index * profile.length / barCount);
+      const end = Math.floor((index + 1) * profile.length / barCount);
+      let energy = 0;
+      for (let bucket = start; bucket < end; bucket += 1) {
+        energy += (profile[bucket] ?? 0) ** 2;
+      }
+      return Math.sqrt(energy / Math.max(1, end - start));
+    });
+    const maximum = Math.max(...heights);
+    return heights.map((height) => maximum === 0 ? 0 : height / maximum * 100);
+  }, [profile, barCount]);
   const failed = url === null || (state?.url === url && state.kind === 'failed');
   const progress = duration <= 0 ? 0 : position / duration;
 
   return (
-    <div className="interactive-waveform">
+    <div className="interactive-waveform" ref={waveformRef}>
       {bars === null ? (
         <p className="waveform-status" role="status">
           {failed ? 'Waveform unavailable' : 'Loading waveform…'}

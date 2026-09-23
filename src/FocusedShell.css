@@ -49,7 +49,7 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2
 .player-time { flex: none; width: auto; color: var(--muted); font: 400 11px "IBM Plex Mono", monospace; }
 .player-waveform { flex: 1; min-width: 80px; max-width: 500px; }
 .player-waveform .interactive-waveform { height: 44px; display: flex; align-items: center; }
-.player-waveform .track-profile-bars { height: 32px; width: 100%; gap: 2px; }
+.player-waveform .track-profile-bars { height: 32px; width: 100%; gap: 1px; }
 .player-waveform .track-profile-bars span { min-width: 1px; background: #69636f; border-radius: 0.5px; }
 .player-waveform .track-profile-bars span.is-accent { background: var(--accent); }
 .player-waveform .waveform-status { min-height: 32px; width: 100%; font-size: 11px; color: var(--muted); }
