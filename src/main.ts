@@ -232,6 +232,18 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
       songIds: value.songIds,
     };
   }
+  if (value.kind === 'set-playlist-tracks') {
+    if (
+      typeof value.revision !== 'string' || value.revision.length === 0 ||
+      typeof value.playlistId !== 'string' || value.playlistId.length === 0 ||
+      !Array.isArray(value.songIds) || value.songIds.length > 10_000 ||
+      !value.songIds.every((songId) => typeof songId === 'string' && songId.length > 0) ||
+      new Set(value.songIds).size !== value.songIds.length
+    ) {
+      throw new Error('Invalid playlist tracks');
+    }
+    return { kind: 'set-playlist-tracks', revision: value.revision, playlistId: value.playlistId, songIds: value.songIds };
+  }
   throw new Error('Invalid library mutation');
 };
 
@@ -266,7 +278,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   });
   ipc.handle(PREFERENCES_CHANNELS.saveOpenRouterKey, (event, value: unknown) => {
     assertTrustedSender(event, owner);
-    if (content.kind !== 'preferences') throw new Error('Open Preferences to change the API key.');
+    if (content.kind === 'playlist') throw new Error('Open Preferences to change the API key.');
     return openRouter.saveKey(value);
   });
   ipc.handle(PREFERENCES_CHANNELS.library, (event) => {
@@ -275,7 +287,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   });
   ipc.handle(PREFERENCES_CHANNELS.saveMinimumSongLength, async (event, value: unknown) => {
     assertTrustedSender(event, owner);
-    if (content.kind !== 'preferences') throw new Error('Open Preferences to change the minimum song length.');
+    if (content.kind === 'playlist') throw new Error('Open Preferences to change the minimum song length.');
     libraryActions += 1;
     try {
       const settings = await library.saveMinimumSongLength(value);

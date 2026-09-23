@@ -1,0 +1,209 @@
+.focused-library,
+.focused-playlists,
+.focused-duplicates {
+  min-width: 0;
+  background: #121215;
+}
+
+.focused-library .library-tools,
+.focused-playlists .library-tools {
+  flex-wrap: nowrap;
+  min-height: 72px;
+  gap: 10px;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--line);
+}
+
+.focused-library .library-search,
+.focused-playlists .library-search {
+  min-width: 100px;
+  height: 40px;
+  gap: 9px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  background: #121215;
+}
+
+.focused-library .library-search input,
+.focused-playlists .library-search input {
+  height: 38px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.focused-library .library-search kbd { font-size: 12px; }
+.focused-library .search-icon,
+.focused-playlists .search-icon { width: 11px; height: 11px; flex: none; }
+.focused-export { border-color: transparent; background: transparent; }
+.focused-export > span { color: var(--muted); }
+
+.focused-popover { position: relative; flex: none; }
+.focused-popover > summary { display: flex; align-items: center; justify-content: center; list-style: none; cursor: pointer; }
+.focused-popover > summary::-webkit-details-marker { display: none; }
+.focused-popover > .quiet-button { height: 40px; padding: 0 12px; color: var(--text-soft); }
+.focused-popover > .is-filtered { border-color: var(--accent); color: var(--text); }
+.focused-popover[open] > summary { color: var(--text); border-color: var(--muted); }
+.focused-popover-panel {
+  position: absolute;
+  z-index: 15;
+  top: calc(100% + 7px);
+  right: 0;
+  display: flex;
+  width: 180px;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #19191d;
+  box-shadow: 0 8px 28px #0006;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.focused-popover-panel label { display: flex; align-items: center; gap: 9px; }
+.focused-popover-panel input[type="checkbox"] { accent-color: var(--accent); }
+.focused-filter-panel { width: 240px; }
+.focused-filter-panel label { display: flex; align-items: stretch; flex-direction: column; gap: 8px; }
+.focused-filter-panel select { min-width: 0; width: 100%; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 4px; background: #121215; color: var(--text); font-size: 13px; }
+.focused-popover-panel > button { min-height: 28px; color: var(--text-soft); background: transparent; text-align: left; cursor: pointer; }
+.focused-popover-panel > button:disabled { opacity: .35; cursor: default; }
+.focused-popover-panel > button:hover:not(:disabled) { color: var(--accent); }
+
+.focused-library .track-table,
+.focused-playlists .track-table { overflow: auto; }
+.focused-library .track-table-head,
+.focused-library .track-row,
+.focused-playlists .track-table-head,
+.focused-playlists .track-row { min-width: 650px; gap: 12px; padding: 0 28px; }
+.focused-library .track-table-body,
+.focused-playlists .track-table-body { min-width: 650px; }
+.focused-library .track-table-head,
+.focused-playlists .track-table-head {
+  min-height: 40px;
+  border-top: 1px solid #26262c;
+  border-bottom: 1px solid #26262c;
+  background: #19191d;
+  color: #b0afb9;
+  font: 400 12px/1.2 "Archivo Variable", sans-serif;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.focused-library .track-row,
+.focused-playlists .track-row { min-height: 48px; border-color: var(--line); }
+.focused-library .track-row.is-selected,
+.focused-playlists .track-row.is-selected { box-shadow: none; background: #28212b; }
+.focused-library .track-row.is-playing,
+.focused-playlists .track-row.is-playing { background: #28212b; }
+.focused-library .track-row.is-playing .track-identity strong,
+.focused-playlists .track-row.is-playing .track-identity strong { color: var(--accent); }
+.focused-library .track-identity,
+.focused-playlists .track-identity { gap: 3px; }
+.focused-library .track-identity strong,
+.focused-playlists .track-identity strong { color: var(--text); font-size: 14px; font-weight: 400; line-height: 1.1; }
+.focused-library .track-identity small,
+.focused-playlists .track-identity small { color: #aaa9b4; font-size: 12px; line-height: 1.1; }
+.focused-library .numeric,
+.focused-playlists .numeric { color: #bdbcc8; font-size: 13px; font-weight: 400; }
+.focused-library .truncate,
+.focused-playlists .truncate { color: #bdbcc8; font-size: 13px; }
+.focused-library .track-menu-button,
+.focused-playlists .track-menu-button { width: 24px; height: 28px; color: var(--muted); background: transparent; }
+.focused-library .track-row:not(:hover):not(:focus-within):not(.is-playing) .track-menu-button,
+.focused-playlists .track-row:not(:hover):not(:focus-within):not(.is-playing) .track-menu-button { opacity: 0; }
+.focused-track-number { position: relative; display: grid; width: 28px; height: 30px; place-items: center; padding: 0; color: #bdbcc8; background: transparent; font: 400 12px "IBM Plex Mono", monospace; cursor: pointer; }
+.focused-track-number:disabled { cursor: default; }
+.focused-row-play { display: none; align-items: center; justify-content: center; font-size: 16px; }
+.focused-track-number.is-playing .focused-row-number,
+.track-row:hover .focused-track-number:not(:disabled) .focused-row-number,
+.focused-track-number:focus-visible .focused-row-number { display: none; }
+.focused-track-number.is-playing .focused-row-play,
+.track-row:hover .focused-track-number:not(:disabled) .focused-row-play,
+.focused-track-number:focus-visible .focused-row-play { display: flex; }
+.focused-track-number.is-playing { color: var(--accent); }
+.focused-library .page-pagination { min-height: 40px; padding: 0 28px; background: #121215; }
+.focused-library .page-pagination p { color: #a5a5af; font: 400 12px "Archivo Variable", sans-serif; letter-spacing: 0; text-transform: none; }
+.focused-library .page-pagination button { height: 28px; font-size: 12px; }
+.focused-library .library-inspector { position: absolute; z-index: 8; inset: 0 0 0 auto; width: 336px; background: #19191d; box-shadow: -12px 0 30px #0004; }
+.focused-library .inspector-close { display: grid; place-items: center; }
+.focused-library .inspector-title { padding-top: 44px; }
+.focused-library .library-selection-actions { padding-inline: 28px; }
+
+.focused-playlists { display: flex; flex-direction: column; }
+.focused-playlists .focused-playlist-content { min-width: 0; min-height: 0; flex: 1; overflow: auto; }
+.focused-playlists .focused-playlist-menu { display: grid; width: 32px; height: 36px; place-items: center; background: transparent; color: var(--text-soft); cursor: pointer; font-size: 22px; }
+.focused-playlists .focused-playlist-table { min-height: 0; overflow: visible; }
+.focused-playlists .focused-drag-handle { width: 16px; height: 30px; padding: 0; color: var(--muted); background: transparent; cursor: grab; font-size: 17px; }
+.focused-playlists .focused-drag-handle:active { cursor: grabbing; }
+.focused-playlists .focused-row-menu .focused-popover-panel { width: 145px; gap: 2px; top: 24px; }
+.focused-playlists .focused-playlist-note { min-height: 40px; flex: none; display: flex; align-items: center; padding: 0 28px; border-top: 1px solid var(--line); color: #a5a5af; font-size: 12px; }
+.focused-playlists .focused-playlist-rules { padding: 12px 28px; border-bottom: 1px solid var(--line); color: var(--text-soft); font-size: 13px; }
+.focused-playlists .focused-playlist-rules summary { cursor: pointer; }
+.focused-playlists.is-creating > .page-header { border: 0; }
+.focused-playlists.is-creating .library-tools { min-height: 40px; padding: 0; margin: 20px 0 18px; border: 0; }
+.focused-playlists.is-creating .library-search { background: #0b0b0d; }
+.focused-playlists.is-creating .track-table-head,
+.focused-playlists.is-creating .track-row { padding: 0 12px; }
+.focused-playlists.is-creating .track-table-head { min-height: 36px; }
+.focused-playlists .focused-picker-pagination { display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12px; }
+.focused-playlists .focused-picker-pagination > div { display: flex; gap: 8px; }
+.focused-playlists .focused-playlist-footer { flex: none; gap: 12px; }
+.focused-playlists .focused-playlist-footer > span { flex: 1; color: var(--text-soft); font-size: 13px; }
+.focused-playlists .playlist-helper { margin: 0 0 18px; padding: 16px; border: 1px solid var(--line-strong); border-radius: 4px; }
+.focused-playlists .playlist-missing { margin: 16px 28px; }
+
+.focused-duplicates { display: flex; flex-direction: column; }
+.focused-duplicates > .page-header { border: 0; }
+.focused-duplicate-controls { display: flex; min-height: 64px; flex: none; align-items: center; gap: 12px; padding: 8px 28px 12px; border-bottom: 1px solid var(--line-strong); color: var(--muted); font-size: 13px; }
+.focused-duplicate-controls select { height: 36px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--text); background: #121215; font-size: 13px; }
+.focused-duplicate-controls > .quiet-button { margin-left: auto; white-space: nowrap; }
+.focused-duplicates .duplicates-body { flex: 1; }
+.focused-duplicates .duplicate-groups { width: 252px; border-color: var(--line-strong); }
+.focused-duplicates .panel-heading { display: flex; min-height: 44px; align-items: center; padding: 0 20px; border: 0; color: var(--muted); background: #121215; font: 400 12px "Archivo Variable", sans-serif; letter-spacing: 0; text-transform: none; }
+.focused-duplicates .duplicate-group { position: relative; min-height: 88px; gap: 6px; padding: 16px 20px; }
+.focused-duplicates .duplicate-group.is-active { box-shadow: none; background: #28212b; }
+.focused-duplicates .duplicate-group strong { padding-right: 24px; color: var(--text); font-size: 14px; font-weight: 400; }
+.focused-duplicates .duplicate-group.is-active strong { color: var(--accent); }
+.focused-duplicates .duplicate-group > span { color: #aaa9b4; font-size: 12px; }
+.focused-duplicates .duplicate-group > .focused-group-count { position: absolute; top: 17px; right: 20px; color: var(--muted); font-size: 12px; }
+.focused-duplicates .duplicate-group small { margin: 0; color: var(--muted); font: 400 11px "Archivo Variable", sans-serif; letter-spacing: 0; text-transform: none; }
+.focused-duplicates .duplicate-detail { display: flex; min-height: 0; flex-direction: column; padding: 24px 28px; }
+.focused-comparison-heading { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; }
+.focused-comparison-heading h2 { margin: 0; color: var(--text); font-size: 22px; font-weight: 600; }
+.focused-comparison-heading p { margin: 5px 0 0; color: #aaa9b4; font-size: 13px; }
+.focused-comparison-notice { display: flex; min-height: 44px; flex: none; align-items: center; gap: 10px; margin: 20px 0; padding: 10px 14px; color: var(--text-soft); background: #211b24; font-size: 13px; line-height: 1.5; }
+.focused-comparison-notice > span { color: var(--accent); }
+.focused-comparison-scroll { flex: none; min-width: 0; overflow-x: auto; }
+.focused-comparison-table { border-block: 1px solid var(--line-strong); }
+.focused-comparison-row { display: grid; min-height: 38px; align-items: center; gap: 16px; padding: 0 12px; border-bottom: 1px solid var(--line); color: var(--text-soft); font-size: 13px; }
+.focused-comparison-row:last-child { border-bottom: 0; }
+.focused-comparison-row.is-different { background: #211d24; }
+.focused-comparison-row > [role="rowheader"] { color: var(--muted); font-size: 12px; }
+.focused-comparison-track { min-height: 94px; }
+.focused-comparison-version { display: flex; align-items: flex-start; flex-direction: column; gap: 10px; padding-block: 12px; }
+.focused-comparison-version label { display: flex; gap: 9px; color: var(--text); font-size: 13px; }
+.focused-comparison-version input { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.focused-preview { display: flex; align-items: center; gap: 10px; padding: 3px 10px; color: var(--text); background: transparent; cursor: pointer; font-size: 13px; }
+.focused-preview.is-playing { color: var(--accent); }
+.focused-preview:disabled { opacity: .4; cursor: default; }
+.focused-preview > span { font-size: 16px; }
+.focused-keeper { color: var(--accent); font-size: 11px; }
+.focused-duplicate-footer { display: flex; flex: none; align-items: center; justify-content: space-between; gap: 16px; margin-top: auto; padding-top: 16px; border-top: 1px solid var(--line-strong); }
+.focused-duplicate-footer > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.focused-duplicate-footer > button { flex: none; }
+.focused-duplicates .duplicate-selection-actions { width: 100%; padding: 0; border: 0; background: transparent; }
+.focused-duplicates .duplicate-selection-toolbar { flex-wrap: wrap; }
+.focused-duplicates .duplicate-selection-review { max-height: 240px; overflow: auto; }
+
+@media (max-width: 1100px) {
+  .focused-duplicates .duplicate-groups { width: 210px; }
+  .focused-duplicates .duplicate-detail { padding: 24px 20px; }
+  .focused-library .track-table-head, .focused-library .track-row,
+  .focused-playlists .track-table-head, .focused-playlists .track-row { padding-inline: 20px; }
+}
+@media (max-width: 900px) {
+  .focused-library .header-actions, .focused-playlists .header-actions { gap: 5px; }
+  .focused-library .focused-export, .focused-playlists .focused-export { padding-inline: 6px; }
+  .focused-duplicate-controls { flex-wrap: wrap; }
+  .focused-duplicate-controls > span { flex-basis: 100%; }
+  .focused-duplicates .duplicate-groups { width: 180px; }
+}

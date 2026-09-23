@@ -1,17 +1,17 @@
 import type { JSX, KeyboardEvent, MouseEvent } from 'react';
 
-import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
+import { UiIcon } from './UiIcon';
 import type { PlaylistFolder, RekordboxPlaylist } from './shared/dj-library';
 
 export type PageId =
   | 'library'
   | 'duplicates'
-  | 'playlists';
+  | 'playlists'
+  | 'preferences';
 
 type NavigationItem = Readonly<{
-  page: Exclude<PageId, 'playlists'>;
+  page: Exclude<PageId, 'playlists' | 'preferences'>;
   label: string;
-  shortLabel: string;
   badge: string;
 }>;
 
@@ -19,13 +19,11 @@ const collectionItems: readonly NavigationItem[] = [
   {
     page: 'library',
     label: 'Library',
-    shortLabel: 'LI',
     badge: '',
   },
   {
     page: 'duplicates',
     label: 'Duplicates',
-    shortLabel: 'DU',
     badge: '',
   },
 ];
@@ -53,7 +51,6 @@ const NavigationGroup = ({
             key={item.page}
           >
             <span className="nav-active-bar" aria-hidden />
-            <span className="nav-short" aria-hidden>{item.shortLabel}</span>
             <span className="nav-label">{item.label}</span>
             <span className="nav-badge">{item.badge}</span>
           </button>
@@ -112,24 +109,18 @@ const PlaylistBranch = ({
               title={playlist.kind === 'smart' ? `${playlist.name}, smart playlist` : playlist.name}
               key={playlist.id}
             >
-              <span className={playlist.kind === 'smart' ? 'playlist-node-icon is-smart' : 'playlist-node-icon'} aria-hidden />
+              <UiIcon name="playlist" size={16} />
               <span>{playlist.name}</span>
-              {playlist.kind === 'smart' && <small>Smart</small>}
             </button>
           );
         }
         const folder = node;
-        const descendants = new Set([folder.id]);
-        for (const child of folders) {
-          if (child.parentFolderId !== null && descendants.has(child.parentFolderId)) descendants.add(child.id);
-        }
-        const playlistCount = playlists.filter((playlist) => playlist.parentFolderId !== null && descendants.has(playlist.parentFolderId)).length;
         return (
           <details className="sidebar-playlist-folder" open key={folder.id}>
             <summary {...playlistMenuEvents(() => onMenu(folder.id, null))}>
-              <span className="folder-caret" aria-hidden>›</span>
+              <UiIcon name="folder" size={16} />
               <span>{folder.name}</span>
-              <small>{playlistCount}</small>
+              <span className="folder-caret" aria-hidden><UiIcon name="chevron-right" size={14} /></span>
             </summary>
             <PlaylistBranch
               activePage={activePage}
@@ -158,7 +149,6 @@ export const CueboxSidebar = ({
   onPlaylistSelect,
   playlists,
   selectedPlaylistId,
-  songCount,
 }: Readonly<{
   activePage: PageId;
   busy: boolean;
@@ -170,11 +160,10 @@ export const CueboxSidebar = ({
   onPlaylistSelect: (playlistId: string) => void;
   playlists: readonly RekordboxPlaylist[] | null;
   selectedPlaylistId: string | null;
-  songCount: number;
 }>): JSX.Element => {
   const collection = collectionItems.map((item) => {
     if (item.page === 'library') {
-      return { ...item, badge: hasLibrary ? songCount.toLocaleString() : '—' };
+      return item;
     }
 
     return {
@@ -191,20 +180,9 @@ export const CueboxSidebar = ({
     <aside className="cuebox-sidebar" aria-label="Arsenal navigation">
       <div className="sidebar-top">
         <div className="cuebox-brand" aria-label="Arsenal">
-          <span className="cuebox-mark" aria-hidden />
           <span className="sidebar-brand-text">Arsenal</span>
         </div>
 
-        <button className="sidebar-search" type="button" aria-label="Search collection"
-          disabled={!hasLibrary || busy}
-          onClick={() => {
-            onNavigate('library');
-            requestAnimationFrame(() => document.getElementById('library-search')?.focus());
-          }}>
-          <span className="search-icon" aria-hidden />
-          <span className="sidebar-search-label">Search</span>
-          <span className="search-shortcut" aria-hidden>⌘K</span>
-        </button>
       </div>
 
       <nav className="sidebar-navigation" aria-label="Pages">
@@ -236,12 +214,12 @@ export const CueboxSidebar = ({
           </div>
         </div>
       </nav>
-      <div className="sidebar-support-footer">
-        <a className="sidebar-support" href="https://www.buymeacoffee.com/joakim_mellonn"
-          target="_blank" rel="noopener noreferrer" aria-label="Buy me a coffee" title="Buy me a coffee, opens in your browser">
-          <img src={coffeeIconUrl} alt="" width={18} height={26} />
-          <span>Buy me a coffee</span>
-        </a>
+      <div className="sidebar-utilities">
+        <button className={activePage === 'preferences' ? 'sidebar-preferences is-active' : 'sidebar-preferences'}
+          type="button" aria-current={activePage === 'preferences' ? 'page' : undefined}
+          onClick={() => onNavigate('preferences')}>
+          <UiIcon name="settings" size={16} /><span>Preferences</span>
+        </button>
       </div>
     </aside>
   );

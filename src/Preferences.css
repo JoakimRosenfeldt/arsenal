@@ -1,0 +1,262 @@
+.preferences-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  background: #121215;
+}
+
+.preferences-page-header {
+  display: flex;
+  height: 88px;
+  flex: none;
+  align-items: center;
+  padding: 0 28px;
+  border-bottom: 1px solid #1c1c22;
+}
+
+.preferences-page-header h1 {
+  margin: 0;
+  color: #f4f3f1;
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.preferences-page-content {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 32px;
+  padding: 28px;
+  overflow-y: auto;
+}
+
+.preferences-section {
+  flex: none;
+  padding-bottom: 28px;
+  border-bottom: 1px solid #2e2e36;
+}
+
+.preferences-section h2 {
+  margin: 0 0 18px;
+  color: #f4f3f1;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 19px;
+}
+
+.preferences-setting-row,
+.preferences-page .app-updates {
+  display: grid;
+  grid-template-columns: minmax(220px, 360px) minmax(0, 1fr);
+  align-items: center;
+  gap: 36px;
+}
+
+.preferences-explanation,
+.preferences-page .app-updates-description {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.preferences-explanation label,
+.preferences-page .app-updates-description strong {
+  color: #f4f3f1;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 17px;
+}
+
+.preferences-explanation p,
+.preferences-key-status p,
+.preferences-page .app-updates-description p {
+  margin: 0;
+  color: #8a8a94;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.preferences-length-input {
+  display: flex;
+  align-items: center;
+  gap: 36px;
+}
+
+.preferences-length-input input {
+  width: 88px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #2e2e36;
+  border-radius: 4px;
+  background: #0b0b0d;
+  font: 400 14px/1 "IBM Plex Mono", monospace;
+}
+
+.preferences-length-input span {
+  color: #8a8a94;
+  font-size: 13px;
+}
+
+.preferences-key-row {
+  align-items: start;
+}
+
+.preferences-key-entry {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preferences-key-input {
+  display: flex;
+  height: 40px;
+  border: 1px solid #2e2e36;
+  border-radius: 4px;
+  background: #0b0b0d;
+}
+
+.preferences-key-input input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  font-size: 13px;
+}
+
+.preferences-key-input input::placeholder {
+  color: #8a8a94;
+  opacity: 1;
+}
+
+.preferences-key-visibility {
+  display: grid;
+  width: 40px;
+  flex: none;
+  place-items: center;
+  background: transparent;
+  color: #8a8a94;
+  cursor: pointer;
+}
+
+.preferences-key-visibility svg {
+  width: 16px;
+  height: 16px;
+}
+
+.preferences-key-status {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.preferences-remove-key {
+  flex: none;
+  padding: 0;
+  background: transparent;
+  color: #c2c1bd;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.preferences-page .app-updates {
+  margin: 0;
+}
+
+.preferences-page .app-updates > button {
+  justify-self: start;
+}
+
+.preferences-secondary-button,
+.preferences-save-button,
+.preferences-page .app-updates > button {
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #2e2e36;
+  border-radius: 4px;
+  background: #131317;
+  color: #f4f3f1;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.preferences-page-actions {
+  display: flex;
+  min-height: 64px;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 12px 28px;
+  border-top: 1px solid #2e2e36;
+}
+
+.preferences-page-actions p {
+  margin: 0 auto 0 0;
+  color: #c2c1bd;
+  font-size: 12px;
+}
+
+.preferences-save-button {
+  border-color: #ff6fa8;
+  background: #ff6fa8;
+  color: #181016;
+}
+
+.preferences-page button:disabled,
+.preferences-page input:disabled {
+  opacity: 0.5;
+}
+
+.preferences-page button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.preferences-errors p {
+  margin: 0 0 8px;
+  color: #ff6fa8;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1100px) {
+  .preferences-setting-row,
+  .preferences-page .app-updates {
+    grid-template-columns: minmax(180px, 1fr) minmax(0, 1.2fr);
+    gap: 24px;
+  }
+
+  .preferences-length-input {
+    gap: 16px;
+  }
+}
+
+@media (max-width: 640px) {
+  .preferences-page-header,
+  .preferences-page-actions {
+    padding-right: 20px;
+    padding-left: 20px;
+  }
+
+  .preferences-page-content {
+    padding: 24px 20px;
+  }
+
+  .preferences-setting-row,
+  .preferences-page .app-updates {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+  }
+}

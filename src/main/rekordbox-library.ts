@@ -530,6 +530,8 @@ export class RekordboxLibrary {
         return this.ignoreDuplicateGroup(catalog, change);
       case 'remove-songs':
         return this.removeSongs(catalog, change);
+      case 'set-playlist-tracks':
+        return this.setPlaylistTracks(catalog, change);
       case 'create-playlist':
       case 'create-folder':
       case 'save-smart-playlist':
@@ -620,6 +622,36 @@ export class RekordboxLibrary {
       removedCount: tracks.length,
       fileActions,
     };
+  }
+
+  private async setPlaylistTracks(
+    catalog: CurrentCatalog,
+    change: Extract<LibraryMutation, { kind: 'set-playlist-tracks' }>,
+  ): Promise<LibraryMutationResult> {
+    const playlist = catalog.playlists.find((candidate) => candidate.id === change.playlistId);
+    const songIds = new Set(change.songIds);
+    if (
+      playlist?.kind !== 'regular' ||
+      songIds.size !== change.songIds.length ||
+      songIds.size > 10_000 ||
+      playlist.tracks.some((song) => this.includesSong(song) && !songIds.has(song.id))
+    ) {
+      return { kind: 'rejected', reason: 'invalid-playlist' };
+    }
+    const bySongId = new Map(catalog.tracks.map((track) => [track.song.id, track]));
+    const tracks: { trackId: string | null; rawLocation: string | null }[] = [];
+    for (const songId of change.songIds) {
+      const track = bySongId.get(songId);
+      if (track === undefined || !this.includesSong(track.song)) {
+        return { kind: 'rejected', reason: 'invalid-playlist' };
+      }
+      tracks.push({ trackId: track.rekordboxId, rawLocation: track.rawLocation });
+    }
+    const reload = await this.writeAndReload(catalog, { kind: 'set-playlist-tracks', playlistId: playlist.id, tracks });
+    if (reload.kind === 'rejected') return reload;
+    this.cancelSuggestions();
+    this.catalog = reload.catalog;
+    return { kind: 'playlist-updated', library: summaryFor(reload.catalog), playlistId: playlist.id };
   }
 
   private async createPlaylistNode(

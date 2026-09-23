@@ -113,6 +113,7 @@ export const TrackWaveform = ({
           ))}
         </div>
       )}
+      {bars !== null && <span className="waveform-playhead" style={{ left: `${Math.max(0, Math.min(1, progress)) * 100}%` }} aria-hidden />}
       <input
         type="range"
         min="0"

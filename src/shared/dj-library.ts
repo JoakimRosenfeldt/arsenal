@@ -238,6 +238,12 @@ export type LibraryMutation =
       parentFolderId: string | null;
     }>
   | Readonly<{
+      kind: 'set-playlist-tracks';
+      revision: string;
+      playlistId: string;
+      songIds: readonly string[];
+    }>
+  | Readonly<{
       kind: 'save-smart-playlist';
       revision: string;
       name: string;
@@ -279,6 +285,11 @@ export type LibraryMutationResult =
     }>
   | Readonly<{
       kind: 'playlist-created';
+      library: LibrarySummary;
+      playlistId: string;
+    }>
+  | Readonly<{
+      kind: 'playlist-updated';
       library: LibrarySummary;
       playlistId: string;
     }>

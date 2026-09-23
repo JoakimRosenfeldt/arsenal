@@ -27,6 +27,14 @@ export type RekordboxXmlEdit =
       parentFolderId: string | null;
     }>
   | Readonly<{
+      kind: 'set-playlist-tracks';
+      playlistId: string;
+      tracks: readonly Readonly<{
+        trackId: string | null;
+        rawLocation: string | null;
+      }>[];
+    }>
+  | Readonly<{
       kind: 'update-smart-playlist';
       playlistId: string;
       name: string;
@@ -501,11 +509,92 @@ const createNode = (
   ]);
 };
 
+const setPlaylistTracks = (
+  source: string,
+  index: XmlIndex,
+  edit: Extract<RekordboxXmlEdit, { kind: 'set-playlist-tracks' }>,
+): string => {
+  const node = index.playlistNodes.find((candidate) => candidate.id === edit.playlistId);
+  if (node === undefined || node.nodeType !== '1' || isSmartPlaylistNode(node.attributes) ||
+    (node.keyType !== '0' && node.keyType !== '1')) {
+    throw new RekordboxWriteError('target-not-found', 'The regular playlist no longer exists');
+  }
+  const collectionKeys = new Map<string, number>();
+  for (const track of index.collectionTracks) {
+    const key = (node.keyType === '0' ? track.attributes.TrackID : track.attributes.Location)?.trim();
+    if (key) collectionKeys.set(key, (collectionKeys.get(key) ?? 0) + 1);
+  }
+  const keys: string[] = [];
+  for (const track of edit.tracks) {
+    const key = node.keyType === '0' ? track.trackId : track.rawLocation;
+    if (key === null || collectionKeys.get(key) !== 1) {
+      throw new RekordboxWriteError('target-not-found', 'A track does not have one exact collection reference');
+    }
+    keys.push(key);
+  }
+  const keySet = new Set(keys);
+  if (keySet.size !== keys.length || keys.length > 10_000) {
+    throw new RekordboxWriteError('target-not-found', 'Invalid playlist track selection');
+  }
+
+  const referencesByKey = new Map<string, ElementSpan[]>();
+  const editableReferences = node.trackReferences.filter((reference) => {
+    const key = reference.attributes.Key?.trim() ?? '';
+    if (!keySet.has(key)) return false;
+    const references = referencesByKey.get(key) ?? [];
+    references.push(reference);
+    referencesByKey.set(key, references);
+    return true;
+  });
+  const orderedMarkup = keys.flatMap((key) => {
+    const references = referencesByKey.get(key);
+    return references === undefined
+      ? [`<TRACK Key="${escapeXmlAttribute(key)}"/>`]
+      : references.map((reference) => source.slice(reference.start, reference.end));
+  });
+  const count = node.trackReferences.length + orderedMarkup.length - editableReferences.length;
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  const indent = lineIndentAt(source, node.start);
+  const trackIndent = `${indent}  `;
+  if (node.selfClosing && orderedMarkup.length > 0) {
+    const opening = replaceAttribute(source.slice(node.start, node.openEnd), 'Entries', String(count)).replace(/\/\s*>$/, '>');
+    return applyReplacements(source, [{
+      start: node.start,
+      end: node.end,
+      text: `${opening}${newline}${trackIndent}${orderedMarkup.join(`${newline}${trackIndent}`)}${newline}${indent}</NODE>`,
+    }]);
+  }
+
+  const replacements: Replacement[] = [openingReplacement(source, node, 'Entries', String(count))];
+  // Only replace visible references, keeping hidden tracks and unknown XML children in place.
+  for (const [position, reference] of editableReferences.entries()) {
+    const markup = orderedMarkup[position];
+    if (markup !== undefined) replacements.push({ start: reference.start, end: reference.end, text: markup });
+  }
+  const extraMarkup = orderedMarkup.slice(editableReferences.length);
+  if (extraMarkup.length > 0) {
+    const lastReference = editableReferences.at(-1);
+    let start = lastReference?.end ?? node.closeStart;
+    const end = start;
+    if (lastReference === undefined) {
+      while (start > node.openEnd && /\s/.test(source[start - 1] ?? '')) start -= 1;
+    }
+    replacements.push({
+      start,
+      end,
+      text: `${newline}${trackIndent}${extraMarkup.join(`${newline}${trackIndent}`)}${lastReference === undefined ? `${newline}${indent}` : ''}`,
+    });
+  }
+  return applyReplacements(source, replacements);
+};
+
 const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
   const index = scanXml(source);
   let edited: string;
   if (edit.kind === 'remove-tracks') {
     edited = removeTracks(source, index, edit);
+  } else if (edit.kind === 'set-playlist-tracks') {
+    edited = setPlaylistTracks(source, index, edit);
   } else if (edit.kind === 'update-smart-playlist') {
     const node = index.playlistNodes.find((candidate) => candidate.id === edit.playlistId);
     if (node === undefined) throw new RekordboxWriteError('target-not-found', 'The playlist no longer exists');

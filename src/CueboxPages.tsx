@@ -7,10 +7,13 @@ import {
 } from 'react';
 
 import type { DuplicateViewState } from './App';
+import './FocusedPages.css';
+import { UiIcon } from './UiIcon';
+import { TracklistExportDialog } from './TracklistExportDialog';
 import { TrackWaveform } from './TrackWaveform';
 import { HelpTooltip } from './HelpTooltip';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
-import { PlaylistDestination } from './SmartPlaylistEditor';
+import { PlaylistIdentity } from './SmartPlaylistEditor';
 import {
   TrackArtwork,
   type PlaybackController,
@@ -22,7 +25,6 @@ import {
   SONG_METADATA_FILTERS,
   DEFAULT_SONG_FILTERS,
   songMetadataGapCount,
-  type DuplicateCandidate,
   type DuplicateGroup,
   type DuplicateMatchMode,
   type DuplicateScan,
@@ -66,36 +68,8 @@ const formatBpm = (bpm: number | null): string =>
     ? '—'
     : bpm.toLocaleString(undefined, { maximumFractionDigits: 2 });
 
-const formatFileSize = (bytes: number | null): string => {
-  if (bytes === null) {
-    return 'Not set';
-  }
-
-  const units = ['B', 'KB', 'MB', 'GB'] as const;
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value.toLocaleString(undefined, {
-    maximumFractionDigits: unitIndex === 0 ? 0 : 1,
-  })} ${units[unitIndex]}`;
-};
-
-const formatRating = (rating: number | null): string => {
-  if (rating === null) {
-    return 'Not set';
-  }
-  const stars = Math.max(
-    0,
-    Math.min(5, Math.round(rating > 5 ? rating / 51 : rating)),
-  );
-  return `${stars} / 5`;
-};
-
 const formatRowNumber = (offset: number, index: number): string =>
-  String(offset + index + 1).padStart(3, '0');
+  String(offset + index + 1).padStart(2, '0');
 
 const formatCues = (song: SongRow): string =>
   song.cuePointCount === 0
@@ -111,17 +85,56 @@ const SongLabels = ({ song }: Readonly<{ song: SongRow }>): JSX.Element => (
   </span>
 );
 
-const statusForSong = (
-  song: SongRow,
-): Readonly<{ label: string; tone: string }> => {
-  const gaps = songMetadataGapCount(song);
-  if (gaps === 0) {
-    return { label: 'Metadata complete', tone: 'complete' };
-  }
-  if (gaps <= 2) {
-    return { label: `${gaps} metadata gaps`, tone: 'partial' };
-  }
-  return { label: `${gaps} metadata gaps`, tone: 'attention' };
+const totalTime = (songs: readonly SongRow[]): string => {
+  const seconds = Math.floor(songs.reduce((total, song) => total + (song.durationSeconds ?? 0), 0));
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} min ${String(seconds % 60).padStart(2, '0')} sec`;
+};
+
+const trackColumns = [
+  { key: 'bpm', label: 'BPM', width: 64 },
+  { key: 'key', label: 'KEY', width: 60 },
+  { key: 'time', label: 'Time', width: 66 },
+  { key: 'genre', label: 'Genre', width: 130 },
+  { key: 'album', label: 'Album', width: 146 },
+] as const;
+type TrackColumn = typeof trackColumns[number]['key'];
+const defaultColumns = (): ReadonlySet<TrackColumn> => new Set(trackColumns.map((column) => column.key));
+const trackGrid = (columns: ReadonlySet<TrackColumn>): string =>
+  `20px 28px minmax(180px, 1fr) ${trackColumns.filter((column) => columns.has(column.key)).map((column) => `${column.width}px`).join(' ')} 24px`;
+const TrackFacts = ({ song, columns }: Readonly<{ song: SongRow; columns: ReadonlySet<TrackColumn> }>): JSX.Element => <>
+  {columns.has('bpm') && <span className="numeric" role="cell">{formatBpm(song.bpm)}</span>}
+  {columns.has('key') && <span className="numeric" role="cell">{song.musicalKey ?? '—'}</span>}
+  {columns.has('time') && <span className="numeric" role="cell">{formatDuration(song.durationSeconds)}</span>}
+  {columns.has('genre') && <span className="truncate" role="cell">{song.genre ?? '—'}</span>}
+  {columns.has('album') && <span className="truncate" role="cell">{song.album ?? '—'}</span>}
+</>;
+const ColumnControl = ({ columns, onChange }: Readonly<{
+  columns: ReadonlySet<TrackColumn>; onChange: (columns: ReadonlySet<TrackColumn>) => void;
+}>): JSX.Element => (
+  <details className="focused-popover">
+    <summary className="quiet-button"><UiIcon name="columns" size={16} /> Columns</summary>
+    <div className="focused-popover-panel">
+      {trackColumns.map((column) => <label key={column.key}>
+        <input type="checkbox" checked={columns.has(column.key)} onChange={(event) => {
+          const next = new Set(columns);
+          if (event.currentTarget.checked) next.add(column.key); else next.delete(column.key);
+          onChange(next);
+        }} />{column.label}
+      </label>)}
+    </div>
+  </details>
+);
+const TrackNumber = ({ song, index, offset = 0, playback }: Readonly<{
+  song: SongRow; index: number; offset?: number; playback: PlaybackController;
+}>): JSX.Element => {
+  const playing = playback.song?.id === song.id && playback.playing;
+  return <button className={playing ? 'focused-track-number is-playing' : 'focused-track-number'} type="button"
+    disabled={song.audioUrl === null} aria-label={`${playing ? 'Pause' : 'Play'} ${song.title}`}
+    onClick={(event) => { event.stopPropagation(); playback.play(song); }} onDoubleClick={(event) => event.stopPropagation()}>
+    <span className="focused-row-number">{formatRowNumber(offset, index)}</span>
+    <span className="focused-row-play"><UiIcon name={playing ? 'volume' : 'play'} size={16} /></span>
+  </button>;
 };
 
 const NoLibrary = ({
@@ -171,15 +184,17 @@ export const LibraryPage = ({
   const [selection, setSelection] = useState<ReadonlyMap<string, SongRow>>(new Map());
   const [action, setAction] = useState<'remove' | null>(null);
   const [menuError, setMenuError] = useState(false);
+  const [columns, setColumns] = useState(defaultColumns);
+  const [exporting, setExporting] = useState(false);
+  const [exportPlaylist, setExportPlaylist] = useState<RekordboxPlaylist | null>(null);
   const anchorId = useRef<string | null>(null);
   const inspectorRef = useRef<HTMLElement>(null);
-  const inspectorToggleRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!inspectorOpen) return;
     const dismissOutside = (event: MouseEvent): void => {
       if (!window.matchMedia('(max-width: 1150px)').matches || !(event.target instanceof Node)) return;
-      if (!inspectorRef.current?.contains(event.target) && !inspectorToggleRef.current?.contains(event.target)) {
+      if (!inspectorRef.current?.contains(event.target)) {
         setInspectorOpen(false);
       }
     };
@@ -265,20 +280,41 @@ export const LibraryPage = ({
     }
   };
 
+  const exportTracks = async (): Promise<void> => {
+    setExporting(true);
+    setMenuError(false);
+    try {
+      const tracks: SongRow[] = [];
+      let offset = 0;
+      let hasNext = true;
+      while (hasNext) {
+        const page = await window.djLibrary.listSongs({ offset, limit: SONG_PAGE_SIZE });
+        tracks.push(...page.items);
+        hasNext = page.hasNext && page.items.length > 0;
+        offset += page.limit;
+      }
+      setExportPlaylist({ id: 'library', name: 'All tracks', order: 0, kind: 'regular', folderPath: [],
+        parentFolderId: null, tracks, missingTrackCount: 0, smartRules: null, smartDefinition: null });
+    } catch {
+      setMenuError(true);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
-    <section className="workspace-page library-page" aria-labelledby="library-title">
+    <section className="workspace-page library-page focused-library" aria-labelledby="library-title">
       <header className="page-header library-header">
         <div className="page-title-line">
-          <h1 id="library-title">Library</h1>
-          <p>{view.library.songCount.toLocaleString()} tracks</p>
+          <h1 id="library-title">All tracks</h1>
+          <p>{view.library.songCount.toLocaleString()} tracks{view.page.total === view.library.songCount && !view.page.hasNext && view.page.offset === 0 ? ` · ${totalTime(visibleSongs)}` : ''}</p>
         </div>
         <div className="header-actions">
-          <button className="quiet-button inspector-toggle" type="button" ref={inspectorToggleRef}
-            onClick={() => setInspectorOpen((open) => !open)} aria-expanded={inspectorOpen}>
-            Inspector
+          <button className="quiet-button focused-export" type="button" onClick={() => void exportTracks()} disabled={busy || exporting}>
+            <UiIcon name="download" size={16} /> {exporting ? 'Preparing…' : 'Export tracklist'}
           </button>
-          <button className="quiet-button" type="button" onClick={onImport} disabled={busy}>
-            {busy ? 'Importing…' : 'Import XML'}
+          <button className="accent-button" type="button" onClick={onImport} disabled={busy}>
+            <UiIcon name="upload" size={16} /> {busy ? 'Importing…' : 'Import XML'}
           </button>
         </div>
       </header>
@@ -287,36 +323,44 @@ export const LibraryPage = ({
         <label className="library-search">
           <span className="search-icon" aria-hidden />
           <span className="visually-hidden">Search tracks</span>
-          <input id="library-search" type="search" placeholder="Search tracks"
+          <input id="library-search" type="search" placeholder="Search tracks, artists or albums"
             value={query} maxLength={200} disabled={busy || action !== null}
             onChange={(event) => onSearch(event.currentTarget.value, filters)} />
-          <kbd aria-hidden>⌘K</kbd>
+          <kbd aria-hidden>⌘F</kbd>
         </label>
-        <select aria-label="Filter by source" value={filters.source} disabled={busy || action !== null}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            const source = value === 'all' ? 'all' : Object.keys(SONG_SOURCE_LABELS)
-              .find((key): key is keyof typeof SONG_SOURCE_LABELS => key === value);
-            if (source !== undefined) onSearch(query, { ...filters, source });
-          }}>
-          <option value="all">All sources</option>
-          {Object.entries(SONG_SOURCE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-        </select>
-        <select aria-label="Filter by metadata" value={filters.metadata} disabled={busy || action !== null}
-          onChange={(event) => {
-            const value = event.currentTarget.value;
-            const metadata = Object.keys(SONG_METADATA_FILTERS)
-              .find((key): key is keyof typeof SONG_METADATA_FILTERS => key === value);
-            if (metadata !== undefined) onSearch(query, { ...filters, metadata });
-          }}>
-          {Object.entries(SONG_METADATA_FILTERS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
-        </select>
-        {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
-          onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Reset</button>}
-        {filtered && !searching && <span className="library-result-count" role="status">{view.page.total.toLocaleString()} {view.page.total === 1 ? 'result' : 'results'}</span>}
+        <details className="focused-popover">
+          <summary className={filtered ? 'quiet-button is-filtered' : 'quiet-button'}><UiIcon name="filters" size={16} /> Filters</summary>
+          <div className="focused-popover-panel focused-filter-panel">
+            <label>Source
+              <select aria-label="Filter by source" value={filters.source} disabled={busy || action !== null}
+                onChange={(event) => {
+                  const value = event.currentTarget.value;
+                  const source = value === 'all' ? 'all' : Object.keys(SONG_SOURCE_LABELS)
+                    .find((key): key is keyof typeof SONG_SOURCE_LABELS => key === value);
+                  if (source !== undefined) onSearch(query, { ...filters, source });
+                }}>
+                <option value="all">All sources</option>
+                {Object.entries(SONG_SOURCE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+              </select>
+            </label>
+            <label>Metadata
+              <select aria-label="Filter by metadata" value={filters.metadata} disabled={busy || action !== null}
+                onChange={(event) => {
+                  const metadata = Object.keys(SONG_METADATA_FILTERS)
+                    .find((key): key is keyof typeof SONG_METADATA_FILTERS => key === event.currentTarget.value);
+                  if (metadata !== undefined) onSearch(query, { ...filters, metadata });
+                }}>
+                {Object.entries(SONG_METADATA_FILTERS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+              </select>
+            </label>
+            {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
+              onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Clear filters</button>}
+          </div>
+        </details>
+        <ColumnControl columns={columns} onChange={setColumns} />
       </div>
 
-      {menuError && <p className="library-menu-error" role="alert">Could not open the menu. Use the selection actions below.</p>}
+      {menuError && <p className="library-menu-error" role="alert">Could not complete this action. Please try again.</p>}
 
       <div className="library-body">
         <div className="track-table" role="table" aria-label="Library tracks"
@@ -330,20 +374,15 @@ export const LibraryPage = ({
             }
             if (event.key === 'Escape') setSelection(new Map());
           }}>
-          <div className="track-table-head" role="row">
+          <div className="track-table-head" role="row" style={{ gridTemplateColumns: trackGrid(columns) }}>
             <span role="columnheader">
               <input type="checkbox" aria-label="Select all tracks on this page" checked={allOnPageSelected}
                 ref={(input) => { if (input) input.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
                 onChange={selectPage} disabled={selectionLocked || visibleSongs.length === 0} />
             </span>
-            <span role="columnheader">#</span>
-            <span role="columnheader"><span className="visually-hidden">Play</span></span>
-            <span role="columnheader">Title / artist</span>
-            <span role="columnheader">BPM</span>
-            <span role="columnheader">Key</span>
-            <span role="columnheader">Time</span>
-            <span role="columnheader">Genre</span>
-            <span role="columnheader">Album</span>
+            <span role="columnheader"># ↑</span>
+            <span role="columnheader">Track</span>
+            {trackColumns.filter((column) => columns.has(column.key)).map((column) => <span role="columnheader" key={column.key}>{column.label}</span>)}
             <span role="columnheader"><span className="visually-hidden">Actions</span></span>
           </div>
           <div className="track-table-body" role="rowgroup" aria-busy={busy || searching}>
@@ -357,12 +396,12 @@ export const LibraryPage = ({
               </div>
             ) : (
               visibleSongs.map((song, index) => {
-                const status = statusForSong(song);
                 const isSelected = selection.has(song.id);
                 const isPlaying = song.id === playback.song?.id && playback.playing;
                 return (
                   <div
-                    className={isSelected ? 'track-row is-selected' : 'track-row'}
+                    className={`track-row${isSelected ? ' is-selected' : ''}${isPlaying ? ' is-playing' : ''}`}
+                    style={{ gridTemplateColumns: trackGrid(columns) }}
                     role="row"
                     tabIndex={0}
                     onClick={(event) => selectSong(song, event.metaKey || event.ctrlKey, event.shiftKey)}
@@ -392,35 +431,12 @@ export const LibraryPage = ({
                         onDoubleClick={(event) => event.stopPropagation()}
                         onChange={(event) => selectSong(song, true, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)} />
                     </span>
-                    <span className="track-index" role="cell" title={status.label}>
-                      <span className={`track-status is-${status.tone}`} aria-hidden />{formatRowNumber(view.page.offset, index)}
-                    </span>
-                    <span role="cell">
-                      <button
-                        className={isPlaying ? 'track-play is-playing' : 'track-play'}
-                        type="button"
-                        onDoubleClick={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          playback.play(song);
-                        }}
-                        disabled={song.audioUrl === null}
-                        aria-label={isPlaying ? `Pause ${song.title}` : `Play ${song.title}`}
-                      >
-                        <TrackArtwork song={song} />
-                        <span aria-hidden>{isPlaying ? 'Ⅱ' : '▶'}</span>
-                      </button>
-                    </span>
+                    <span role="cell"><TrackNumber song={song} index={index} offset={view.page.offset} playback={playback} /></span>
                     <span className="track-identity" role="cell">
                       <strong>{song.title}</strong>
                       <small>{song.artist ?? 'Unknown artist'}</small>
-                      <SongLabels song={song} />
                     </span>
-                    <span className="numeric" role="cell">{formatBpm(song.bpm)}</span>
-                    <span className="numeric is-muted" role="cell">{song.musicalKey ?? '—'}</span>
-                    <span className="numeric is-muted" role="cell">{formatDuration(song.durationSeconds)}</span>
-                    <span className="truncate is-muted" role="cell">{song.genre ?? 'Not set'}</span>
-                    <span className="truncate is-muted" role="cell">{song.album ?? 'Not set'}</span>
+                    <TrackFacts song={song} columns={columns} />
                     <span role="cell">
                       <button className="track-menu-button" type="button" aria-label={`Actions for ${song.title}`} aria-haspopup="menu"
                         disabled={selectionLocked}
@@ -434,7 +450,7 @@ export const LibraryPage = ({
           </div>
         </div>
 
-        {selectedSong !== null && (
+        {selectedSong !== null && inspectorOpen && (
           <aside className={inspectorOpen ? 'library-inspector is-open' : 'library-inspector'} aria-label="Selected track inspector" ref={inspectorRef}>
             <button className="inspector-close" type="button" onClick={() => setInspectorOpen(false)} aria-label="Close inspector">×</button>
             <div className="inspector-title">
@@ -491,17 +507,19 @@ export const LibraryPage = ({
 
       <nav className="page-pagination" aria-label="Song pages">
         <p>
-          Page <strong>{pageNumber}</strong> of {pageCount}
+          {filtered && `${view.page.total.toLocaleString()} results`}
+          {pageCount > 1 && <span>Page <strong>{pageNumber}</strong> of {pageCount}</span>}
         </p>
-        <div>
+        {pageCount > 1 && <div>
           <button type="button" onClick={() => onPage(view.page.offset - view.page.limit)} disabled={busy || searching || view.page.offset === 0}>
             ← Previous
           </button>
           <button type="button" onClick={() => onPage(view.page.offset + view.page.limit)} disabled={busy || searching || !view.page.hasNext}>
             Next →
           </button>
-        </div>
+        </div>}
       </nav>
+      {exportPlaylist !== null && <TracklistExportDialog playlist={exportPlaylist} onClose={() => setExportPlaylist(null)} />}
     </section>
   );
 };
@@ -541,35 +559,6 @@ const variantSummaryFor = (group: DuplicateGroup): string => {
   const visible = labels.slice(0, 3).join(' · ');
   return labels.length > 3 ? `${visible} +${labels.length - 3}` : visible;
 };
-
-type MetadataItem = Readonly<{
-  label: string;
-  value: string;
-  wide?: boolean;
-}>;
-
-const importantMetadataFor = (song: SongRow): readonly MetadataItem[] => [
-  { label: 'Source', value: SONG_SOURCE_LABELS[song.source] },
-  { label: 'Cue points', value: formatCues(song) },
-  { label: 'Album', value: song.album ?? 'Not set' },
-  { label: 'Mix', value: song.mixName ?? 'Not set' },
-  { label: 'BPM', value: formatBpm(song.bpm) },
-  { label: 'Key', value: song.musicalKey ?? 'Not set' },
-  { label: 'Duration', value: formatDuration(song.durationSeconds) },
-  { label: 'Genre', value: song.genre ?? 'Not set' },
-  { label: 'Format', value: song.fileKind ?? 'Not set' },
-  {
-    label: 'Bitrate',
-    value: song.bitRateKbps === null ? 'Not set' : `${song.bitRateKbps.toLocaleString()} kbps`,
-  },
-  { label: 'File size', value: formatFileSize(song.fileSizeBytes) },
-  { label: 'Added', value: song.dateAdded ?? 'Not set' },
-  { label: 'Rating', value: formatRating(song.rating) },
-  { label: 'Plays', value: song.playCount?.toLocaleString() ?? 'Not set' },
-  ...(song.comments === null
-    ? []
-    : [{ label: 'Comments', value: song.comments, wide: true }]),
-];
 
 type RemoveSongs = (songIds: readonly string[], removeLocalFile: boolean) => Promise<boolean>;
 
@@ -745,123 +734,6 @@ const DuplicateSelectionActions = ({
   );
 };
 
-const DuplicateSong = ({
-  busy,
-  candidate,
-  onRemove,
-  onSelect,
-  playback,
-  recommendation,
-  selected,
-}: Readonly<{
-  busy: boolean;
-  candidate: DuplicateCandidate;
-  onRemove: RemoveSongs;
-  onSelect: (selected: boolean) => void;
-  playback: PlaybackController;
-  recommendation: 'keep' | 'remove' | null;
-  selected: boolean;
-}>): JSX.Element => {
-  const [confirming, setConfirming] = useState(false);
-  const [removeLocalFile, setRemoveLocalFile] = useState(false);
-  const song = candidate.song;
-  const isPlaying = playback.song?.id === song.id && playback.playing;
-
-  return (
-    <div className={selected ? 'duplicate-song-shell is-selected' : 'duplicate-song-shell'}>
-      <input
-        className="duplicate-select"
-        type="checkbox"
-        checked={selected}
-        onChange={(event) => onSelect(event.currentTarget.checked)}
-        disabled={busy}
-        aria-label={`Select ${song.title} by ${song.artist ?? 'Unknown artist'} for removal`}
-      />
-      <button
-        className={isPlaying ? 'track-play duplicate-play is-playing' : 'track-play duplicate-play'}
-        type="button"
-        onClick={() => playback.play(song)}
-        disabled={song.audioUrl === null}
-        aria-label={isPlaying ? `Pause ${song.title}` : `Play ${song.title}`}
-        title={song.audioUrl === null ? 'Local audio file unavailable' : isPlaying ? 'Pause' : 'Play'}
-      >
-        <TrackArtwork song={song} size="medium" />
-        <span aria-hidden>{isPlaying ? 'Ⅱ' : '▶'}</span>
-      </button>
-      <details className="duplicate-song">
-        <summary>
-          <span aria-hidden />
-          <span aria-hidden />
-          <span className="duplicate-song-identity">
-            <strong>{song.title}</strong>
-            <small>{song.artist ?? 'Unknown artist'} · {candidate.variantLabel}</small>
-            <SongLabels song={song} />
-            {recommendation !== null && (
-              <span className={`duplicate-recommendation is-${recommendation}`}>
-                {recommendation === 'keep' ? 'Suggested keeper' : 'Suggested duplicate'}
-              </span>
-            )}
-          </span>
-          <span className="duplicate-song-facts">
-            <b>{formatBpm(song.bpm)}</b>
-            <small>{song.musicalKey ?? 'No key'} · {formatDuration(song.durationSeconds)}</small>
-          </span>
-          <span className="details-glyph" aria-hidden>+</span>
-        </summary>
-        <div className="duplicate-song-body">
-          <dl className="duplicate-metadata">
-            {importantMetadataFor(song).map((item) => (
-              <div className={item.wide ? 'is-wide' : ''} key={item.label}>
-                <dt>{item.label}</dt>
-                <dd>{item.value}</dd>
-              </div>
-            ))}
-          </dl>
-          <div className="duplicate-remove">
-            {confirming ? (
-              <>
-                <div>
-                  <div className="help-label">
-                    <strong>Remove this track?</strong>
-                    <HelpTooltip label="Removing this track">Also removes this track from playlists.</HelpTooltip>
-                  </div>
-                  <FileRemovalOption
-                    busy={busy}
-                    checked={removeLocalFile}
-                    onChange={setRemoveLocalFile}
-                    songs={[song]}
-                  />
-                </div>
-                <span>
-                  <button type="button" className="quiet-button" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
-                  <button
-                    type="button"
-                    className="danger-button"
-                    onClick={() => {
-                      void onRemove([song.id], removeLocalFile).then((removed) => {
-                        if (removed) {
-                          setConfirming(false);
-                        }
-                      });
-                    }}
-                    disabled={busy}
-                  >
-                    {busy ? 'Removing' : 'Remove track'}
-                  </button>
-                </span>
-              </>
-            ) : (
-              <button type="button" className="danger-text-button" onClick={() => setConfirming(true)} disabled={busy}>
-                Remove duplicate
-              </button>
-            )}
-          </div>
-        </div>
-      </details>
-    </div>
-  );
-};
-
 export const DuplicatesPage = ({
   busy,
   mode,
@@ -869,6 +741,7 @@ export const DuplicatesPage = ({
   onImport,
   onModeChange,
   onRemove,
+  onRescan,
   playback,
   state,
   view,
@@ -878,6 +751,7 @@ export const DuplicatesPage = ({
     onIgnore: (groupKey: string) => Promise<boolean>;
     onModeChange: (mode: DuplicateMatchMode) => void;
     onRemove: RemoveSongs;
+    onRescan: () => void;
     state: DuplicateViewState;
   }>): JSX.Element => {
   const [selection, setSelection] = useState<{
@@ -954,426 +828,357 @@ export const DuplicatesPage = ({
     ? 'No groups left to review'
     : copy.emptyTitle;
 
+  const comparisonRows: readonly Readonly<{ label: string; value: (song: SongRow) => string }>[] = [
+    { label: 'Length', value: (song) => formatDuration(song.durationSeconds) },
+    { label: 'BPM', value: (song) => formatBpm(song.bpm) },
+    { label: 'Key', value: (song) => song.musicalKey ?? '—' },
+    { label: 'Format', value: (song) => [song.fileKind, song.bitRateKbps === null ? null : `${song.bitRateKbps} kbps`].filter(Boolean).join(' · ') || '—' },
+    { label: 'Cue points', value: (song) => String(song.cuePointCount) },
+    { label: 'Source', value: (song) => SONG_SOURCE_LABELS[song.source] },
+  ];
+  const modeDescription: Record<DuplicateMatchMode, string> = {
+    versions: 'Find alternate mixes of the same title and artist.',
+    exact: 'Find tracks with the same title and artist.',
+    smart: 'Find likely duplicates and suggested versions to keep.',
+    'dj-edits': 'Find DJ edits of the same title and artist.',
+    remixes: 'Find remixes of the same title and artist.',
+  };
+
   return (
-    <section className="workspace-page duplicates-page" aria-labelledby="duplicates-title">
-      <header className="page-header stacked-header">
+    <section className="workspace-page duplicates-page focused-duplicates" aria-labelledby="duplicates-title">
+      <header className="page-header">
         <div className="page-title-line">
           <h1 id="duplicates-title">Duplicates</h1>
           {!scanning && !scanFailed && <p>{groups.length} {groups.length === 1 ? 'group' : 'groups'} · {scan?.trackCount ?? 0} tracks</p>}
         </div>
         <div className="header-actions">
-          <button className="quiet-button" type="button" onClick={onImport} disabled={busy}>
-            {busy ? 'Importing…' : 'Import XML'}
+          <button className="quiet-button" type="button" onClick={onRescan} disabled={busy || scanning}>
+            <UiIcon name="refresh" size={16} /> {scanning ? 'Scanning…' : 'Scan again'}
           </button>
         </div>
-        <div className="duplicate-controls">
-          <div className="duplicate-mode-switch" role="group" aria-label="Duplicate match type">
-            {DUPLICATE_MATCH_MODES.map((option) => (
-              <button
-                className={option === mode ? 'is-active' : ''}
-                type="button"
-                onClick={() => {
-                  setSelection({ key: null, index: 0, groups: [] });
-                  onModeChange(option);
-                }}
-                disabled={busy}
-                aria-pressed={option === mode}
-                key={option}
-              >
-                {duplicateModeCopy[option].label}
-              </button>
-            ))}
-          </div>
-        </div>
-        {mode === 'smart' && (
-          <div className="duplicate-smart-actions">
-            <button
-              className="quiet-button"
-              type="button"
-              disabled={busy || scanning || suggestedIds.length === 0}
-              onClick={() => setChosenIds(new Set(suggestedIds.slice(0, 10_000)))}
-            >
-              Select suggested duplicates ({Math.min(suggestedIds.length, 10_000).toLocaleString()})
-            </button>
-            {suggestedIds.length > 10_000 && <HelpTooltip label="Selection limit">{`Selects the first 10,000 of ${suggestedIds.length.toLocaleString()} suggestions.`}</HelpTooltip>}
-          </div>
-        )}
       </header>
+      <div className="focused-duplicate-controls">
+        <label htmlFor="duplicate-match-mode">Match by</label>
+        <select id="duplicate-match-mode" value={mode} disabled={busy} onChange={(event) => {
+          const next = DUPLICATE_MATCH_MODES.find((option) => option === event.currentTarget.value);
+          if (next) {
+            setSelection({ key: null, index: 0, groups: [] });
+            onModeChange(next);
+          }
+        }}>
+          {DUPLICATE_MATCH_MODES.map((option) => <option value={option} key={option}>{option === 'versions' ? 'Versions' : duplicateModeCopy[option].label}</option>)}
+        </select>
+        <span>{modeDescription[mode]}</span>
+        {mode === 'smart' && <button className="quiet-button" type="button" disabled={busy || scanning || suggestedIds.length === 0}
+          onClick={() => setChosenIds(new Set(suggestedIds.slice(0, 10_000)))}>
+          Select suggested ({Math.min(suggestedIds.length, 10_000).toLocaleString()})
+        </button>}
+      </div>
 
       <div className="duplicates-body">
         <aside className="duplicate-groups" aria-label="Matched track groups">
-          <div className="panel-heading"><span>Groups</span><span>Tracks</span></div>
-          {!scanning && !scanFailed && (
-            groups.map((group, index) => {
-              const isActive = group.key === selectedGroup?.key;
-              return (
-                <button
-                  className={isActive ? 'duplicate-group is-active' : 'duplicate-group'}
-                  type="button"
-                  onClick={() => setSelection({ key: group.key, index, groups })}
-                  aria-current={isActive ? 'true' : undefined}
-                  key={group.key}
-                >
-                  <strong>{group.title}</strong>
-                  <span>{group.artist}</span>
-                  <small>{group.candidates.length} tracks · {variantSummaryFor(group)}</small>
-                </button>
-              );
-            })
-          )}
+          <div className="panel-heading">To review</div>
+          {!scanning && !scanFailed && groups.map((group, index) => {
+            const isActive = group.key === selectedGroup?.key;
+            return <button className={isActive ? 'duplicate-group is-active' : 'duplicate-group'} type="button"
+              onClick={() => setSelection({ key: group.key, index, groups })} aria-current={isActive ? 'true' : undefined} key={group.key}>
+              <strong>{group.title}</strong><span className="focused-group-count">{group.candidates.length}</span>
+              <span>{group.artist}</span><small>{variantSummaryFor(group)}</small>
+            </button>;
+          })}
         </aside>
-
         <div className="duplicate-detail">
-          {scanning ? (
-            <div className="detail-empty" role="status">
-              <span className="loading-mark" aria-hidden />
-              <h2>Scanning library…</h2>
-            </div>
-          ) : scanFailed ? (
-            <div className="detail-empty" role="alert">
-              <span className="empty-scan" aria-hidden />
-              <div className="help-label">
-                <h2>Scan unavailable</h2>
-                <HelpTooltip label="Scan unavailable">Choose another mode or import the XML again.</HelpTooltip>
+          {scanning ? <div className="detail-empty" role="status"><span className="loading-mark" aria-hidden /><h2>Scanning library…</h2></div>
+            : scanFailed ? <div className="detail-empty" role="alert"><h2>Scan unavailable</h2><p>Try scanning again.</p></div>
+            : selectedGroup === null ? <div className="detail-empty"><h2>{emptyTitle}</h2></div>
+            : <>
+              <div className="focused-comparison-heading">
+                <div><h2>{selectedGroup.title}</h2><p>{selectedGroup.artist}</p></div>
+                <button className="accent-button" type="button" disabled={busy} onClick={() => void onIgnore(selectedGroup.key)}>
+                  <UiIcon name="check" size={16} /> Keep {selectedGroup.candidates.length === 2 ? 'both' : 'all'}
+                </button>
               </div>
-            </div>
-          ) : selectedGroup === null ? (
-            <div className="detail-empty">
-              <span className="empty-scan" aria-hidden />
-              <h2>{emptyTitle}</h2>
-            </div>
-          ) : (
-            <>
-              <div className="duplicate-list-heading">
-                <div>
-                  <span className="accent-tag">{selectedGroup.candidates.length} tracks</span>
-                  <button
-                    className="quiet-button duplicate-ignore"
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void onIgnore(selectedGroup.key)}
-                  >
-                    Ignore group
-                  </button>
-                  <HelpTooltip label="Ignore group">{`Hide this group in ${copy.label} until a new matching track is imported.`}</HelpTooltip>
+              <p className="focused-comparison-notice"><UiIcon name="info" size={16} />{new Set(selectedGroup.candidates.map(({ song }) => song.durationSeconds)).size > 1
+                ? 'These mixes have different lengths. Preview both before removing a version.'
+                : selectedGroup.matchReason || 'Preview these tracks before removing a version.'}</p>
+              <div className="focused-comparison-scroll">
+                <div className="focused-comparison-table" role="table" aria-label="Compare duplicate versions">
+                  <div className="focused-comparison-row focused-comparison-track" role="row" style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
+                    <span role="columnheader"><span className="visually-hidden">Track</span></span>
+                    {selectedGroup.candidates.map((candidate) => {
+                      const song = candidate.song;
+                      const playing = playback.song?.id === song.id && playback.playing;
+                      return <div role="columnheader" className="focused-comparison-version" key={song.id}>
+                        <label><input type="checkbox" checked={chosenIds.has(song.id)} disabled={busy}
+                          aria-label={`Select ${song.title} for removal`} onChange={(event) => {
+                            const next = new Set(chosenIds);
+                            if (event.currentTarget.checked) next.add(song.id); else next.delete(song.id);
+                            setChosenIds(next);
+                          }} /><span>{song.title}</span></label>
+                        <button className={playing ? 'focused-preview is-playing' : 'focused-preview'} type="button"
+                          onClick={() => playback.play(song)} disabled={song.audioUrl === null}>
+                          <UiIcon name={playing ? 'pause' : 'play'} size={16} />{playing ? 'Pause' : 'Preview'}
+                        </button>
+                        {selectedGroup.recommendedKeepSongId === song.id && <small className="focused-keeper">Suggested keeper</small>}
+                      </div>;
+                    })}
+                  </div>
+                  {comparisonRows.map((row) => {
+                    const different = new Set(selectedGroup.candidates.map(({ song }) => row.value(song))).size > 1;
+                    return <div className={different ? 'focused-comparison-row is-different' : 'focused-comparison-row'} role="row" key={row.label}
+                      style={{ gridTemplateColumns: `104px repeat(${selectedGroup.candidates.length}, minmax(220px, 1fr))` }}>
+                      <span role="rowheader">{row.label}</span>
+                      {selectedGroup.candidates.map(({ song }) => <span role="cell" key={song.id}>{row.value(song)}</span>)}
+                    </div>;
+                  })}
                 </div>
-                <h2>{selectedGroup.title}</h2>
-                <span>{selectedGroup.artist}</span>
               </div>
-              <div className="duplicate-song-list">
-                {selectedGroup.candidates.map((candidate) => (
-                  <DuplicateSong
-                    busy={busy}
-                    candidate={candidate}
-                    onRemove={onRemove}
-                    onSelect={(selected) => {
-                      setChosenIds((previous) => {
-                        const next = new Set(previous);
-                        if (selected) {
-                          next.add(candidate.song.id);
-                        } else {
-                          next.delete(candidate.song.id);
-                        }
-                        return next;
-                      });
-                    }}
-                    playback={playback}
-                    recommendation={selectedGroup.recommendedKeepSongId === null
-                      ? null
-                      : selectedGroup.recommendedKeepSongId === candidate.song.id ? 'keep' : 'remove'}
-                    selected={chosenIds.has(candidate.song.id)}
-                    key={`${view.library.revision}-${candidate.song.id}`}
-                  />
-                ))}
+              <div className="focused-duplicate-footer">
+                {chosenSongs.length > 0 ? <DuplicateSelectionActions busy={busy} onClear={() => setChosenIds(new Set())} onRemove={onRemove}
+                  songs={chosenSongs} key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])} />
+                  : <><p>Select a version to remove from the library.<br />Audio files stay on disk.</p>
+                    <button className="quiet-button" type="button" disabled>Remove selected</button></>}
               </div>
-            </>
-          )}
+            </>}
         </div>
       </div>
-      {chosenSongs.length > 0 && (
-        <DuplicateSelectionActions
-          busy={busy}
-          onClear={() => setChosenIds(new Set())}
-          onRemove={onRemove}
-          songs={chosenSongs}
-          key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])}
-        />
-      )}
     </section>
   );
 };
 
 export const PlaylistsPage = ({
-  busy,
-  minimumSongLengthSeconds,
-  creating,
-  initialParentFolderId,
-  initialSongs,
-  folders,
-  onCancel,
-  onEditSmart,
-  onExport,
-  onCreate,
-  onImport,
-  playback,
-  playlists,
-  selectedPlaylistId,
-  view,
-}: CommonPageProps &
-  Readonly<{
-    minimumSongLengthSeconds: number;
-    creating: boolean;
-    initialParentFolderId: string | null;
-    initialSongs: readonly SongRow[];
-    folders: readonly PlaylistFolder[];
-    onCancel: () => void;
-    onEditSmart: (playlist: RekordboxPlaylist) => void;
-    onExport: (playlist: RekordboxPlaylist) => void;
-    onCreate: (name: string, songIds: readonly string[], parentFolderId: string | null) => Promise<boolean>;
-    playlists: readonly RekordboxPlaylist[] | null;
-    selectedPlaylistId: string | null;
-  }>): JSX.Element => {
+  busy, minimumSongLengthSeconds, creating, initialParentFolderId, initialName = '', initialSongs,
+  folders, onCancel, onEditSmart, onExport, onCreate, onImport, onSmart, onUpdateTracks, onMenu,
+  playback, playlists, selectedPlaylistId, view,
+}: CommonPageProps & Readonly<{
+  minimumSongLengthSeconds: number;
+  creating: boolean;
+  initialParentFolderId: string | null;
+  initialName?: string;
+  initialSongs: readonly SongRow[];
+  folders: readonly PlaylistFolder[];
+  onCancel: () => void;
+  onEditSmart: (playlist: RekordboxPlaylist) => void;
+  onExport: (playlist: RekordboxPlaylist) => void;
+  onCreate: (name: string, songIds: readonly string[], parentFolderId: string | null) => Promise<boolean>;
+  onSmart?: (name: string, parentFolderId: string | null, songs: readonly SongRow[]) => void;
+  onUpdateTracks?: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
+  onMenu?: (playlist: RekordboxPlaylist) => void;
+  playlists: readonly RekordboxPlaylist[] | null;
+  selectedPlaylistId: string | null;
+}>): JSX.Element => {
   const [parentFolderId, setParentFolderId] = useState(initialParentFolderId);
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SongPage | null>(null);
-  const [searchRequest, setSearchRequest] = useState<SongSearchRequest>({
-    query: '', offset: 0, limit: SONG_PAGE_SIZE,
-  });
+  const [searchRequest, setSearchRequest] = useState<SongSearchRequest>({ query: '', offset: 0, limit: SONG_PAGE_SIZE });
   const [chosenSongs, setChosenSongs] = useState<ReadonlyMap<string, SongRow>>(() => new Map(initialSongs.map((song) => [song.id, song])));
   const [loadingSongs, setLoadingSongs] = useState(creating);
   const [searchFailed, setSearchFailed] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [columns, setColumns] = useState(defaultColumns);
+  const [filters, setFilters] = useState<SongFilters>(DEFAULT_SONG_FILTERS);
+  const draggedSongId = useRef<string | null>(null);
+  const picking = creating || adding;
 
   useEffect(() => {
-    if (!creating) {
-      return;
-    }
+    if (!picking) return;
     let active = true;
-    void window.djLibrary.searchSongs(searchRequest).then(
-      (songs) => {
-        if (active) {
-          setResults(songs);
-          setLoadingSongs(false);
-          setSearchFailed(false);
-        }
-      },
-      () => {
-        if (active) {
-          setResults(null);
-          setLoadingSongs(false);
-          setSearchFailed(true);
-        }
-      },
-    );
-    return () => {
-      active = false;
-    };
-  }, [creating, searchRequest, minimumSongLengthSeconds]);
+    void window.djLibrary.searchSongs(searchRequest).then((songs) => {
+      if (active) { setResults(songs); setLoadingSongs(false); setSearchFailed(false); }
+    }, () => {
+      if (active) { setResults(null); setLoadingSongs(false); setSearchFailed(true); }
+    });
+    return () => { active = false; };
+  }, [picking, searchRequest, minimumSongLengthSeconds]);
+
+  useEffect(() => {
+    if (!picking) return;
+    const timer = window.setTimeout(() => {
+      setLoadingSongs(true);
+      setSearchRequest({ query, offset: 0, limit: SONG_PAGE_SIZE });
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [picking, query]);
 
   useEffect(() => window.preferences.onLibraryChanged((settings) => {
     if (settings.minimumSongLengthSeconds === minimumSongLengthSeconds) return;
     setChosenSongs((current) => new Map([...current].filter(([, song]) =>
       song.durationSeconds === null || song.durationSeconds >= settings.minimumSongLengthSeconds)));
     setResults(null);
-    setLoadingSongs(creating);
-  }), [creating, minimumSongLengthSeconds]);
+    setLoadingSongs(picking);
+  }), [picking, minimumSongLengthSeconds]);
 
-  if (view === null) {
-    return (
-      <NoLibrary
-        busy={busy}
-        onImport={onImport}
-      />
-    );
-  }
+  if (view === null) return <NoLibrary busy={busy} onImport={onImport} />;
 
-  const selectedPlaylist =
-    playlists?.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
-
-  const search = (event: FormEvent<HTMLFormElement>): void => {
-    event.preventDefault();
-    setLoadingSongs(true);
-    setSearchFailed(false);
-    setSearchRequest({ query, offset: 0, limit: SONG_PAGE_SIZE });
+  const selectedPlaylist = playlists?.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
+  const existingIds = new Set(selectedPlaylist?.tracks.map((song) => song.id) ?? []);
+  const matches = (song: SongRow): boolean => {
+    const text = `${song.title} ${song.artist ?? ''} ${song.album ?? ''}`.toLocaleLowerCase();
+    if (!text.includes(query.toLocaleLowerCase())) return false;
+    if (filters.source !== 'all' && song.source !== filters.source) return false;
+    if (filters.metadata === 'incomplete') return songMetadataGapCount(song) > 0;
+    if (filters.metadata === 'complete') return songMetadataGapCount(song) === 0;
+    if (filters.metadata === 'no-cues') return song.cuePointCount === 0;
+    return true;
   };
+  const visibleTracks = picking
+    ? (showAll ? results?.items ?? [] : results?.items.slice(0, 6) ?? [])
+    : selectedPlaylist?.tracks.filter(matches) ?? [];
+  const selectableTracks = visibleTracks.filter((song) => !adding || !existingIds.has(song.id));
+  const allSelected = selectableTracks.length > 0 && selectableTracks.every((song) => chosenSongs.has(song.id));
+  const selectedCount = selectableTracks.filter((song) => chosenSongs.has(song.id)).length;
+  const chosen = [...chosenSongs.values()];
+  const canReorder = !picking && selectedPlaylist?.kind === 'regular' && onUpdateTracks !== undefined && !busy && query === '' && filters.source === 'all' && filters.metadata === 'all';
 
   const toggleSong = (song: SongRow): void => {
+    if (adding && existingIds.has(song.id)) return;
     setChosenSongs((current) => {
       const next = new Map(current);
-      if (next.has(song.id)) {
-        next.delete(song.id);
-      } else {
-        next.set(song.id, song);
-      }
+      if (next.has(song.id)) next.delete(song.id); else next.set(song.id, song);
       return next;
     });
   };
+  const moveSong = (songId: string, destination: number): void => {
+    if (!selectedPlaylist || !onUpdateTracks || !canReorder) return;
+    const ids = selectedPlaylist.tracks.map((song) => song.id);
+    const index = ids.indexOf(songId);
+    if (index < 0 || destination < 0 || destination >= ids.length || index === destination) return;
+    ids.splice(index, 1);
+    ids.splice(destination, 0, songId);
+    void onUpdateTracks(selectedPlaylist, ids);
+  };
+  const closePicker = (): void => {
+    if (creating) onCancel(); else { setAdding(false); setQuery(''); setChosenSongs(new Map()); }
+  };
+  const save = async (): Promise<void> => {
+    if (creating) { await onCreate(name, [...chosenSongs.keys()], parentFolderId); return; }
+    if (selectedPlaylist && onUpdateTracks && await onUpdateTracks(selectedPlaylist, [...selectedPlaylist.tracks.map((song) => song.id), ...chosenSongs.keys()])) closePicker();
+  };
 
   return (
-    <section className="workspace-page playlists-page" aria-labelledby="playlists-title">
+    <section className={`workspace-page playlists-page focused-playlists${picking ? ' is-creating' : ''}`} aria-labelledby="playlists-title">
       <header className="page-header">
         <div className="page-title-line">
-          <h1 id="playlists-title">{creating ? 'New playlist' : selectedPlaylist?.name ?? 'Playlist'}</h1>
-          {!creating && <p>{selectedPlaylist?.tracks.length ?? 0} tracks</p>}
+          <h1 id="playlists-title">{creating ? 'New playlist' : adding ? `Add tracks to ${selectedPlaylist?.name ?? 'playlist'}` : selectedPlaylist?.name ?? 'Playlist'}</h1>
+          {!picking && selectedPlaylist && <p>{selectedPlaylist.tracks.length} tracks · {totalTime(selectedPlaylist.tracks)}</p>}
         </div>
-        <div className="header-actions">
-          {!creating && selectedPlaylist !== null && <button className="quiet-button" type="button" onClick={() => onExport(selectedPlaylist)}>Export tracklist</button>}
-          {!creating && selectedPlaylist?.smartDefinition && <button className="quiet-button" type="button" disabled={busy} onClick={() => onEditSmart(selectedPlaylist)}>Edit rules</button>}
-        </div>
+        {!picking && selectedPlaylist !== null && <div className="header-actions">
+          <button className="quiet-button focused-export" type="button" onClick={() => onExport(selectedPlaylist)}><UiIcon name="download" size={16} /> Export tracklist</button>
+          {selectedPlaylist.smartDefinition ? <button className="accent-button" type="button" disabled={busy} onClick={() => onEditSmart(selectedPlaylist)}>Edit rules</button>
+            : selectedPlaylist.kind === 'regular' && onUpdateTracks && <button className="accent-button" type="button" disabled={busy} onClick={() => {
+              setChosenSongs(new Map()); setQuery(''); setLoadingSongs(true); setAdding(true);
+            }}><UiIcon name="plus" size={16} /> Add tracks</button>}
+          {onMenu && <button className="focused-playlist-menu" type="button" aria-label="Playlist actions" onClick={() => onMenu(selectedPlaylist)}>⋯</button>}
+        </div>}
       </header>
 
-      <div className="playlists-body">
-        <div className="playlist-detail">
-          {creating ? (
-            <div className="playlist-creator">
-              <label className="playlist-name-field">
-                <span>Playlist name</span>
-                <input value={name} onChange={(event) => setName(event.currentTarget.value)} maxLength={100} disabled={busy} autoFocus />
+      {playlists === null && !picking ? <div className="detail-empty" role="status"><h2>Loading playlists…</h2></div>
+        : selectedPlaylist === null && !picking ? <div className="detail-empty"><h2>{playlists?.length === 0 ? 'No playlists' : 'Choose a playlist'}</h2></div>
+        : <>
+          <div className="focused-playlist-content">
+            {creating && <>
+              <PlaylistIdentity name={name} parentFolderId={parentFolderId} folders={folders}
+                onNameChange={setName} onParentFolderChange={setParentFolderId} disabled={busy} />
+              <div className="focused-playlist-type" role="group" aria-label="Playlist type">
+                <button type="button" aria-pressed="true">Manual</button>
+                {onSmart && <button type="button" aria-pressed="false" disabled={busy} onClick={() => onSmart(name, parentFolderId, chosen)}>Smart</button>}
+                <span>Choose tracks and arrange them yourself.</span>
+              </div>
+            </>}
+            <div className="library-tools">
+              <label className="library-search"><span className="search-icon" aria-hidden /><span className="visually-hidden">{picking ? 'Search tracks' : 'Search this playlist'}</span>
+                <input id="playlist-track-search" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} maxLength={200}
+                  placeholder={picking ? 'Search tracks, artists or albums' : 'Search this playlist'} disabled={busy} />
               </label>
-              <PlaylistDestination folders={folders} value={parentFolderId} onChange={setParentFolderId} disabled={busy} />
-              <PlaylistSuggestions
-                busy={busy}
-                chosenSongs={chosenSongs}
-                onAdd={(song) => setChosenSongs((current) => new Map(current).set(song.id, song))}
-                playback={playback}
-                revision={view.library.revision}
-              />
-              <form className="playlist-search" onSubmit={search}>
-                <label htmlFor="playlist-track-search">Find tracks</label>
-                <div>
-                  <input id="playlist-track-search" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} maxLength={200} />
-                  <button className="quiet-button" type="submit" disabled={loadingSongs}>{loadingSongs ? 'Searching' : 'Search'}</button>
-                </div>
-              </form>
-              {searchFailed && (
-                <p className="playlist-search-error" role="alert">Arsenal could not search this collection.</p>
-              )}
-              <div className="playlist-track-options" aria-label="Tracks to add" aria-busy={loadingSongs}>
-                {loadingSongs ? (
-                  <div className="inline-empty" role="status">Searching collection…</div>
-                ) : results?.total === 0 ? (
-                  <div className="inline-empty"><strong>No tracks found.</strong></div>
-                ) : results?.items.map((song) => (
-                  <label className="playlist-track-option" key={song.id}>
-                    <input type="checkbox" checked={chosenSongs.has(song.id)} onChange={() => toggleSong(song)} disabled={busy} />
-                    <span className="custom-check" aria-hidden>{chosenSongs.has(song.id) ? '✓' : ''}</span>
-                    <TrackArtwork song={song} />
-                    <span className="track-identity"><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>
-                    <span className="numeric">{formatBpm(song.bpm)}</span>
-                    <span className="numeric is-muted">{song.musicalKey ?? '—'}</span>
-                  </label>
-                ))}
-              </div>
-              {results !== null && (
-                <nav className="page-pagination playlist-pagination" aria-label="Track search pages">
-                  <p aria-live="polite">
-                    {results.total === 0 ? '0' : `${results.offset + 1}-${results.offset + results.items.length}`} of {results.total.toLocaleString()} results
-                  </p>
-                  <div>
-                    <button type="button" disabled={loadingSongs || results.offset === 0} onClick={() => {
-                      setLoadingSongs(true);
-                      setSearchRequest({ ...searchRequest, offset: results.offset - results.limit });
-                    }}>Previous</button>
-                    <button type="button" disabled={loadingSongs || !results.hasNext} onClick={() => {
-                      setLoadingSongs(true);
-                      setSearchRequest({ ...searchRequest, offset: results.offset + results.limit });
-                    }}>Next</button>
+              {picking ? <button className="quiet-button" type="button" aria-expanded={suggestionsOpen} onClick={() => setSuggestionsOpen(!suggestionsOpen)}>
+                <UiIcon name="chevron-down" size={16} /> Suggestions</button> : <>
+                <details className="focused-popover"><summary className="quiet-button"><UiIcon name="filters" size={16} /> Filters</summary>
+                  <div className="focused-popover-panel focused-filter-panel">
+                    <label>Source<select value={filters.source} onChange={(event) => {
+                      const source = event.currentTarget.value === 'all' ? 'all' : Object.keys(SONG_SOURCE_LABELS).find((key): key is keyof typeof SONG_SOURCE_LABELS => key === event.currentTarget.value);
+                      if (source !== undefined) setFilters({ ...filters, source });
+                    }}><option value="all">All sources</option>{Object.entries(SONG_SOURCE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                    <label>Metadata<select value={filters.metadata} onChange={(event) => {
+                      const metadata = Object.keys(SONG_METADATA_FILTERS).find((key): key is keyof typeof SONG_METADATA_FILTERS => key === event.currentTarget.value);
+                      if (metadata) setFilters({ ...filters, metadata });
+                    }}>{Object.entries(SONG_METADATA_FILTERS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                    <button className="quiet-button" type="button" onClick={() => setFilters(DEFAULT_SONG_FILTERS)}>Clear filters</button>
                   </div>
-                </nav>
-              )}
-              {chosenSongs.size > 0 && (
-                <section className="playlist-draft" aria-labelledby="playlist-draft-title">
-                  <h3 id="playlist-draft-title">Selected tracks</h3>
-                  <ol>
-                    {[...chosenSongs.values()].map((song) => (
-                      <li key={song.id}>
-                        <span className="track-identity"><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>
-                        <button className="quiet-button" type="button" onClick={() => toggleSong(song)} disabled={busy} aria-label={`Remove ${song.title} from playlist`}>Remove</button>
-                      </li>
-                    ))}
-                  </ol>
-                </section>
-              )}
-              <div className="playlist-create-actions">
-                <span aria-live="polite">{chosenSongs.size} tracks selected</span>
-                <button className="quiet-button" type="button" onClick={onCancel} disabled={busy}>Cancel</button>
-                <button
-                  className="accent-button compact"
-                  type="button"
-                  onClick={() => void onCreate(name, [...chosenSongs.keys()], parentFolderId)}
-                  disabled={busy || name.trim().length === 0}
-                >
-                  {busy ? 'Saving…' : 'Create playlist'}
-                </button>
+                </details>
+                <ColumnControl columns={columns} onChange={setColumns} />
+              </>}
+            </div>
+            {picking && suggestionsOpen && <PlaylistSuggestions busy={busy} chosenSongs={chosenSongs}
+              onAdd={(song) => { if (!adding || !existingIds.has(song.id)) setChosenSongs((current) => new Map(current).set(song.id, song)); }}
+              playback={playback} revision={view.library.revision} />}
+            {!picking && selectedPlaylist?.smartRules && selectedPlaylist.smartRules.conditions.length > 0 && <details className="focused-playlist-rules">
+              <summary>Smart playlist rules</summary><ul>{selectedPlaylist.smartRules.conditions.map((condition, index) => <li key={index}>{condition}</li>)}</ul>
+            </details>}
+            {searchFailed && picking && <p className="playlist-search-error" role="alert">Arsenal could not search this collection.</p>}
+            <div className="track-table focused-playlist-table" role="table" aria-label={picking ? 'Tracks to add' : 'Playlist tracks'} aria-busy={picking && loadingSongs}>
+              <div className="track-table-head" role="row" style={{ gridTemplateColumns: trackGrid(columns) }}>
+                <span role="columnheader">{picking && <input type="checkbox" aria-label="Select all visible tracks" checked={allSelected} disabled={busy || loadingSongs || selectableTracks.length === 0}
+                  ref={(input) => { if (input) input.indeterminate = selectedCount > 0 && !allSelected; }} onChange={() => {
+                    const next = new Map(chosenSongs);
+                    for (const song of selectableTracks) { if (allSelected) next.delete(song.id); else next.set(song.id, song); }
+                    setChosenSongs(next);
+                  }} />}</span>
+                <span role="columnheader">#{picking ? ' ↑' : ''}</span><span role="columnheader">Track</span>
+                {trackColumns.filter((column) => columns.has(column.key)).map((column) => <span role="columnheader" key={column.key}>{column.label}</span>)}
+                <span role="columnheader"><span className="visually-hidden">Actions</span></span>
               </div>
-            </div>
-          ) : playlists === null ? (
-            <div className="detail-empty" role="status">
-              <span className="loading-mark" aria-hidden />
-              <h2>Loading playlists…</h2>
-            </div>
-          ) : selectedPlaylist === null ? (
-            <div className="detail-empty">
-              <span className="empty-scan" aria-hidden />
-              <h2>{playlists.length === 0 ? 'No playlists' : 'Choose a playlist'}</h2>
-            </div>
-          ) : (
-            <>
-              <div className="playlist-detail-heading">
-                <div className="playlist-heading-meta">
-                  <p className="mono-label">{selectedPlaylist.folderPath.length === 0 ? 'Root' : selectedPlaylist.folderPath.join(' / ')}</p>
-                  {selectedPlaylist.kind === 'smart' && <span className="smart-playlist-mark">Smart</span>}
-                </div>
-              </div>
-              {selectedPlaylist.smartRules !== null && (
-                <div className="playlist-rules">
-                  {selectedPlaylist.smartRules.kind === 'unavailable' && <p role="status">Playlist rules unavailable.</p>}
-                  {selectedPlaylist.smartRules.conditions.length > 0 && (
-                    <details>
-                      <summary>Smart playlist rules</summary>
-                      <ul>
-                        {selectedPlaylist.smartRules.conditions.map((condition, index) => (
-                          <li key={index}>{condition}</li>
-                        ))}
-                      </ul>
-                    </details>
-                  )}
-                </div>
-              )}
-              <div className="playlist-track-list">
-                {selectedPlaylist.tracks.map((song, index) => {
-                  const isPlaying = playback.song?.id === song.id && playback.playing;
-                  return (
-                    <div className="playlist-track" key={`${song.id}-${index}`}>
-                      <span className="track-index">{String(index + 1).padStart(2, '0')}</span>
-                      <button
-                        className={isPlaying ? 'track-play is-playing' : 'track-play'}
-                        type="button"
-                        onClick={() => playback.play(song)}
-                        disabled={song.audioUrl === null}
-                        aria-label={isPlaying ? `Pause ${song.title}` : `Play ${song.title}`}
-                      >
-                        <TrackArtwork song={song} />
-                        <span aria-hidden>{isPlaying ? 'Ⅱ' : '▶'}</span>
-                      </button>
-                      <span className="track-identity"><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>
-                      <span className="numeric">{formatBpm(song.bpm)}</span>
-                      <span className="numeric is-muted">{song.musicalKey ?? '—'}</span>
-                      <span className="numeric is-muted">{formatDuration(song.durationSeconds)}</span>
-                    </div>
-                  );
+              <div className="track-table-body" role="rowgroup">
+                {picking && loadingSongs ? <div className="inline-empty" role="status">Searching collection…</div> : visibleTracks.map((song, index) => {
+                  const selected = chosenSongs.has(song.id);
+                  const playing = playback.song?.id === song.id && playback.playing;
+                  const alreadyAdded = adding && existingIds.has(song.id);
+                  const trackIndex = picking ? index : selectedPlaylist?.tracks.indexOf(song) ?? index;
+                  return <div className={`track-row${selected ? ' is-selected' : ''}${playing ? ' is-playing' : ''}`} role="row" key={`${song.id}-${index}`}
+                    style={{ gridTemplateColumns: trackGrid(columns) }}
+                    onDoubleClick={() => playback.play(song)}
+                    onDragOver={(event) => { if (canReorder) event.preventDefault(); }}
+                    onDrop={(event) => { event.preventDefault(); if (draggedSongId.current) moveSong(draggedSongId.current, trackIndex); draggedSongId.current = null; }}>
+                    <span role="cell">{picking ? <input type="checkbox" checked={selected || alreadyAdded} disabled={busy || alreadyAdded}
+                      aria-label={alreadyAdded ? `${song.title} is already in this playlist` : `Select ${song.title}`} onChange={() => toggleSong(song)} />
+                      : canReorder ? <button className="focused-drag-handle" type="button" draggable aria-label={`Drag ${song.title} to reorder`}
+                        onDragStart={(event) => { draggedSongId.current = song.id; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', song.id); }}
+                        onDragEnd={() => { draggedSongId.current = null; }}><UiIcon name="grip" size={14} /></button> : null}</span>
+                    <span role="cell"><TrackNumber song={song} index={trackIndex} offset={picking ? results?.offset ?? 0 : 0} playback={playback} /></span>
+                    <span className="track-identity" role="cell"><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>
+                    <TrackFacts song={song} columns={columns} />
+                    <span role="cell">{!picking && <details className="focused-popover focused-row-menu"><summary className="track-menu-button" aria-label={`Actions for ${song.title}`}>⋯</summary>
+                      <div className="focused-popover-panel">
+                        <button type="button" disabled={song.audioUrl === null} onClick={() => playback.play(song)}>{playing ? 'Pause' : 'Play'}</button>
+                        {canReorder && <><button type="button" disabled={trackIndex === 0} onClick={() => moveSong(song.id, trackIndex - 1)}>Move up</button>
+                          <button type="button" disabled={trackIndex === (selectedPlaylist?.tracks.length ?? 0) - 1} onClick={() => moveSong(song.id, trackIndex + 1)}>Move down</button></>}
+                      </div>
+                    </details>}</span>
+                  </div>;
                 })}
-                {selectedPlaylist.tracks.length === 0 && (
-                  <div className="inline-empty"><strong>This playlist is empty.</strong></div>
-                )}
-                {selectedPlaylist.missingTrackCount > 0 && (
-                  <p className="playlist-missing">{selectedPlaylist.missingTrackCount} missing {selectedPlaylist.missingTrackCount === 1 ? 'track' : 'tracks'}.</p>
-                )}
+                {!(picking && loadingSongs) && visibleTracks.length === 0 && <div className="inline-empty"><strong>{query ? 'No matching tracks' : picking ? 'No tracks found' : 'This playlist is empty'}</strong></div>}
               </div>
-            </>
-          )}
-        </div>
-      </div>
+            </div>
+            {picking && results && <nav className="focused-picker-pagination" aria-label="Track search pages">
+              <p>Showing {visibleTracks.length} of {results.total.toLocaleString()} tracks{results.offset > 0 ? ` · Page ${Math.floor(results.offset / results.limit) + 1}` : ''}</p>
+              <div>
+                {results.offset > 0 && <button className="quiet-button" type="button" disabled={loadingSongs} onClick={() => { setLoadingSongs(true); setSearchRequest({ ...searchRequest, offset: Math.max(0, results.offset - results.limit) }); }}>Previous</button>}
+                {!showAll && (results.items.length > 6 || results.hasNext) ? <button className="quiet-button" type="button" onClick={() => setShowAll(true)}><UiIcon name="chevron-down" size={16} /> Show all tracks</button>
+                  : results.hasNext && <button className="quiet-button" type="button" disabled={loadingSongs} onClick={() => { setLoadingSongs(true); setSearchRequest({ ...searchRequest, offset: results.offset + results.limit }); }}>Next</button>}
+              </div>
+            </nav>}
+            {!picking && selectedPlaylist && selectedPlaylist.missingTrackCount > 0 && <p className="playlist-missing">{selectedPlaylist.missingTrackCount} missing {selectedPlaylist.missingTrackCount === 1 ? 'track' : 'tracks'}.</p>}
+          </div>
+          {picking ? <footer className="focused-playlist-footer">
+            <span aria-live="polite">{chosenSongs.size} tracks selected{chosen.length > 0 ? ` · ${totalTime(chosen)}` : ''}</span>
+            <button className="quiet-button" type="button" onClick={closePicker} disabled={busy}>Cancel</button>
+            <button className="accent-button" type="button" onClick={() => void save()} disabled={busy || (creating ? name.trim().length === 0 : chosenSongs.size === 0)}>
+              {busy ? 'Saving…' : creating ? 'Create playlist' : 'Add tracks'}
+            </button>
+          </footer> : <footer className="focused-playlist-note">{selectedPlaylist?.kind === 'smart' ? 'Tracks update automatically when they match the playlist rules.' : 'Drag tracks to change the play order.'}</footer>}
+        </>}
     </section>
   );
 };

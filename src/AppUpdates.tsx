@@ -1,7 +1,6 @@
 import { useEffect, useState, type JSX } from 'react';
 
 import type { UpdateStatus } from './shared/app-updates';
-import { HelpTooltip } from './HelpTooltip';
 
 const messageFor = (status: UpdateStatus): string => {
   switch (status.kind) {
@@ -9,13 +8,13 @@ const messageFor = (status: UpdateStatus): string => {
     case 'error':
       return status.message;
     case 'idle':
-      return `Arsenal ${status.currentVersion}`;
+      return 'Check for available updates.';
     case 'checking':
       return 'Checking for updates...';
     case 'unpublished':
       return 'No releases have been published yet.';
     case 'current':
-      return `Arsenal ${status.currentVersion} is up to date.`;
+      return "You're up to date.";
     case 'available':
       return `Arsenal ${status.version} is available.`;
     case 'downloading':
@@ -80,16 +79,14 @@ export const AppUpdates = (): JSX.Element => {
             : 'Check for updates';
   const message = requestFailed
     ? status?.kind === 'downloaded' ? 'Could not restart Arsenal. Wait for library actions to finish, then try again.' : 'Could not update Arsenal. Try again.'
-    : status === null ? 'App updates' : messageFor(status);
+    : status === null ? 'Loading update status...' : messageFor(status);
 
   return (
     <div className="app-updates">
-      {status?.kind === 'disabled' && !requestFailed ? (
-        <div className="help-label">
-          <p role="status">Updates unavailable</p>
-          <HelpTooltip label="App updates">{message}</HelpTooltip>
-        </div>
-      ) : <p role="status">{message}</p>}
+      <div className="app-updates-description">
+        <strong>{status === null ? 'Arsenal' : `Arsenal ${status.currentVersion}`}</strong>
+        <p role={requestFailed || status?.kind === 'error' ? 'alert' : 'status'}>{message}</p>
+      </div>
       <button
         type="button"
         onClick={() => void performAction()}
