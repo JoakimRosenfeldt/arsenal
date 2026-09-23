@@ -666,26 +666,28 @@ const DuplicateSelectionActions = ({
   onClear,
   onRemove,
   songs,
+  viewedSongs,
 }: Readonly<{
   busy: boolean;
   navigation: JSX.Element;
   onClear: () => void;
   onRemove: RemoveSongs;
   songs: readonly SongRow[];
+  viewedSongs: readonly SongRow[];
 }>): JSX.Element => {
-  const [confirming, setConfirming] = useState(false);
+  const [removalSongs, setRemovalSongs] = useState<readonly SongRow[] | null>(null);
   const [removeLocalFile, setRemoveLocalFile] = useState(false);
 
   return (
     <footer className="duplicate-selection-actions focused-duplicate-footer" aria-label="Duplicate review actions">
-      {confirming && (
+      {removalSongs !== null && (
         <div className="duplicate-selection-review">
           <div className="help-label">
-            <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'}?</strong>
+            <strong>Remove {removalSongs.length} selected {removalSongs.length === 1 ? 'track' : 'tracks'}?</strong>
             <HelpTooltip label="Removing tracks">Also removes these tracks from playlists.</HelpTooltip>
           </div>
           <ul aria-label="Tracks to remove">
-            {songs.map((song) => (
+            {removalSongs.map((song) => (
               <li key={song.id}>
                 {song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}
                 <SongLabels song={song} />
@@ -696,7 +698,7 @@ const DuplicateSelectionActions = ({
             busy={busy}
             checked={removeLocalFile}
             onChange={setRemoveLocalFile}
-            songs={songs}
+            songs={removalSongs}
           />
         </div>
       )}
@@ -709,9 +711,9 @@ const DuplicateSelectionActions = ({
         {songs.length > 0 && <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>
           Clear selection
         </button>}
-        {confirming ? (
+        {removalSongs !== null ? (
           <>
-            <button className="quiet-button" type="button" onClick={() => setConfirming(false)} disabled={busy}>
+            <button className="quiet-button" type="button" onClick={() => { setRemovalSongs(null); setRemoveLocalFile(false); }} disabled={busy}>
               Cancel
             </button>
             <button
@@ -719,20 +721,27 @@ const DuplicateSelectionActions = ({
               type="button"
               disabled={busy}
               onClick={() => {
-                void onRemove(songs.map((song) => song.id), removeLocalFile).then((removed) => {
+                void onRemove(removalSongs.map((song) => song.id), removeLocalFile).then((removed) => {
                   if (removed) {
                     onClear();
                   }
                 });
               }}
             >
-              {busy ? 'Removing' : `Remove ${songs.length} ${songs.length === 1 ? 'track' : 'tracks'}`}
+              {busy ? 'Removing' : `Remove ${removalSongs.length} ${removalSongs.length === 1 ? 'track' : 'tracks'}`}
             </button>
           </>
         ) : (
-          <button className={songs.length === 0 ? 'quiet-button' : 'danger-button'} type="button" onClick={() => setConfirming(true)} disabled={busy || songs.length === 0 || songs.length > 10_000}>
-            Remove selected
-          </button>
+          <>
+            <button className={viewedSongs.length === 0 ? 'quiet-button' : 'danger-button'} type="button"
+              title="Remove selected tracks from viewed groups"
+              onClick={() => setRemovalSongs([...viewedSongs])} disabled={busy || viewedSongs.length === 0 || viewedSongs.length > 10_000}>
+              Remove viewed ({viewedSongs.length})
+            </button>
+            <button className={songs.length === 0 ? 'quiet-button' : 'danger-button'} type="button" onClick={() => setRemovalSongs([...songs])} disabled={busy || songs.length === 0 || songs.length > 10_000}>
+              Remove selected
+            </button>
+          </>
         )}
       </div>
     </footer>
@@ -814,6 +823,7 @@ export const DuplicatesPage = ({
   });
   const [chosenIds, setChosenIds] = useState<ReadonlySet<string>>(() => new Set());
   const [selectionVersion, setSelectionVersion] = useState<string | null>(null);
+  const [viewedKeys, setViewedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [preferredSource, setPreferredSource] = useState<SongSource | null>(null);
   const [choosingService, setChoosingService] = useState(false);
   const activeGroupRef = useRef<HTMLButtonElement>(null);
@@ -867,16 +877,22 @@ export const DuplicatesPage = ({
   const selectSuggested = (source: SongSource | null): void => {
     setPreferredSource(source);
     setChosenIds(new Set(suggestedIdsFor(source).slice(0, 10_000)));
+    setViewedKeys(new Set());
     setChoosingService(false);
   };
   const currentSelectionVersion = JSON.stringify([view.library.revision, mode]);
   if (selectionVersion !== currentSelectionVersion) {
     setSelectionVersion(currentSelectionVersion);
     setChosenIds(new Set());
+    setViewedKeys(new Set());
     setPreferredSource(null);
     setChoosingService(false);
   }
   const chosenSongs = groups.flatMap((group) => group.candidates)
+    .filter((candidate) => chosenIds.has(candidate.song.id))
+    .map((candidate) => candidate.song);
+  const viewedGroups = groups.filter((group) => viewedKeys.has(group.key));
+  const viewedSongs = viewedGroups.flatMap((group) => group.candidates)
     .filter((candidate) => chosenIds.has(candidate.song.id))
     .map((candidate) => candidate.song);
   const remainingKeys = new Set(groups.map((group) => group.key));
@@ -894,6 +910,9 @@ export const DuplicatesPage = ({
     : recommendedKeepSongIdFor(selectedGroup.candidates, preferredSource);
   if (scan !== null && (selection.groups !== groups || selection.key !== (selectedGroup?.key ?? null) || selection.index !== selectedIndex)) {
     setSelection({ key: selectedGroup?.key ?? null, index: selectedIndex, groups });
+  }
+  if (selectionVersion === currentSelectionVersion && selectedGroup !== null && !viewedKeys.has(selectedGroup.key)) {
+    setViewedKeys(new Set([...viewedKeys, selectedGroup.key]));
   }
   const copy = duplicateModeCopy[mode];
   const emptyTitle = (scan?.ignoredGroupCount ?? 0) > 0
@@ -952,14 +971,16 @@ export const DuplicatesPage = ({
 
       <div className="duplicates-body">
         <aside className="duplicate-groups" aria-label="Matched track groups">
-          <div className="panel-heading">To review</div>
+          <div className="panel-heading">{groups.length > 0 ? `${viewedGroups.length} of ${groups.length} viewed` : 'To review'}</div>
           {!scanning && !scanFailed && groups.map((group, index) => {
             const isActive = group.key === selectedGroup?.key;
             return <button className={isActive ? 'duplicate-group is-active' : 'duplicate-group'} type="button"
               ref={isActive ? activeGroupRef : null}
               onClick={() => setSelection({ key: group.key, index, groups })} aria-current={isActive ? 'true' : undefined} key={group.key}>
               <strong>{group.title}</strong><span className="focused-group-count">{group.candidates.length}</span>
-              <span>{group.artist}</span><small>{variantSummaryFor(group)}</small>
+              <span>{group.artist}</span><small>{variantSummaryFor(group)}
+                {viewedKeys.has(group.key) && <span className="focused-group-viewed"> · Viewed</span>}
+              </small>
             </button>;
           })}
         </aside>
@@ -1016,7 +1037,7 @@ export const DuplicatesPage = ({
                 </div>
               </div>
               <DuplicateSelectionActions busy={busy} onClear={() => setChosenIds(new Set())} onRemove={onRemove}
-                songs={chosenSongs} key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])}
+                songs={chosenSongs} viewedSongs={viewedSongs} key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])}
                 navigation={
                   <div className="focused-comparison-actions">
                     <span>{selectedIndex + 1} of {groups.length}</span>

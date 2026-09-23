@@ -166,6 +166,7 @@
 .focused-duplicates .duplicate-group > span { color: #aaa9b4; font-size: 12px; }
 .focused-duplicates .duplicate-group > .focused-group-count { position: absolute; top: 17px; right: 20px; color: var(--muted); font-size: 12px; }
 .focused-duplicates .duplicate-group small { margin: 0; color: var(--muted); font: 400 11px "Archivo Variable", sans-serif; letter-spacing: 0; text-transform: none; }
+.focused-duplicates .duplicate-group .focused-group-viewed { color: var(--accent); }
 .focused-duplicates .duplicate-detail { display: flex; min-height: 0; flex-direction: column; overflow: hidden; padding: 24px 28px; }
 .focused-duplicate-content { flex: 1; min-height: 0; overflow: auto; padding-bottom: 16px; }
 .focused-comparison-heading { display: flex; flex: none; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
