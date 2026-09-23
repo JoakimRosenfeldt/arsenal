@@ -111,12 +111,13 @@ input:disabled {
   display: grid;
   width: 100vw;
   height: 100vh;
-  grid-template-columns: 224px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) 72px;
   background: var(--canvas);
 }
 
 .cuebox-sidebar {
+  position: relative;
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -125,6 +126,33 @@ input:disabled {
   grid-row: 1;
   border-right: 1px solid #1e1e24;
   background: var(--panel);
+}
+
+.sidebar-resize-handle {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.sidebar-resize-handle::after {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+  content: '';
+}
+
+.sidebar-resize-handle:hover::after,
+.sidebar-resize-handle:active::after,
+.sidebar-resize-handle:focus-visible::after {
+  background: var(--accent);
 }
 
 .sidebar-top {
@@ -192,6 +220,7 @@ input:disabled {
 .sidebar-navigation {
   flex: 1;
   min-height: 0;
+  margin-right: 8px;
   overflow-y: auto;
 }
 
@@ -3099,10 +3128,6 @@ button.sidebar-search {
 
   .sidebar-support span {
     display: none;
-  }
-
-  .cuebox-app {
-    grid-template-columns: 180px minmax(0, 1fr);
   }
 
   .global-player {

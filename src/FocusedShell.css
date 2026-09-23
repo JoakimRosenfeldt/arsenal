@@ -60,14 +60,12 @@ select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2
 .global-player.is-empty { opacity: 1; }
 
 @media (max-width: 1100px) {
-  .cuebox-app { grid-template-columns: 190px minmax(0, 1fr); }
   .global-player-track { flex-basis: 210px; }
   .global-player-controls { gap: 10px; }
   .page-title-line { flex-wrap: wrap; gap: 5px 12px; }
   .player-volume input { width: 65px; }
 }
 @media (max-width: 800px) {
-  .cuebox-app { grid-template-columns: 170px minmax(0, 1fr); }
   .global-player-track { flex-basis: 170px; }
   .global-player { padding: 0 16px; gap: 10px; }
   .player-volume input { width: 48px; }
