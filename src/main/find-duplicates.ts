@@ -6,6 +6,7 @@ import type {
   DuplicateVariantKind,
   SongRow,
 } from '../shared/dj-library';
+import { recommendedKeepSongIdFor } from '../shared/duplicate-selection';
 
 type ParsedTitle = Readonly<{
   baseKey: string;
@@ -261,23 +262,6 @@ const exactGroupsFor = (
         throw new Error('Duplicate group unexpectedly has no candidates');
       }
 
-      let recommended = first.song;
-      if (mode === 'smart') {
-        for (const { song } of candidates) {
-          const localPriority =
-            Number(song.source === 'local') -
-            Number(recommended.source === 'local');
-          if (
-            localPriority > 0 ||
-            (localPriority === 0 &&
-              song.hotCueCount > 0 &&
-              recommended.hotCueCount === 0)
-          ) {
-            recommended = song;
-          }
-        }
-      }
-
       return {
         key: JSON.stringify([mode, identity]),
         title: first.song.title,
@@ -286,7 +270,8 @@ const exactGroupsFor = (
           mode === 'smart'
             ? 'Same full title, artist, duration, mix and remixer metadata'
             : 'Same title and artist metadata',
-        recommendedKeepSongId: mode === 'smart' ? recommended.id : null,
+        recommendedKeepSongId:
+          mode === 'smart' ? recommendedKeepSongIdFor(candidates) : null,
         candidates,
       };
     })

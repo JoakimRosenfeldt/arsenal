@@ -14,6 +14,7 @@ import { TrackWaveform } from './TrackWaveform';
 import { HelpTooltip } from './HelpTooltip';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
 import { PlaylistIdentity } from './SmartPlaylistEditor';
+import { recommendedKeepSongIdFor } from './shared/duplicate-selection';
 import {
   TrackArtwork,
   type PlaybackController,
@@ -33,6 +34,7 @@ import {
   type PlaylistFolder,
   type SongPage,
   type SongRow,
+  type SongSource,
   type SongSearchRequest,
   type SongFilters,
 } from './shared/dj-library';
@@ -734,6 +736,50 @@ const DuplicateSelectionActions = ({
   );
 };
 
+const DuplicateServiceDialog = ({ sources, preferredSource, onSelect, onClose }: Readonly<{
+  sources: readonly SongSource[];
+  preferredSource: SongSource | null;
+  onSelect: (source: SongSource) => void;
+  onClose: () => void;
+}>): JSX.Element => {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [source, setSource] = useState(preferredSource !== null && sources.includes(preferredSource) ? preferredSource : null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+
+  return <dialog className="duplicate-service-dialog" ref={dialogRef} onClose={onClose}
+    aria-labelledby="duplicate-service-title" aria-describedby="duplicate-service-description"
+    onClick={(event) => {
+      if (event.target !== event.currentTarget) return;
+      const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) {
+        event.currentTarget.close();
+      }
+    }}>
+    <form onSubmit={(event) => {
+      event.preventDefault();
+      if (source !== null) onSelect(source);
+    }}>
+      <h2 id="duplicate-service-title">Prioritize a streaming service</h2>
+      <p id="duplicate-service-description">Keep copies from this service and select the others for removal. Local files still take priority.</p>
+      <label htmlFor="duplicate-preferred-service">Service to keep</label>
+      <select id="duplicate-preferred-service" value={source ?? ''} required onChange={(event) => {
+        setSource(sources.find((option) => option === event.currentTarget.value) ?? null);
+      }}>
+        <option value="" disabled>Choose a service</option>
+        {sources.map((option) => <option value={option} key={option}>{SONG_SOURCE_LABELS[option]}</option>)}
+      </select>
+      <div className="duplicate-service-actions">
+        <button className="quiet-button" type="button" onClick={() => dialogRef.current?.close()}>Cancel</button>
+        <button className="accent-button" type="submit" disabled={source === null}>Select suggested</button>
+      </div>
+    </form>
+  </dialog>;
+};
+
 export const DuplicatesPage = ({
   busy,
   mode,
@@ -765,6 +811,13 @@ export const DuplicatesPage = ({
   });
   const [chosenIds, setChosenIds] = useState<ReadonlySet<string>>(() => new Set());
   const [selectionVersion, setSelectionVersion] = useState<string | null>(null);
+  const [preferredSource, setPreferredSource] = useState<SongSource | null>(null);
+  const [choosingService, setChoosingService] = useState(false);
+  const activeGroupRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    activeGroupRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [selection.key]);
 
   if (view === null) {
     return (
@@ -796,17 +849,29 @@ export const DuplicatesPage = ({
     state.libraryVersion === view.library.revision &&
     state.mode === mode;
   const groups = scan?.groups ?? [];
-  const suggestedIds = groups.flatMap((group) =>
-    group.recommendedKeepSongId === null
-      ? []
-      : group.candidates
-        .filter((candidate) => candidate.song.id !== group.recommendedKeepSongId)
-        .map((candidate) => candidate.song.id),
-  );
+  const streamingSources = [...new Set(groups.flatMap((group) => {
+    if (group.recommendedKeepSongId === null) return [];
+    const sources = [...new Set(group.candidates.map(({ song }) => song.source)
+      .filter((source) => source !== 'local' && source !== 'unknown' && source !== 'streaming'))];
+    return sources.length > 1 ? sources : [];
+  }))].sort((left, right) => SONG_SOURCE_LABELS[left].localeCompare(SONG_SOURCE_LABELS[right]));
+  const suggestedIdsFor = (source: SongSource | null): string[] => groups.flatMap((group) => {
+    if (group.recommendedKeepSongId === null) return [];
+    const keeperId = recommendedKeepSongIdFor(group.candidates, source);
+    return group.candidates.filter(({ song }) => song.id !== keeperId).map(({ song }) => song.id);
+  });
+  const suggestedIds = suggestedIdsFor(preferredSource);
+  const selectSuggested = (source: SongSource | null): void => {
+    setPreferredSource(source);
+    setChosenIds(new Set(suggestedIdsFor(source).slice(0, 10_000)));
+    setChoosingService(false);
+  };
   const currentSelectionVersion = JSON.stringify([view.library.revision, mode]);
   if (selectionVersion !== currentSelectionVersion) {
     setSelectionVersion(currentSelectionVersion);
     setChosenIds(new Set());
+    setPreferredSource(null);
+    setChoosingService(false);
   }
   const chosenSongs = groups.flatMap((group) => group.candidates)
     .filter((candidate) => chosenIds.has(candidate.song.id))
@@ -820,6 +885,10 @@ export const DuplicatesPage = ({
     groups.find((group) => group.key === selection.key) ??
     groups.find((group) => group.key === nearbyGroup?.key) ?? groups[0] ?? null;
   const selectedIndex = selectedGroup === null ? 0 : groups.indexOf(selectedGroup);
+  const nextGroup = groups[selectedIndex + 1];
+  const selectedKeeperId = selectedGroup?.recommendedKeepSongId == null
+    ? null
+    : recommendedKeepSongIdFor(selectedGroup.candidates, preferredSource);
   if (scan !== null && (selection.groups !== groups || selection.key !== (selectedGroup?.key ?? null) || selection.index !== selectedIndex)) {
     setSelection({ key: selectedGroup?.key ?? null, index: selectedIndex, groups });
   }
@@ -870,7 +939,10 @@ export const DuplicatesPage = ({
         </select>
         <span>{modeDescription[mode]}</span>
         {mode === 'smart' && <button className="quiet-button" type="button" disabled={busy || scanning || suggestedIds.length === 0}
-          onClick={() => setChosenIds(new Set(suggestedIds.slice(0, 10_000)))}>
+          onClick={() => {
+            if (streamingSources.length > 1) setChoosingService(true);
+            else selectSuggested(preferredSource);
+          }}>
           Select suggested ({Math.min(suggestedIds.length, 10_000).toLocaleString()})
         </button>}
       </div>
@@ -881,6 +953,7 @@ export const DuplicatesPage = ({
           {!scanning && !scanFailed && groups.map((group, index) => {
             const isActive = group.key === selectedGroup?.key;
             return <button className={isActive ? 'duplicate-group is-active' : 'duplicate-group'} type="button"
+              ref={isActive ? activeGroupRef : null}
               onClick={() => setSelection({ key: group.key, index, groups })} aria-current={isActive ? 'true' : undefined} key={group.key}>
               <strong>{group.title}</strong><span className="focused-group-count">{group.candidates.length}</span>
               <span>{group.artist}</span><small>{variantSummaryFor(group)}</small>
@@ -894,9 +967,18 @@ export const DuplicatesPage = ({
             : <>
               <div className="focused-comparison-heading">
                 <div><h2>{selectedGroup.title}</h2><p>{selectedGroup.artist}</p></div>
-                <button className="accent-button" type="button" disabled={busy} onClick={() => void onIgnore(selectedGroup.key)}>
-                  <UiIcon name="check" size={16} /> Keep {selectedGroup.candidates.length === 2 ? 'both' : 'all'}
-                </button>
+                <div className="focused-comparison-actions">
+                  <span>{selectedIndex + 1} of {groups.length}</span>
+                  <button className="quiet-button" type="button" disabled={busy || nextGroup === undefined}
+                    onClick={() => {
+                      if (nextGroup) setSelection({ key: nextGroup.key, index: selectedIndex + 1, groups });
+                    }}>
+                    Next song <UiIcon name="chevron-right" size={16} />
+                  </button>
+                  <button className="accent-button" type="button" disabled={busy} onClick={() => void onIgnore(selectedGroup.key)}>
+                    <UiIcon name="check" size={16} /> Keep {selectedGroup.candidates.length === 2 ? 'both' : 'all'}
+                  </button>
+                </div>
               </div>
               <p className="focused-comparison-notice"><UiIcon name="info" size={16} />{new Set(selectedGroup.candidates.map(({ song }) => song.durationSeconds)).size > 1
                 ? 'These mixes have different lengths. Preview both before removing a version.'
@@ -919,7 +1001,7 @@ export const DuplicatesPage = ({
                           onClick={() => playback.play(song)} disabled={song.audioUrl === null}>
                           <UiIcon name={playing ? 'pause' : 'play'} size={16} />{playing ? 'Pause' : 'Preview'}
                         </button>
-                        {selectedGroup.recommendedKeepSongId === song.id && <small className="focused-keeper">Suggested keeper</small>}
+                        {selectedKeeperId === song.id && <small className="focused-keeper">Suggested keeper</small>}
                       </div>;
                     })}
                   </div>
@@ -942,6 +1024,10 @@ export const DuplicatesPage = ({
             </>}
         </div>
       </div>
+      {choosingService && !scanning && !scanFailed && streamingSources.length > 1 && (
+        <DuplicateServiceDialog sources={streamingSources} preferredSource={preferredSource}
+          onSelect={selectSuggested} onClose={() => setChoosingService(false)} />
+      )}
     </section>
   );
 };
