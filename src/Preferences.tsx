@@ -97,7 +97,7 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
   const keyStatus = removeKey
     ? 'The saved key will be removed when you save.'
     : settings === null
-      ? 'Loading connection...'
+      ? 'Loading connection…'
       : settings.hasApiKey
         ? settings.keyStorage === 'session' ? 'Connected for this session.' : 'Connected'
         : 'Not connected';
@@ -167,7 +167,7 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
       <footer className="preferences-page-actions">
         {message !== null && <p role="status">{message}</p>}
         <button className="preferences-secondary-button" type="button" disabled={saving} onClick={onCancel ?? (() => window.close())}>Cancel</button>
-        <button className="preferences-save-button" type="submit" disabled={!ready || saving || !valid}>{saving ? 'Saving...' : 'Save changes'}</button>
+        <button className="preferences-save-button" type="submit" disabled={!ready || saving || !valid}>{saving ? 'Saving…' : 'Save changes'}</button>
       </footer>
     </form>
   );

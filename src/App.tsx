@@ -241,10 +241,12 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent): void => {
       if ((event.metaKey || event.ctrlKey) && ['f', 'k'].includes(event.key.toLocaleLowerCase())) {
+        const searchId = activePage === 'library' ? 'library-search' : activePage === 'playlists' ? 'playlist-track-search' : null;
+        if (searchId === null) return;
+        const search = document.getElementById(searchId);
+        if (search === null) return;
         event.preventDefault();
-        if (activePage === 'library') {
-          document.getElementById('library-search')?.focus();
-        }
+        search.focus();
       }
     };
     window.addEventListener('keydown', focusSearch);

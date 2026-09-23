@@ -14,6 +14,7 @@ import { TrackWaveform } from './TrackWaveform';
 import { HelpTooltip } from './HelpTooltip';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
 import { PlaylistIdentity } from './SmartPlaylistEditor';
+import { formatTrackBpm, formatTrackDuration } from './track-format';
 import { recommendedKeepSongIdFor } from './shared/duplicate-selection';
 import {
   TrackArtwork,
@@ -51,25 +52,6 @@ type CommonPageProps = Readonly<{
   view: LibraryView | null;
 }>;
 
-const formatDuration = (durationSeconds: number | null): string => {
-  if (durationSeconds === null || !Number.isFinite(durationSeconds)) {
-    return 'Not set';
-  }
-
-  const rounded = Math.max(0, Math.floor(durationSeconds));
-  const hours = Math.floor(rounded / 3600);
-  const minutes = Math.floor((rounded % 3600) / 60);
-  const seconds = String(rounded % 60).padStart(2, '0');
-  return hours > 0
-    ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}`
-    : `${minutes}:${seconds}`;
-};
-
-const formatBpm = (bpm: number | null): string =>
-  bpm === null
-    ? '—'
-    : bpm.toLocaleString(undefined, { maximumFractionDigits: 2 });
-
 const formatRowNumber = (offset: number, index: number): string =>
   String(offset + index + 1).padStart(2, '0');
 
@@ -105,9 +87,9 @@ const defaultColumns = (): ReadonlySet<TrackColumn> => new Set(trackColumns.map(
 const trackGrid = (columns: ReadonlySet<TrackColumn>): string =>
   `20px 28px minmax(180px, 1fr) ${trackColumns.filter((column) => columns.has(column.key)).map((column) => `${column.width}px`).join(' ')} 24px`;
 const TrackFacts = ({ song, columns }: Readonly<{ song: SongRow; columns: ReadonlySet<TrackColumn> }>): JSX.Element => <>
-  {columns.has('bpm') && <span className="numeric" role="cell">{formatBpm(song.bpm)}</span>}
+  {columns.has('bpm') && <span className="numeric" role="cell">{formatTrackBpm(song.bpm)}</span>}
   {columns.has('key') && <span className="numeric" role="cell">{song.musicalKey ?? '—'}</span>}
-  {columns.has('time') && <span className="numeric" role="cell">{formatDuration(song.durationSeconds)}</span>}
+  {columns.has('time') && <span className="numeric" role="cell">{formatTrackDuration(song.durationSeconds)}</span>}
   {columns.has('genre') && <span className="truncate" role="cell">{song.genre ?? '—'}</span>}
   {columns.has('album') && <span className="truncate" role="cell">{song.album ?? '—'}</span>}
 </>;
@@ -218,7 +200,8 @@ export const LibraryPage = ({
   const selectedOnPage = visibleSongs.filter((song) => selection.has(song.id)).length;
   const allOnPageSelected = visibleSongs.length > 0 && selectedOnPage === visibleSongs.length;
   const selectionLocked = busy || searching || action !== null;
-  const filtered = query.length > 0 || filters.source !== 'all' || filters.metadata !== 'all';
+  const filtersActive = filters.source !== 'all' || filters.metadata !== 'all';
+  const filtered = query.length > 0 || filtersActive;
   const selectedSong =
     visibleSongs.find((song) => song.id === selectedId) ??
     visibleSongs[0] ??
@@ -328,10 +311,10 @@ export const LibraryPage = ({
           <input id="library-search" type="search" placeholder="Search tracks, artists or albums"
             value={query} maxLength={200} disabled={busy || action !== null}
             onChange={(event) => onSearch(event.currentTarget.value, filters)} />
-          <kbd aria-hidden>⌘F</kbd>
+          <kbd aria-hidden>{navigator.userAgent.includes('Macintosh') ? '⌘F' : 'Ctrl+F'}</kbd>
         </label>
         <details className="focused-popover">
-          <summary className={filtered ? 'quiet-button is-filtered' : 'quiet-button'}><UiIcon name="filters" size={16} /> Filters</summary>
+          <summary className={filtersActive ? 'quiet-button is-filtered' : 'quiet-button'}><UiIcon name="filters" size={16} /> Filters</summary>
           <div className="focused-popover-panel focused-filter-panel">
             <label>Source
               <select aria-label="Filter by source" value={filters.source} disabled={busy || action !== null}
@@ -355,8 +338,8 @@ export const LibraryPage = ({
                 {Object.entries(SONG_METADATA_FILTERS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
               </select>
             </label>
-            {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
-              onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Clear filters</button>}
+            {filtersActive && <button className="quiet-button" type="button" disabled={busy || action !== null}
+              onClick={() => onSearch(query, DEFAULT_SONG_FILTERS)}>Clear filters</button>}
           </div>
         </details>
         <ColumnControl columns={columns} onChange={setColumns} />
@@ -465,8 +448,8 @@ export const LibraryPage = ({
             </div>
             <div className="inspector-profile">
               <div className="section-label-row">
-                <span>{formatDuration(displayedPosition)}</span>
-                <span>{formatDuration(displayedDuration)}</span>
+                <span>{formatTrackDuration(displayedPosition)}</span>
+                <span>{formatTrackDuration(displayedDuration)}</span>
               </div>
               <TrackWaveform
                 disabled={!selectedIsActive || selectedSong.audioUrl === null}
@@ -489,9 +472,9 @@ export const LibraryPage = ({
               </div>
             </div>
             <dl className="inspector-stats">
-              <div><dt>BPM</dt><dd>{formatBpm(selectedSong.bpm)}</dd></div>
+              <div><dt>BPM</dt><dd>{formatTrackBpm(selectedSong.bpm)}</dd></div>
               <div><dt>Key</dt><dd>{selectedSong.musicalKey ?? '—'}</dd></div>
-              <div><dt>Time</dt><dd>{formatDuration(selectedSong.durationSeconds)}</dd></div>
+              <div><dt>Time</dt><dd>{formatTrackDuration(selectedSong.durationSeconds)}</dd></div>
               <div><dt>Genre</dt><dd>{selectedSong.genre ?? 'Not set'}</dd></div>
               <div><dt>Album</dt><dd>{selectedSong.album ?? 'Not set'}</dd></div>
               <div><dt>Gaps</dt><dd>{songMetadataGapCount(selectedSong)}</dd></div>
@@ -936,8 +919,8 @@ export const DuplicatesPage = ({
     : copy.emptyTitle;
 
   const comparisonRows: readonly Readonly<{ label: string; value: (song: SongRow) => string }>[] = [
-    { label: 'Length', value: (song) => formatDuration(song.durationSeconds) },
-    { label: 'BPM', value: (song) => formatBpm(song.bpm) },
+    { label: 'Length', value: (song) => formatTrackDuration(song.durationSeconds) },
+    { label: 'BPM', value: (song) => formatTrackBpm(song.bpm) },
     { label: 'Key', value: (song) => song.musicalKey ?? '—' },
     { label: 'Format', value: (song) => [song.fileKind, song.bitRateKbps === null ? null : `${song.bitRateKbps} kbps`].filter(Boolean).join(' · ') || '—' },
     { label: 'Cue points', value: (song) => String(song.cuePointCount) },
@@ -1115,6 +1098,7 @@ export const PlaylistsPage = ({
   const [filters, setFilters] = useState<SongFilters>(DEFAULT_SONG_FILTERS);
   const draggedSongId = useRef<string | null>(null);
   const picking = creating || adding;
+  const filtersActive = filters.source !== 'all' || filters.metadata !== 'all';
 
   useEffect(() => {
     if (!picking) return;
@@ -1228,7 +1212,7 @@ export const PlaylistsPage = ({
               </label>
               {picking ? <button className="quiet-button" type="button" aria-expanded={suggestionsOpen} onClick={() => setSuggestionsOpen(!suggestionsOpen)}>
                 <UiIcon name="chevron-down" size={16} /> Suggestions</button> : <>
-                <details className="focused-popover"><summary className="quiet-button"><UiIcon name="filters" size={16} /> Filters</summary>
+                <details className="focused-popover"><summary className={filtersActive ? 'quiet-button is-filtered' : 'quiet-button'}><UiIcon name="filters" size={16} /> Filters</summary>
                   <div className="focused-popover-panel focused-filter-panel">
                     <label>Source<select value={filters.source} onChange={(event) => {
                       const source = event.currentTarget.value === 'all' ? 'all' : Object.keys(SONG_SOURCE_LABELS).find((key): key is keyof typeof SONG_SOURCE_LABELS => key === event.currentTarget.value);
@@ -1238,7 +1222,7 @@ export const PlaylistsPage = ({
                       const metadata = Object.keys(SONG_METADATA_FILTERS).find((key): key is keyof typeof SONG_METADATA_FILTERS => key === event.currentTarget.value);
                       if (metadata) setFilters({ ...filters, metadata });
                     }}>{Object.entries(SONG_METADATA_FILTERS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-                    <button className="quiet-button" type="button" onClick={() => setFilters(DEFAULT_SONG_FILTERS)}>Clear filters</button>
+                    {filtersActive && <button className="quiet-button" type="button" onClick={() => setFilters(DEFAULT_SONG_FILTERS)}>Clear filters</button>}
                   </div>
                 </details>
                 <ColumnControl columns={columns} onChange={setColumns} />
@@ -1291,7 +1275,7 @@ export const PlaylistsPage = ({
                     </details>}</span>
                   </div>;
                 })}
-                {!(picking && loadingSongs) && visibleTracks.length === 0 && <div className="inline-empty"><strong>{query ? 'No matching tracks' : picking ? 'No tracks found' : 'This playlist is empty'}</strong></div>}
+                {!(picking && loadingSongs) && visibleTracks.length === 0 && <div className="inline-empty"><strong>{query || (!picking && filtersActive) ? 'No matching tracks' : picking ? 'No tracks found' : 'This playlist is empty'}</strong></div>}
               </div>
             </div>
             {picking && results && <nav className="focused-picker-pagination" aria-label="Track search pages">

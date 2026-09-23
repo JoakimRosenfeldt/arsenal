@@ -22,10 +22,12 @@
 .sidebar-preferences { width: 100%; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: 4px; color: var(--text-soft); background: transparent; font-size: 14px; text-align: left; cursor: pointer; }
 .sidebar-preferences svg { color: var(--muted); }
 .sidebar-preferences:hover, .sidebar-preferences.is-active { background: var(--selected); color: var(--text); }
-.page-header { height: 88px; flex: none; align-items: center; padding: 0 28px; gap: 14px; }
-.page-title-line { align-items: center; gap: 14px; }
-.page-title-line h1 { font-size: 26px; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; }
+.playlist-action-window .playlist-detail { padding: 20px; }
+.page-header { height: 88px; flex: none; flex-direction: row; align-items: center; padding: 0 28px; gap: 14px; }
+.page-title-line { flex: 1; align-items: center; gap: 14px; }
+.page-title-line h1 { min-width: 0; overflow: hidden; font-size: 26px; font-weight: 600; line-height: 1.15; letter-spacing: -0.02em; text-overflow: ellipsis; white-space: nowrap; }
 .page-title-line p { font: 400 13px "Archivo Variable", sans-serif; color: #a5a5af; letter-spacing: 0; text-transform: none; }
+.header-actions > button { white-space: nowrap; }
 .quiet-button, .accent-button, .page-pagination button { height: 36px; border-radius: 5px; gap: 7px; font-size: 13px; font-weight: 400; }
 .accent-button { font-weight: 600; }
 .accent-button:disabled, .quiet-button:disabled { opacity: .45; }

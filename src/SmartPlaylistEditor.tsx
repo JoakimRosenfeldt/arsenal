@@ -2,6 +2,7 @@ import { useEffect, useState, type JSX } from 'react';
 
 import type { PlaybackController } from './CueboxPlayer';
 import { HelpTooltip } from './HelpTooltip';
+import { formatTrackBpm, formatTrackDuration } from './track-format';
 import './SmartPlaylistEditor.css';
 import { SONG_SOURCE_LABELS, type PlaylistFolder, type SmartPlaylistPreview } from './shared/dj-library';
 import {
@@ -170,7 +171,7 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
   return (
     <section className="workspace-page focused-playlist-editor" aria-labelledby="smart-title">
       <header className="page-header">
-        <div className="page-title-line"><h1 id="smart-title">{editing ? 'Edit smart playlist' : 'New playlist'}</h1></div>
+        <div className="page-title-line"><h1 id="smart-title">{editing ? 'Edit smart playlist' : 'New smart playlist'}</h1></div>
       </header>
       <form className="focused-smart-form smart-playlist-editor" onSubmit={(event) => {
         event.preventDefault();
@@ -216,10 +217,10 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
                     <td><button type="button" className="smart-preview-play track-identity" disabled={song.audioUrl === null} onClick={() => playback.play(song)} aria-label={`${playback.song?.id === song.id && playback.playing ? 'Pause' : 'Play'} ${song.title}`}>
                       <strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small>
                     </button></td>
-                    <td className="numeric">{song.bpm?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? ''}</td>
-                    <td className="numeric">{song.musicalKey ?? ''}</td>
-                    <td className="numeric">{song.durationSeconds === null ? '' : `${Math.floor(song.durationSeconds / 60)}:${String(Math.floor(song.durationSeconds % 60)).padStart(2, '0')}`}</td>
-                    <td title={song.genre ?? undefined}>{song.genre ?? ''}</td><td title={song.album ?? undefined}>{song.album ?? ''}</td>
+                    <td className="numeric">{formatTrackBpm(song.bpm)}</td>
+                    <td className="numeric">{song.musicalKey ?? '—'}</td>
+                    <td className="numeric">{formatTrackDuration(song.durationSeconds)}</td>
+                    <td title={song.genre ?? undefined}>{song.genre ?? '—'}</td><td title={song.album ?? undefined}>{song.album ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>

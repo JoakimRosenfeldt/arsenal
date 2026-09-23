@@ -122,6 +122,10 @@
   background: #0b0b0d;
 }
 
+.preferences-key-input:focus-within {
+  border-color: var(--accent);
+}
+
 .preferences-key-input input {
   width: 100%;
   min-width: 0;
@@ -130,6 +134,10 @@
   border-radius: 4px;
   background: transparent;
   font-size: 13px;
+}
+
+.preferences-key-input input:focus-visible {
+  outline: none;
 }
 
 .preferences-key-input input::placeholder {

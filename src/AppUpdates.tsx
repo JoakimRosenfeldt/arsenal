@@ -10,7 +10,7 @@ const messageFor = (status: UpdateStatus): string => {
     case 'idle':
       return 'Check for available updates.';
     case 'checking':
-      return 'Checking for updates...';
+      return 'Checking for updates…';
     case 'unpublished':
       return 'No releases have been published yet.';
     case 'current':
@@ -67,7 +67,7 @@ export const AppUpdates = (): JSX.Element => {
   };
 
   const label = status?.kind === 'checking'
-    ? 'Checking...'
+    ? 'Checking…'
     : status?.kind === 'downloading'
       ? `Downloading ${status.percent}%`
       : status?.kind === 'available'
@@ -79,7 +79,7 @@ export const AppUpdates = (): JSX.Element => {
             : 'Check for updates';
   const message = requestFailed
     ? status?.kind === 'downloaded' ? 'Could not restart Arsenal. Wait for library actions to finish, then try again.' : 'Could not update Arsenal. Try again.'
-    : status === null ? 'Loading update status...' : messageFor(status);
+    : status === null ? 'Loading update status…' : messageFor(status);
 
   return (
     <div className="app-updates">
