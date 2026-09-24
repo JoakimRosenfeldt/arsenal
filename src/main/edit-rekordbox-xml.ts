@@ -33,6 +33,10 @@ export type RekordboxXmlEdit =
         trackId: string | null;
         rawLocation: string | null;
       }>[];
+      removedTracks: readonly Readonly<{
+        trackId: string | null;
+        rawLocation: string | null;
+      }>[];
     }>
   | Readonly<{
       kind: 'update-smart-playlist';
@@ -536,11 +540,19 @@ const setPlaylistTracks = (
   if (keySet.size !== keys.length || keys.length > 10_000) {
     throw new RekordboxWriteError('target-not-found', 'Invalid playlist track selection');
   }
+  const removedKeys = new Set<string>();
+  for (const track of edit.removedTracks) {
+    const key = node.keyType === '0' ? track.trackId : track.rawLocation;
+    if (key === null || collectionKeys.get(key) !== 1) {
+      throw new RekordboxWriteError('target-not-found', 'A track does not have one exact collection reference');
+    }
+    removedKeys.add(key);
+  }
 
   const referencesByKey = new Map<string, ElementSpan[]>();
   const editableReferences = node.trackReferences.filter((reference) => {
     const key = reference.attributes.Key?.trim() ?? '';
-    if (!keySet.has(key)) return false;
+    if (!keySet.has(key) && !removedKeys.has(key)) return false;
     const references = referencesByKey.get(key) ?? [];
     references.push(reference);
     referencesByKey.set(key, references);
@@ -569,7 +581,7 @@ const setPlaylistTracks = (
   // Only replace visible references, keeping hidden tracks and unknown XML children in place.
   for (const [position, reference] of editableReferences.entries()) {
     const markup = orderedMarkup[position];
-    if (markup !== undefined) replacements.push({ start: reference.start, end: reference.end, text: markup });
+    replacements.push({ start: reference.start, end: reference.end, text: markup ?? '' });
   }
   const extraMarkup = orderedMarkup.slice(editableReferences.length);
   if (extraMarkup.length > 0) {

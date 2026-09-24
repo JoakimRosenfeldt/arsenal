@@ -9,7 +9,6 @@ import {
 import type { DuplicateViewState } from './App';
 import './FocusedPages.css';
 import { UiIcon } from './UiIcon';
-import { TracklistExportDialog } from './TracklistExportDialog';
 import { TrackWaveform } from './TrackWaveform';
 import { HelpTooltip } from './HelpTooltip';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
@@ -163,6 +162,7 @@ export const LibraryPage = ({
   busy,
   filters,
   onCreate,
+  onAdd,
   onImport,
   onPage,
   onRemove,
@@ -170,25 +170,26 @@ export const LibraryPage = ({
   playback,
   query,
   searching,
+  playlists,
   view,
 }: CommonPageProps &
   Readonly<{
     onPage: (offset: number) => void;
     onCreate: (songIds: readonly string[]) => void;
+    onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
     onRemove: RemoveSongs;
     onSearch: (query: string, filters: SongFilters) => void;
     filters: SongFilters;
     query: string;
     searching: boolean;
+    playlists: readonly RekordboxPlaylist[];
   }>): JSX.Element => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [selection, setSelection] = useState<ReadonlyMap<string, SongRow>>(new Map());
-  const [action, setAction] = useState<'remove' | null>(null);
+  const [action, setAction] = useState<SelectionAction>(null);
   const [menuError, setMenuError] = useState(false);
   const [columns, setColumns] = useState(defaultColumns);
-  const [exporting, setExporting] = useState(false);
-  const [exportPlaylist, setExportPlaylist] = useState<RekordboxPlaylist | null>(null);
   const anchorId = useRef<string | null>(null);
   const inspectorRef = useRef<HTMLElement>(null);
 
@@ -275,32 +276,11 @@ export const LibraryPage = ({
       if (choice === 'play') playback.play(song);
       if (choice === 'inspect') setInspectorOpen(true);
       if (choice === 'create-playlist') onCreate(songs.map((selected) => selected.id));
+      if (choice === 'add-playlist') setAction('add');
       if (choice === 'remove-songs') setAction('remove');
       if (choice === 'clear-selection') setSelection(new Map());
     } catch {
       setMenuError(true);
-    }
-  };
-
-  const exportTracks = async (): Promise<void> => {
-    setExporting(true);
-    setMenuError(false);
-    try {
-      const tracks: SongRow[] = [];
-      let offset = 0;
-      let hasNext = true;
-      while (hasNext) {
-        const page = await window.djLibrary.listSongs({ offset, limit: SONG_PAGE_SIZE });
-        tracks.push(...page.items);
-        hasNext = page.hasNext && page.items.length > 0;
-        offset += page.limit;
-      }
-      setExportPlaylist({ id: 'library', name: 'All tracks', order: 0, kind: 'regular', folderPath: [],
-        parentFolderId: null, tracks, missingTrackCount: 0, smartRules: null, smartDefinition: null });
-    } catch {
-      setMenuError(true);
-    } finally {
-      setExporting(false);
     }
   };
 
@@ -312,9 +292,6 @@ export const LibraryPage = ({
           <p>{view.library.songCount.toLocaleString()} tracks{view.page.total === view.library.songCount && !view.page.hasNext && view.page.offset === 0 ? ` · ${totalTime(visibleSongs)}` : ''}</p>
         </div>
         <div className="header-actions">
-          <button className="quiet-button focused-export" type="button" onClick={() => void exportTracks()} disabled={busy || exporting}>
-            <UiIcon name="download" size={16} /> {exporting ? 'Preparing…' : 'Export tracklist'}
-          </button>
           <button className="accent-button" type="button" onClick={onImport} disabled={busy}>
             <UiIcon name="upload" size={16} /> {busy ? 'Importing…' : 'Import XML'}
           </button>
@@ -503,7 +480,7 @@ export const LibraryPage = ({
       {selectedSongs.length > 0 && (
         <LibrarySelectionActions busy={busy || searching} action={action} onAction={setAction}
           onClear={() => { setSelection(new Map()); setAction(null); }}
-          onCreate={onCreate} onRemove={onRemove} songs={selectedSongs}
+          onAdd={onAdd} onCreate={onCreate} onRemove={onRemove} playlists={playlists} songs={selectedSongs}
           hiddenCount={selection.size - selectedOnPage} />
       )}
 
@@ -521,7 +498,6 @@ export const LibraryPage = ({
           </button>
         </div>}
       </nav>
-      {exportPlaylist !== null && <TracklistExportDialog playlist={exportPlaylist} onClose={() => setExportPlaylist(null)} />}
     </section>
   );
 };
@@ -601,29 +577,44 @@ const FileRemovalOption = ({
   );
 };
 
+type SelectionAction = 'add' | 'remove' | 'remove-playlist' | null;
+
 const LibrarySelectionActions = ({
-  action, busy, hiddenCount, onAction, onClear, onCreate, onRemove, songs,
+  action, busy, hiddenCount, onAction, onAdd, onClear, onCreate, onRemove, onRemoveFromPlaylist, playlist, playlists, songs,
 }: Readonly<{
-  action: 'remove' | null;
+  action: SelectionAction;
   busy: boolean;
   hiddenCount: number;
-  onAction: (action: 'remove' | null) => void;
+  onAction: (action: SelectionAction) => void;
+  onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
   onClear: () => void;
   onCreate: (songIds: readonly string[]) => void;
   onRemove: RemoveSongs;
+  onRemoveFromPlaylist?: (songIds: readonly string[]) => Promise<boolean>;
+  playlist?: RekordboxPlaylist;
+  playlists: readonly RekordboxPlaylist[];
   songs: readonly SongRow[];
 }>): JSX.Element => {
   const [removeLocalFile, setRemoveLocalFile] = useState(false);
+  const [targetId, setTargetId] = useState('');
   const actionRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (action !== null) actionRef.current?.focus();
   }, [action]);
   const tooMany = songs.length > 10_000;
+  const regularPlaylists = playlists.filter((item) => item.kind === 'regular');
+  const target = regularPlaylists.find((item) => item.id === targetId);
+  const existingIds = new Set(target?.tracks.map((song) => song.id) ?? []);
+  const availableIds = target === undefined ? [] : songs.filter((song) => !existingIds.has(song.id)).map((song) => song.id);
+  const targetTooLarge = existingIds.size + availableIds.length > 10_000;
 
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    if (busy || tooMany || action !== 'remove') return;
-    if (await onRemove(songs.map((song) => song.id), removeLocalFile)) onClear();
+    if (busy || tooMany) return;
+    const ids = songs.map((song) => song.id);
+    if (action === 'remove' && await onRemove(ids, removeLocalFile)) onClear();
+    if (action === 'remove-playlist' && onRemoveFromPlaylist && await onRemoveFromPlaylist(ids)) onClear();
+    if (action === 'add' && target && availableIds.length > 0 && !targetTooLarge && await onAdd(target, availableIds)) onClear();
   };
 
   return (
@@ -640,6 +631,20 @@ const LibrarySelectionActions = ({
           <FileRemovalOption busy={busy} checked={removeLocalFile} onChange={setRemoveLocalFile} songs={songs} />
         </div>
       )}
+      {action === 'remove-playlist' && <div className="duplicate-selection-review" ref={actionRef} tabIndex={-1}>
+        <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'} from {playlist?.name}?</strong>
+        <p>The tracks will stay in your library.</p>
+      </div>}
+      {action === 'add' && <div className="selection-playlist-picker" ref={actionRef} tabIndex={-1}>
+        <label>Add selected tracks to
+          <select value={targetId} onChange={(event) => setTargetId(event.currentTarget.value)} disabled={busy}>
+            <option value="">Choose a playlist</option>
+            {regularPlaylists.map((item) => <option key={item.id} value={item.id}>{[...item.folderPath, item.name].join(' / ')}</option>)}
+          </select>
+        </label>
+        {target && availableIds.length === 0 && <p>All selected tracks are already in this playlist.</p>}
+        {targetTooLarge && <p>A playlist can hold at most 10,000 tracks.</p>}
+      </div>}
       <div className="duplicate-selection-toolbar">
         <span role="status">{songs.length.toLocaleString()} selected
           {hiddenCount > 0 && <><small> · {hiddenCount.toLocaleString()} hidden</small> <HelpTooltip label="Hidden selections">Selected tracks on other pages or outside filters.</HelpTooltip></>}
@@ -647,12 +652,14 @@ const LibrarySelectionActions = ({
         </span>
         {action === null ? <>
           <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>Clear selection</button>
-          <button className="quiet-button" type="button" onClick={() => onCreate(songs.map((song) => song.id))} disabled={busy || tooMany}>Create playlist</button>
-          <button className="danger-button" type="button" onClick={() => onAction('remove')} disabled={busy || tooMany}>Remove selected</button>
+          <button className="quiet-button" type="button" onClick={() => onAction('add')} disabled={busy || tooMany || regularPlaylists.length === 0}>Add to playlist</button>
+          <button className="quiet-button" type="button" onClick={() => onCreate(songs.map((song) => song.id))} disabled={busy || tooMany}>Create new playlist</button>
+          {onRemoveFromPlaylist && <button className="quiet-button" type="button" onClick={() => onAction('remove-playlist')} disabled={busy || tooMany}>Remove from playlist</button>}
+          <button className="danger-button" type="button" onClick={() => onAction('remove')} disabled={busy || tooMany}>Remove from library</button>
         </> : <>
           <button className="quiet-button" type="button" onClick={() => { setRemoveLocalFile(false); onAction(null); }} disabled={busy}>Cancel</button>
-          <button className="danger-button" type="submit" disabled={busy || tooMany}>
-            {busy ? 'Saving…' : `Remove ${songs.length} ${songs.length === 1 ? 'track' : 'tracks'}`}
+          <button className={action === 'add' ? 'accent-button' : 'danger-button'} type="submit" disabled={busy || tooMany || (action === 'add' && (availableIds.length === 0 || targetTooLarge))}>
+            {busy ? 'Saving…' : action === 'add' ? 'Add tracks' : action === 'remove-playlist' ? 'Remove from playlist' : 'Remove from library'}
           </button>
         </>}
       </div>
@@ -1081,7 +1088,7 @@ export const DuplicatesPage = ({
 
 export const PlaylistsPage = ({
   busy, minimumSongLengthSeconds, creating, initialParentFolderId, initialName = '', initialSongs,
-  folders, onCancel, onEditSmart, onExport, onCreate, onImport, onSmart, onUpdateTracks, onMenu,
+  folders, onAdd, onCancel, onCreateFromSelection, onEditSmart, onExport, onCreate, onImport, onRemove, onSmart, onUpdateTracks, onMenu,
   playback, playlists, selectedPlaylistId, view,
 }: CommonPageProps & Readonly<{
   minimumSongLengthSeconds: number;
@@ -1090,10 +1097,13 @@ export const PlaylistsPage = ({
   initialName?: string;
   initialSongs: readonly SongRow[];
   folders: readonly PlaylistFolder[];
+  onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
   onCancel: () => void;
+  onCreateFromSelection: (songIds: readonly string[]) => void;
   onEditSmart: (playlist: RekordboxPlaylist) => void;
   onExport: (playlist: RekordboxPlaylist) => void;
   onCreate: (name: string, songIds: readonly string[], parentFolderId: string | null) => Promise<boolean>;
+  onRemove: RemoveSongs;
   onSmart?: (name: string, parentFolderId: string | null, songs: readonly SongRow[]) => void;
   onUpdateTracks?: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
   onMenu?: (playlist: RekordboxPlaylist) => void;
@@ -1106,6 +1116,8 @@ export const PlaylistsPage = ({
   const [results, setResults] = useState<SongPage | null>(null);
   const [searchRequest, setSearchRequest] = useState<SongSearchRequest>({ query: '', offset: 0, limit: SONG_PAGE_SIZE });
   const [chosenSongs, setChosenSongs] = useState<ReadonlyMap<string, SongRow>>(() => new Map(initialSongs.map((song) => [song.id, song])));
+  const [selectedSongs, setSelectedSongs] = useState<ReadonlyMap<string, SongRow>>(new Map());
+  const [selectionAction, setSelectionAction] = useState<SelectionAction>(null);
   const [loadingSongs, setLoadingSongs] = useState(creating);
   const [searchFailed, setSearchFailed] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -1165,6 +1177,9 @@ export const PlaylistsPage = ({
   const selectedCount = selectableTracks.filter((song) => chosenSongs.has(song.id)).length;
   const chosen = [...chosenSongs.values()];
   const canReorder = !picking && selectedPlaylist?.kind === 'regular' && onUpdateTracks !== undefined && !busy && query === '' && filters.source === 'all' && filters.metadata === 'all';
+  const selectedOnPage = !picking ? visibleTracks.filter((song) => selectedSongs.has(song.id)).length : 0;
+  const allOnPageSelected = !picking && visibleTracks.length > 0 && selectedOnPage === visibleTracks.length;
+  const selectionLocked = busy || selectionAction !== null;
 
   const toggleSong = (song: SongRow): void => {
     if (adding && existingIds.has(song.id)) return;
@@ -1253,7 +1268,12 @@ export const PlaylistsPage = ({
             {searchFailed && picking && <p className="playlist-search-error" role="alert">Arsenal could not search this collection.</p>}
             <div className="track-table focused-playlist-table" role="table" aria-label={picking ? 'Tracks to add' : 'Playlist tracks'} aria-busy={picking && loadingSongs}>
               <div className="track-table-head" role="row" style={{ gridTemplateColumns: trackGrid(columns) }}>
-                <span role="columnheader">{picking && <input type="checkbox" aria-label="Select all visible tracks" checked={allSelected} disabled={busy || loadingSongs || selectableTracks.length === 0}
+                <span role="columnheader">{!picking ? <input type="checkbox" aria-label="Select all visible playlist tracks" checked={allOnPageSelected} disabled={selectionLocked || visibleTracks.length === 0}
+                  ref={(input) => { if (input) input.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }} onChange={() => {
+                    const next = new Map(selectedSongs);
+                    for (const song of visibleTracks) { if (allOnPageSelected) next.delete(song.id); else next.set(song.id, song); }
+                    setSelectedSongs(next);
+                  }} /> : <input type="checkbox" aria-label="Select all visible tracks" checked={allSelected} disabled={busy || loadingSongs || selectableTracks.length === 0}
                   ref={(input) => { if (input) input.indeterminate = selectedCount > 0 && !allSelected; }} onChange={() => {
                     const next = new Map(chosenSongs);
                     for (const song of selectableTracks) { if (allSelected) next.delete(song.id); else next.set(song.id, song); }
@@ -1265,20 +1285,26 @@ export const PlaylistsPage = ({
               </div>
               <div className="track-table-body" role="rowgroup">
                 {picking && loadingSongs ? <div className="inline-empty" role="status">Searching collection…</div> : visibleTracks.map((song, index) => {
-                  const selected = chosenSongs.has(song.id);
+                  const selected = picking ? chosenSongs.has(song.id) : selectedSongs.has(song.id);
                   const playing = playback.song?.id === song.id && playback.playing;
                   const alreadyAdded = adding && existingIds.has(song.id);
                   const trackIndex = picking ? index : selectedPlaylist?.tracks.indexOf(song) ?? index;
                   return <div className={`track-row${selected ? ' is-selected' : ''}${playing ? ' is-playing' : ''}`} role="row" key={`${song.id}-${index}`}
                     style={{ gridTemplateColumns: trackGrid(columns) }}
                     onDoubleClick={() => playback.play(song)}
+                    draggable={canReorder}
+                    onDragStart={(event) => { draggedSongId.current = song.id; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', song.id); }}
+                    onDragEnd={() => { draggedSongId.current = null; }}
                     onDragOver={(event) => { if (canReorder) event.preventDefault(); }}
                     onDrop={(event) => { event.preventDefault(); if (draggedSongId.current) moveSong(draggedSongId.current, trackIndex); draggedSongId.current = null; }}>
                     <span role="cell">{picking ? <input type="checkbox" checked={selected || alreadyAdded} disabled={busy || alreadyAdded}
                       aria-label={alreadyAdded ? `${song.title} is already in this playlist` : `Select ${song.title}`} onChange={() => toggleSong(song)} />
-                      : canReorder ? <button className="focused-drag-handle" type="button" draggable aria-label={`Drag ${song.title} to reorder`}
-                        onDragStart={(event) => { draggedSongId.current = song.id; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', song.id); }}
-                        onDragEnd={() => { draggedSongId.current = null; }}><UiIcon name="grip" size={14} /></button> : null}</span>
+                      : <input type="checkbox" checked={selectedSongs.has(song.id)} disabled={selectionLocked}
+                        aria-label={`Select ${song.title} in playlist`} onChange={() => {
+                          const next = new Map(selectedSongs);
+                          if (next.has(song.id)) next.delete(song.id); else next.set(song.id, song);
+                          setSelectedSongs(next);
+                        }} />}</span>
                     <span role="cell"><TrackNumber song={song} index={trackIndex} offset={picking ? results?.offset ?? 0 : 0} playback={playback} /></span>
                     <span className="track-identity" role="cell"><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>
                     <TrackFacts song={song} columns={columns} />
@@ -1304,6 +1330,14 @@ export const PlaylistsPage = ({
             </nav>}
             {!picking && selectedPlaylist && selectedPlaylist.missingTrackCount > 0 && <p className="playlist-missing">{selectedPlaylist.missingTrackCount} missing {selectedPlaylist.missingTrackCount === 1 ? 'track' : 'tracks'}.</p>}
           </div>
+          {!picking && selectedPlaylist && selectedSongs.size > 0 && <LibrarySelectionActions
+            action={selectionAction} busy={busy} hiddenCount={selectedSongs.size - selectedOnPage}
+            onAction={setSelectionAction} onAdd={onAdd}
+            onClear={() => { setSelectedSongs(new Map()); setSelectionAction(null); }}
+            onCreate={onCreateFromSelection} onRemove={onRemove}
+            {...(selectedPlaylist.kind === 'regular' && onUpdateTracks ? { onRemoveFromPlaylist: (songIds: readonly string[]) =>
+              onUpdateTracks(selectedPlaylist, selectedPlaylist.tracks.filter((song) => !songIds.includes(song.id)).map((song) => song.id)) } : {})}
+            playlist={selectedPlaylist} playlists={playlists ?? []} songs={[...selectedSongs.values()]} />}
           {picking ? <footer className="focused-playlist-footer">
             <span aria-live="polite">{chosenSongs.size} tracks selected{chosen.length > 0 ? ` · ${totalTime(chosen)}` : ''}</span>
             <button className="quiet-button" type="button" onClick={closePicker} disabled={busy}>Cancel</button>

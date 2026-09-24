@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 
 import { UiIcon } from './UiIcon';
+import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
 import type { PlaylistFolder, RekordboxPlaylist } from './shared/dj-library';
 
 const MIN_SIDEBAR_WIDTH = 170;
@@ -263,6 +264,13 @@ export const CueboxSidebar = ({
           onClick={() => onNavigate('preferences')}>
           <UiIcon name="settings" size={16} /><span>Preferences</span>
         </button>
+      </div>
+      <div className="sidebar-support-footer">
+        <a className="sidebar-support" href="https://www.buymeacoffee.com/joakim_mellonn"
+          target="_blank" rel="noopener noreferrer" aria-label="Buy me a coffee" title="Buy me a coffee, opens in your browser">
+          <img src={coffeeIconUrl} alt="" width={18} height={26} />
+          <span>Buy me a coffee</span>
+        </a>
       </div>
       <div
         className="sidebar-resize-handle"

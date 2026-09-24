@@ -524,6 +524,12 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       songIds,
     }));
 
+  const addToPlaylist = (playlist: RekordboxPlaylist, songIds: readonly string[]): Promise<boolean> =>
+    applyMutation((revision) => ({
+      kind: 'set-playlist-tracks', revision, playlistId: playlist.id,
+      songIds: [...new Set([...playlist.tracks.map((song) => song.id), ...songIds])],
+    }));
+
   const changePage = async (offset: number, nextQuery = query, nextFilters: SongFilters = filters): Promise<void> => {
     if (busy || view === null || offset < 0) {
       return;
@@ -617,10 +623,12 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               void changePage(0, nextQuery, nextFilters);
             }}
             onCreate={(songIds) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds })}
+            onAdd={addToPlaylist}
             onRemove={removeSongs}
             onImport={() => void importLibrary()}
             onPage={(offset) => void changePage(offset)}
             playback={playback}
+            playlists={playlists ?? []}
             query={query}
             searching={searching}
             view={view}
@@ -684,6 +692,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               request: { kind: 'smart-playlist', revision: libraryVersion, parentFolderId },
             })}
             onUpdateTracks={(playlist, songIds) => applyMutation((revision) => ({ kind: 'set-playlist-tracks', revision, playlistId: playlist.id, songIds }))}
+            onAdd={addToPlaylist}
+            onCreateFromSelection={(songIds) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds })}
+            onRemove={removeSongs}
             onMenu={(playlist) => void openPlaylistMenu(playlist.parentFolderId, playlist.id)}
             folders={folders}
             onCancel={cancelPlaylistEditor}
