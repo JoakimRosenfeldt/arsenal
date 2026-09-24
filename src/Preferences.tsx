@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 
 import { AppUpdates } from './AppUpdates';
+import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
 import type { LibrarySettings, OpenRouterSettings } from './shared/preferences';
 import './Preferences.css';
 
@@ -161,6 +162,14 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
         <section className="preferences-section" aria-labelledby="update-preferences-title">
           <h2 id="update-preferences-title">App updates</h2>
           <AppUpdates />
+        </section>
+        <section className="preferences-section" aria-labelledby="support-preferences-title">
+          <h2 id="support-preferences-title">Support Arsenal</h2>
+          <a className="preferences-support" href="https://www.buymeacoffee.com/joakim_mellonn"
+            target="_blank" rel="noopener noreferrer" aria-label="Buy me a coffee" title="Buy me a coffee, opens in your browser">
+            <img src={coffeeIconUrl} alt="" width={18} height={26} />
+            <span>Buy me a coffee</span>
+          </a>
         </section>
         {errors.length > 0 && <div className="preferences-errors" role="alert">{errors.map((error) => <p key={error}>{error}</p>)}</div>}
       </div>

@@ -633,8 +633,7 @@ export class RekordboxLibrary {
     if (
       playlist?.kind !== 'regular' ||
       songIds.size !== change.songIds.length ||
-      songIds.size > 10_000 ||
-      playlist.tracks.some((song) => this.includesSong(song) && !songIds.has(song.id))
+      songIds.size > 10_000
     ) {
       return { kind: 'rejected', reason: 'invalid-playlist' };
     }
@@ -647,7 +646,12 @@ export class RekordboxLibrary {
       }
       tracks.push({ trackId: track.rekordboxId, rawLocation: track.rawLocation });
     }
-    const reload = await this.writeAndReload(catalog, { kind: 'set-playlist-tracks', playlistId: playlist.id, tracks });
+    const removedTracks = playlist.tracks.filter((song) => this.includesSong(song) && !songIds.has(song.id))
+      .flatMap((song) => {
+        const track = bySongId.get(song.id);
+        return track ? [{ trackId: track.rekordboxId, rawLocation: track.rawLocation }] : [];
+      });
+    const reload = await this.writeAndReload(catalog, { kind: 'set-playlist-tracks', playlistId: playlist.id, tracks, removedTracks });
     if (reload.kind === 'rejected') return reload;
     this.cancelSuggestions();
     this.catalog = reload.catalog;

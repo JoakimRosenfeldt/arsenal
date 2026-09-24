@@ -76,7 +76,7 @@ export type TrackMenuRequest = Readonly<{
   playing: boolean;
 }>;
 
-export type TrackMenuAction = 'play' | 'inspect' | 'create-playlist' | 'remove-songs' | 'clear-selection';
+export type TrackMenuAction = 'play' | 'inspect' | 'add-playlist' | 'create-playlist' | 'remove-songs' | 'clear-selection';
 
 export type SongRow = Readonly<{
   id: string;

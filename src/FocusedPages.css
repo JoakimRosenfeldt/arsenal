@@ -68,6 +68,12 @@
 .focused-popover-panel > button { min-height: 28px; color: var(--text-soft); background: transparent; text-align: left; cursor: pointer; }
 .focused-popover-panel > button:disabled { opacity: .35; cursor: default; }
 .focused-popover-panel > button:hover:not(:disabled) { color: var(--accent); }
+.selection-menu-group { display: flex; flex: none; align-items: center; gap: 8px; margin-left: auto; color: var(--text-soft); font-size: 12px; white-space: nowrap; }
+.selection-menu-group small { color: var(--muted); }
+.selection-action-menu > summary.quiet-button { width: 40px; padding: 0; font-size: 22px; line-height: 1; }
+.selection-action-menu .focused-popover-panel { width: 210px; gap: 2px; padding: 8px; }
+.selection-action-menu .focused-popover-panel > button { padding: 6px 8px; border-radius: 3px; }
+.selection-action-menu .focused-popover-panel > button:hover:not(:disabled) { background: var(--selected); }
 
 .focused-library .track-table,
 .focused-playlists .track-table { overflow: auto; }
