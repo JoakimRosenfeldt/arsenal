@@ -337,6 +337,10 @@ export const LibraryPage = ({
           </div>
         </details>
         <ColumnControl columns={columns} onChange={setColumns} />
+        {selectedSongs.length > 0 && action === null && <SelectionActionMenu
+          busy={busy || searching} hiddenCount={selection.size - selectedOnPage}
+          onAction={setAction} onClear={() => setSelection(new Map())} onCreate={onCreate}
+          playlists={playlists} songs={selectedSongs} />}
       </div>
 
       {menuError && <p className="library-menu-error" role="alert">Could not complete this action. Please try again.</p>}
@@ -477,10 +481,10 @@ export const LibraryPage = ({
         )}
       </div>
 
-      {selectedSongs.length > 0 && (
+      {selectedSongs.length > 0 && action !== null && (
         <LibrarySelectionActions busy={busy || searching} action={action} onAction={setAction}
           onClear={() => { setSelection(new Map()); setAction(null); }}
-          onAdd={onAdd} onCreate={onCreate} onRemove={onRemove} playlists={playlists} songs={selectedSongs}
+          onAdd={onAdd} onRemove={onRemove} playlists={playlists} songs={selectedSongs}
           hiddenCount={selection.size - selectedOnPage} />
       )}
 
@@ -579,8 +583,44 @@ const FileRemovalOption = ({
 
 type SelectionAction = 'add' | 'remove' | 'remove-playlist' | null;
 
+const SelectionActionMenu = ({
+  busy, hiddenCount, onAction, onClear, onCreate, canRemoveFromPlaylist = false, playlists, songs,
+}: Readonly<{
+  busy: boolean;
+  hiddenCount: number;
+  onAction: (action: SelectionAction) => void;
+  onClear: () => void;
+  onCreate: (songIds: readonly string[]) => void;
+  canRemoveFromPlaylist?: boolean;
+  playlists: readonly RekordboxPlaylist[];
+  songs: readonly SongRow[];
+}>): JSX.Element => {
+  const menuRef = useRef<HTMLDetailsElement>(null);
+  const tooMany = songs.length > 10_000;
+  const close = (): void => { menuRef.current?.removeAttribute('open'); };
+  const choose = (action: SelectionAction): void => { close(); onAction(action); };
+  return <div className="selection-menu-group">
+    <span role="status">{songs.length.toLocaleString()} selected
+      {hiddenCount > 0 && <><small> · {hiddenCount.toLocaleString()} hidden</small> <HelpTooltip label="Hidden selections">Selected tracks on other pages or outside filters.</HelpTooltip></>}
+      {tooMany && <> <HelpTooltip label="Selection limit">Select at most 10,000 tracks per action.</HelpTooltip></>}
+    </span>
+    <details className="focused-popover selection-action-menu" ref={menuRef}>
+      <summary className="quiet-button" aria-label="Selected track actions" title="Selected track actions"
+        onClick={(event) => { if (busy) event.preventDefault(); }}>⋯</summary>
+      <div className="focused-popover-panel">
+        <button type="button" disabled={busy || tooMany || !playlists.some((item) => item.kind === 'regular')}
+          onClick={() => choose('add')}>Add to playlist</button>
+        <button type="button" disabled={busy || tooMany} onClick={() => { close(); onCreate(songs.map((song) => song.id)); }}>Create new playlist</button>
+        {canRemoveFromPlaylist && <button type="button" disabled={busy || tooMany} onClick={() => choose('remove-playlist')}>Remove from playlist</button>}
+        <button type="button" disabled={busy || tooMany} onClick={() => choose('remove')}>Remove from library</button>
+        <button type="button" disabled={busy} onClick={() => { close(); onClear(); }}>Clear selection</button>
+      </div>
+    </details>
+  </div>;
+};
+
 const LibrarySelectionActions = ({
-  action, busy, hiddenCount, onAction, onAdd, onClear, onCreate, onRemove, onRemoveFromPlaylist, playlist, playlists, songs,
+  action, busy, hiddenCount, onAction, onAdd, onClear, onRemove, onRemoveFromPlaylist, playlist, playlists, songs,
 }: Readonly<{
   action: SelectionAction;
   busy: boolean;
@@ -588,7 +628,6 @@ const LibrarySelectionActions = ({
   onAction: (action: SelectionAction) => void;
   onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
   onClear: () => void;
-  onCreate: (songIds: readonly string[]) => void;
   onRemove: RemoveSongs;
   onRemoveFromPlaylist?: (songIds: readonly string[]) => Promise<boolean>;
   playlist?: RekordboxPlaylist;
@@ -650,18 +689,10 @@ const LibrarySelectionActions = ({
           {hiddenCount > 0 && <><small> · {hiddenCount.toLocaleString()} hidden</small> <HelpTooltip label="Hidden selections">Selected tracks on other pages or outside filters.</HelpTooltip></>}
           {tooMany && <> <HelpTooltip label="Selection limit">Select at most 10,000 tracks per action.</HelpTooltip></>}
         </span>
-        {action === null ? <>
-          <button className="quiet-button" type="button" onClick={onClear} disabled={busy}>Clear selection</button>
-          <button className="quiet-button" type="button" onClick={() => onAction('add')} disabled={busy || tooMany || regularPlaylists.length === 0}>Add to playlist</button>
-          <button className="quiet-button" type="button" onClick={() => onCreate(songs.map((song) => song.id))} disabled={busy || tooMany}>Create new playlist</button>
-          {onRemoveFromPlaylist && <button className="quiet-button" type="button" onClick={() => onAction('remove-playlist')} disabled={busy || tooMany}>Remove from playlist</button>}
-          <button className="danger-button" type="button" onClick={() => onAction('remove')} disabled={busy || tooMany}>Remove from library</button>
-        </> : <>
-          <button className="quiet-button" type="button" onClick={() => { setRemoveLocalFile(false); onAction(null); }} disabled={busy}>Cancel</button>
-          <button className={action === 'add' ? 'accent-button' : 'danger-button'} type="submit" disabled={busy || tooMany || (action === 'add' && (availableIds.length === 0 || targetTooLarge))}>
-            {busy ? 'Saving…' : action === 'add' ? 'Add tracks' : action === 'remove-playlist' ? 'Remove from playlist' : 'Remove from library'}
-          </button>
-        </>}
+        <button className="quiet-button" type="button" onClick={() => { setRemoveLocalFile(false); onAction(null); }} disabled={busy}>Cancel</button>
+        <button className={action === 'add' ? 'accent-button' : 'danger-button'} type="submit" disabled={busy || tooMany || (action === 'add' && (availableIds.length === 0 || targetTooLarge))}>
+          {busy ? 'Saving…' : action === 'add' ? 'Add tracks' : action === 'remove-playlist' ? 'Remove from playlist' : 'Remove from library'}
+        </button>
       </div>
     </form>
   );
@@ -1258,6 +1289,11 @@ export const PlaylistsPage = ({
                 </details>
                 <ColumnControl columns={columns} onChange={setColumns} />
               </>}
+              {!picking && selectedSongs.size > 0 && selectionAction === null && <SelectionActionMenu
+                busy={busy} hiddenCount={selectedSongs.size - selectedOnPage}
+                onAction={setSelectionAction} onClear={() => setSelectedSongs(new Map())}
+                onCreate={onCreateFromSelection} canRemoveFromPlaylist={selectedPlaylist?.kind === 'regular'}
+                playlists={playlists ?? []} songs={[...selectedSongs.values()]} />}
             </div>
             {picking && suggestionsOpen && <PlaylistSuggestions busy={busy} chosenSongs={chosenSongs}
               onAdd={(song) => { if (!adding || !existingIds.has(song.id)) setChosenSongs((current) => new Map(current).set(song.id, song)); }}
@@ -1330,11 +1366,11 @@ export const PlaylistsPage = ({
             </nav>}
             {!picking && selectedPlaylist && selectedPlaylist.missingTrackCount > 0 && <p className="playlist-missing">{selectedPlaylist.missingTrackCount} missing {selectedPlaylist.missingTrackCount === 1 ? 'track' : 'tracks'}.</p>}
           </div>
-          {!picking && selectedPlaylist && selectedSongs.size > 0 && <LibrarySelectionActions
+          {!picking && selectedPlaylist && selectedSongs.size > 0 && selectionAction !== null && <LibrarySelectionActions
             action={selectionAction} busy={busy} hiddenCount={selectedSongs.size - selectedOnPage}
             onAction={setSelectionAction} onAdd={onAdd}
             onClear={() => { setSelectedSongs(new Map()); setSelectionAction(null); }}
-            onCreate={onCreateFromSelection} onRemove={onRemove}
+            onRemove={onRemove}
             {...(selectedPlaylist.kind === 'regular' && onUpdateTracks ? { onRemoveFromPlaylist: (songIds: readonly string[]) =>
               onUpdateTracks(selectedPlaylist, selectedPlaylist.tracks.filter((song) => !songIds.includes(song.id)).map((song) => song.id)) } : {})}
             playlist={selectedPlaylist} playlists={playlists ?? []} songs={[...selectedSongs.values()]} />}
