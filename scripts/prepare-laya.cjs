@@ -1,10 +1,11 @@
 const { spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
-const { createReadStream, existsSync, readFileSync, statSync } = require('node:fs');
+const { createReadStream, existsSync, readFileSync, statSync, writeFileSync } = require('node:fs');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 const modelDir = path.join(root, 'assets', 'laya');
+const embeddedManifest = path.join(root, 'src', 'shared', 'laya-model-manifest.json');
 const revision = '55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851';
 const sourceRevision = '4066d5d5fbf08b66c6757ddeedbd797bd7655bc0';
 
@@ -33,6 +34,10 @@ async function verify() {
     for await (const chunk of createReadStream(file)) hash.update(chunk);
     if (hash.digest('hex') !== expected.sha256) throw new Error(`Laya checksum failed: ${name}`);
   }
+  const serialized = JSON.stringify(manifest, null, 2) + '\n';
+  if (!existsSync(embeddedManifest) || readFileSync(embeddedManifest, 'utf8') !== serialized) {
+    writeFileSync(embeddedManifest, serialized);
+  }
 }
 
 function run(command, args) {
@@ -43,6 +48,10 @@ function run(command, args) {
 
 async function main() {
   if (process.argv.includes('--check')) {
+    if (process.argv.includes('--optional') && !existsSync(modelDir)) {
+      console.log('Laya is not bundled. Download it from the app before generating recommendations.');
+      return;
+    }
     await verify();
     return;
   }

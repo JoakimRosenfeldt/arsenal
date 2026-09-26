@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react';
 
 import { AppUpdates } from './AppUpdates';
+import { LayaModel, useLayaModel } from './LayaModel';
 import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
 import type { LibrarySettings } from './shared/preferences';
 import './Preferences.css';
@@ -22,6 +23,7 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
   onCancel?: () => void;
   onSaved?: () => void;
 }> = {}): JSX.Element => {
+  const laya = useLayaModel();
   const [library, setLibrary] = useState<LibrarySettings | null>(null);
   const [seconds, setSeconds] = useState('');
   const [saving, setSaving] = useState(false);
@@ -91,7 +93,7 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
         <section className="preferences-section" aria-labelledby="ai-preferences-title">
           <h2 id="ai-preferences-title">Music recommendations</h2>
           <div className="preferences-explanation">
-            <p>The bundled Laya model suggests tracks offline on this computer. No API key is needed.</p>
+            <LayaModel model={laya} />
           </div>
         </section>
         <section className="preferences-section" aria-labelledby="update-preferences-title">

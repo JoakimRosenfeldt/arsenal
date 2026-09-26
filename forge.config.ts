@@ -4,6 +4,7 @@ import { WebpackPlugin } from '@electron-forge/plugin-webpack';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
@@ -12,7 +13,11 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: './assets/icon',
-    extraResource: ['./assets/icon.png', './assets/laya', './assets/laya-runtime'],
+    extraResource: [
+      './assets/icon.png',
+      ...(existsSync('./assets/laya') ? ['./assets/laya'] : []),
+      './assets/laya-runtime',
+    ],
     osxSign: {
       identity: '-',
       identityValidation: false,
@@ -29,7 +34,7 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   hooks: {
     prePackage: async () => {
-      execFileSync(process.execPath, ['scripts/prepare-laya.cjs', '--check'], { stdio: 'inherit' });
+      execFileSync(process.execPath, ['scripts/prepare-laya.cjs', '--check', '--optional'], { stdio: 'inherit' });
       execFileSync(process.execPath, ['scripts/prepare-laya-runtime.mjs', '--check'], { stdio: 'inherit' });
     },
   },

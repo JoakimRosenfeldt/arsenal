@@ -9,7 +9,7 @@
     "node": "24.x"
   },
   "scripts": {
-    "prestart": "npm run prepare:laya-runtime && node scripts/prepare-laya.cjs --check",
+    "prestart": "npm run prepare:laya-runtime && node scripts/prepare-laya.cjs --check --optional",
     "start": "electron-forge start",
     "prepare:laya": "node scripts/prepare-laya.cjs && npm run prepare:laya-runtime",
     "prepare:laya-runtime": "node scripts/prepare-laya-runtime.mjs",

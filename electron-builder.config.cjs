@@ -1,5 +1,6 @@
 const signedMac = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
 const { execFileSync } = require('node:child_process');
+const { existsSync } = require('node:fs');
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
@@ -15,12 +16,12 @@ module.exports = {
   asar: true,
   extraResources: [
     { from: 'assets/icon.png', to: 'icon.png' },
-    { from: 'assets/laya', to: 'laya' },
+    ...(existsSync('assets/laya') ? [{ from: 'assets/laya', to: 'laya' }] : []),
     { from: 'assets/laya-runtime', to: 'laya-runtime' },
     { from: 'assets/laya-runtime/node_modules', to: 'laya-runtime/node_modules' },
   ],
   beforePack: () => {
-    execFileSync(process.execPath, ['scripts/prepare-laya.cjs', '--check'], { stdio: 'inherit' });
+    execFileSync(process.execPath, ['scripts/prepare-laya.cjs', '--check', '--optional'], { stdio: 'inherit' });
     execFileSync(process.execPath, ['scripts/prepare-laya-runtime.mjs', '--check'], { stdio: 'inherit' });
   },
   npmRebuild: false,

@@ -110,6 +110,14 @@
   justify-self: start;
 }
 
+.preferences-page .ai-download {
+  margin-top: 0;
+}
+
+.preferences-page .ai-download p:not(:last-child) {
+  margin-bottom: 12px;
+}
+
 .preferences-support {
   display: flex;
   width: 176px;

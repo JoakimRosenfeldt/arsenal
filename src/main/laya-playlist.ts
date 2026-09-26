@@ -12,6 +12,7 @@ import {
   type PlaylistSuggestionResult,
 } from '../shared/playlist-suggestions';
 import { logPlaylistDebug } from './playlist-debug';
+import { getLayaModelDirectory } from './laya-model';
 import { matchesTempo, orderPlaylist, tempoFromMood } from './rank-playlist';
 
 const MIN_MATCH_SCORE = 67;
@@ -63,11 +64,12 @@ export const suggestLayaPlaylist = async (
   });
   if (candidates.length === 0) return ready();
   const resources = app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'assets');
-  const modelDirectory = join(resources, 'laya');
+  const modelDirectory = await getLayaModelDirectory();
   const worker = join(resources, 'laya-runtime', 'worker.mjs');
-  if (!existsSync(worker) || !existsSync(join(modelDirectory, 'encoder.onnx'))) {
+  if (modelDirectory === null || !existsSync(worker)) {
     return { kind: 'rejected', reason: 'model-unavailable' };
   }
+  if (signal.aborted) return { kind: 'rejected', reason: 'cancelled' };
   onProgress({ phase: 'loading-model' });
   try {
     const child = utilityProcess.fork(worker, [], { stdio: 'pipe', serviceName: 'Laya music recommendations' });

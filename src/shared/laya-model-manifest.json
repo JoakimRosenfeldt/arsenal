@@ -1,0 +1,45 @@
+{
+  "model": "convaiinnovations/laya",
+  "modelRevision": "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851",
+  "sourceRevision": "4066d5d5fbf08b66c6757ddeedbd797bd7655bc0",
+  "source": "https://github.com/NandhaKishorM/laya/tree/4066d5d5fbf08b66c6757ddeedbd797bd7655bc0",
+  "checkpointSha256": "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c",
+  "license": "Apache-2.0",
+  "backbone": "answerdotai/ModernBERT-large",
+  "format": "Split ONNX, opset 18, float32",
+  "exportRequirementsSha256": "a5e85882d59092c43a60824aac714a50229c7875a152e29b0fb404b5832287bc",
+  "files": {
+    "LICENSE.txt": {
+      "bytes": 10173,
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+    },
+    "MODEL_CARD.md": {
+      "bytes": 23187,
+      "sha256": "00355613796b3f5860b0d5b20392381d26580ec242e04a1fd150c7f116858602"
+    },
+    "encoder.onnx": {
+      "bytes": 3488674,
+      "sha256": "9c938bc008841c220702521f7b2517a475f6b1bc17bdba9d41ed283366e76fbb"
+    },
+    "encoder.onnx.data": {
+      "bytes": 1579155456,
+      "sha256": "708d9a2322e6a9dd3fc4076c69057a018000955b48de3d6ad3542e84ad7baaf1"
+    },
+    "head.onnx": {
+      "bytes": 219809,
+      "sha256": "7f93b68e8163dae7737d6017d5c34bc36330553903689f55bfb72d68babf2429"
+    },
+    "head.onnx.data": {
+      "bytes": 106168320,
+      "sha256": "fafbd23c267403706e5e585f12d879bd8fce3babbf7728543869e60285014be0"
+    },
+    "rl_agent_config.json": {
+      "bytes": 745,
+      "sha256": "ae287b56bbcf5f8c4f4541ae9dfd00c914c4c48b940b8398c3058af37ba92bbd"
+    },
+    "tokenizer.json": {
+      "bytes": 3583228,
+      "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+    }
+  }
+}

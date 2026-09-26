@@ -18,9 +18,11 @@ import {
 import { RekordboxLibrary } from './main/rekordbox-library';
 import { readPlaylistSuggestionRequest } from './main/playlist-suggestions';
 import { AppUpdates } from './main/app-updates';
+import { getLayaModelStatus, downloadLayaModel, cancelLayaModelDownload } from './main/laya-model';
 import { PLAYLIST_PROGRESS_CHANNEL } from './shared/playlist-suggestions';
 import { APP_UPDATE_CHANNELS } from './shared/app-updates';
 import { PREFERENCES_CHANNELS } from './shared/preferences';
+import { LAYA_MODEL_CHANNELS } from './shared/laya-model';
 import {
   TRACK_ARTWORK_SCHEME,
   TRACK_MEDIA_SCHEME,
@@ -307,6 +309,19 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
       throw new Error('Wait for library actions to finish before restarting.');
     }
     updates.install();
+  });
+
+  ipc.handle(LAYA_MODEL_CHANNELS.status, (event) => {
+    assertTrustedSender(event, owner);
+    return getLayaModelStatus();
+  });
+  ipc.handle(LAYA_MODEL_CHANNELS.download, (event) => {
+    assertTrustedSender(event, owner);
+    return downloadLayaModel();
+  });
+  ipc.handle(LAYA_MODEL_CHANNELS.cancel, (event) => {
+    assertTrustedSender(event, owner);
+    return cancelLayaModelDownload();
   });
 
   if (content.kind === 'preferences') return;
@@ -806,4 +821,7 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => library.cancelSuggestions());
+app.on('before-quit', () => {
+  library.cancelSuggestions();
+  void cancelLayaModelDownload();
+});
