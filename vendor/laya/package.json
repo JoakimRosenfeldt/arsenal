@@ -1,0 +1,19 @@
+{
+  "name": "laya",
+  "version": "0.1.0-arsenal.1",
+  "private": true,
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": ["*.js", "*.d.ts", "LICENSE", "README.md"],
+  "license": "Apache-2.0",
+  "peerDependencies": {
+    "onnxruntime-node": "^1.20.0"
+  }
+}

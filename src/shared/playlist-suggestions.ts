@@ -4,7 +4,7 @@ export const MAX_MOOD_LENGTH = 1_000;
 export const PLAYLIST_DEBUG_CHANNEL = 'playlist-suggestions:debug';
 export const PLAYLIST_DEBUG_PREFIX = '[playlist-ai]';
 export const PLAYLIST_PROGRESS_CHANNEL = 'playlist-suggestions:progress';
-export const JEV_MODEL = '~typesafe/jev-latest';
+export const LAYA_MODEL = 'convaiinnovations/laya';
 
 export type PlaylistSuggestionRequest = Readonly<{
   revision: string;
@@ -21,19 +21,15 @@ export type PlaylistSuggestion = Readonly<{
 }>;
 
 export type PlaylistSuggestionProgress =
+  | Readonly<{ phase: 'loading-model' }>
   | Readonly<{ phase: 'scoring'; completed: number; total: number }>
   | Readonly<{ phase: 'ranking' }>;
 
 export type PlaylistSuggestionFailure =
-  | 'api-key-missing'
-  | 'unauthorized'
-  | 'insufficient-credit'
-  | 'rate-limited'
   | 'context-too-large'
   | 'invalid-response'
-  | 'service-unavailable'
-  | 'request-rejected'
   | 'model-unavailable'
+  | 'model-failed'
   | 'invalid-tempo'
   | 'timed-out'
   | 'cancelled'

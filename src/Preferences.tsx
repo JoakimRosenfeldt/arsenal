@@ -2,7 +2,7 @@ import { useEffect, useState, type JSX } from 'react';
 
 import { AppUpdates } from './AppUpdates';
 import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
-import type { LibrarySettings, OpenRouterSettings } from './shared/preferences';
+import type { LibrarySettings } from './shared/preferences';
 import './Preferences.css';
 
 export const PreferencesButton = (): JSX.Element => {
@@ -23,85 +23,45 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
   onSaved?: () => void;
 }> = {}): JSX.Element => {
   const [library, setLibrary] = useState<LibrarySettings | null>(null);
-  const [settings, setSettings] = useState<OpenRouterSettings | null>(null);
   const [seconds, setSeconds] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [removeKey, setRemoveKey] = useState(false);
-  const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<readonly string[]>([]);
 
   useEffect(() => {
     let active = true;
-    void Promise.allSettled([
-      window.preferences.library(),
-      window.preferences.openRouter(),
-    ]).then(([libraryResult, keyResult]) => {
+    void window.preferences.library().then((settings) => {
       if (!active) return;
-      const failures: string[] = [];
-      if (libraryResult.status === 'fulfilled') {
-        setLibrary(libraryResult.value);
-        setSeconds(String(libraryResult.value.minimumSongLengthSeconds));
-      } else {
-        failures.push('Could not load library settings. Reopen Preferences to try again.');
-      }
-      if (keyResult.status === 'fulfilled') {
-        setSettings(keyResult.value);
-      } else {
-        failures.push('Could not load OpenRouter settings. Reopen Preferences to try again.');
-      }
-      setErrors(failures);
+      setLibrary(settings);
+      setSeconds(String(settings.minimumSongLengthSeconds));
+    }).catch(() => {
+      if (active) setErrors(['Could not load library settings. Reopen Preferences to try again.']);
     });
     return () => { active = false; };
   }, []);
 
   const valid = seconds.trim() !== '' && Number.isSafeInteger(Number(seconds)) && Number(seconds) >= 0;
-  const ready = library !== null && settings !== null;
+  const ready = library !== null;
 
   const save = async (): Promise<void> => {
     if (saving || !ready || !valid) return;
     setSaving(true);
     setMessage(null);
     setErrors([]);
-    const [libraryResult, keyResult] = await Promise.allSettled([
-      Number(seconds) === library.minimumSongLengthSeconds
-        ? Promise.resolve(library)
-        : window.preferences.saveMinimumSongLength(Number(seconds)),
-      removeKey || apiKey.trim() !== ''
-        ? window.preferences.saveOpenRouterKey(removeKey ? '' : apiKey)
-        : Promise.resolve(settings),
-    ]);
-    const failures: string[] = [];
-    if (libraryResult.status === 'fulfilled') {
-      setLibrary(libraryResult.value);
-      setSeconds(String(libraryResult.value.minimumSongLengthSeconds));
-    } else {
-      failures.push('Could not save the minimum track length. Try again.');
-    }
-    if (keyResult.status === 'fulfilled') {
-      setSettings(keyResult.value);
-      setApiKey('');
-      setRemoveKey(false);
-      setShowKey(false);
-    } else {
-      failures.push('Could not save the API key. Check the key and try again.');
-    }
-    setSaving(false);
-    setErrors(failures);
-    if (failures.length === 0) {
+    try {
+      const settings = Number(seconds) === library.minimumSongLengthSeconds
+        ? library
+        : await window.preferences.saveMinimumSongLength(Number(seconds));
+      setLibrary(settings);
+      setSeconds(String(settings.minimumSongLengthSeconds));
       setMessage('Changes saved.');
       onSaved?.();
+    } catch {
+      setErrors(['Could not save the minimum track length. Try again.']);
+    } finally {
+      setSaving(false);
     }
   };
-
-  const keyStatus = removeKey
-    ? 'The saved key will be removed when you save.'
-    : settings === null
-      ? 'Loading connection...'
-      : settings.hasApiKey
-        ? settings.keyStorage === 'session' ? 'Connected for this session.' : 'Connected'
-        : 'Not connected';
 
   return (
     <form className="preferences-page" aria-labelledby="preferences-title" onSubmit={(event) => {
@@ -130,33 +90,8 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
         </section>
         <section className="preferences-section" aria-labelledby="ai-preferences-title">
           <h2 id="ai-preferences-title">Music recommendations</h2>
-          <div className="preferences-setting-row preferences-key-row">
-            <div className="preferences-explanation">
-              <label htmlFor="playlist-api-key">OpenRouter API key</label>
-              <p id="playlist-api-key-help">Connect OpenRouter to suggest music for your playlists.</p>
-            </div>
-            <div className="preferences-key-entry">
-              <div className="preferences-key-input">
-                <input id="playlist-api-key" type={showKey ? 'text' : 'password'} autoComplete="off" spellCheck={false}
-                  value={apiKey} maxLength={4_096} aria-describedby="playlist-api-key-help playlist-api-key-status"
-                  placeholder={settings?.hasApiKey && !removeKey ? 'Replace saved API key' : 'Paste your API key'}
-                  disabled={settings === null || saving || removeKey}
-                  onChange={(event) => { setApiKey(event.currentTarget.value); setMessage(null); }} />
-                <button className="preferences-key-visibility" type="button" aria-label={showKey ? 'Hide API key' : 'Show API key'}
-                  aria-pressed={showKey} disabled={settings === null || saving || removeKey} onClick={() => setShowKey(!showKey)}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
-                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
-                    <circle cx="12" cy="12" r="3" />
-                    {showKey && <path d="m3 3 18 18" />}
-                  </svg>
-                </button>
-              </div>
-              <div className="preferences-key-status">
-                <p id="playlist-api-key-status" role="status">{keyStatus}</p>
-                {settings?.hasApiKey && <button type="button" className="preferences-remove-key" disabled={saving}
-                  onClick={() => { setRemoveKey(!removeKey); setMessage(null); }}>{removeKey ? 'Keep key' : 'Remove key'}</button>}
-              </div>
-            </div>
+          <div className="preferences-explanation">
+            <p>The bundled Laya model suggests tracks offline on this computer. No API key is needed.</p>
           </div>
         </section>
         <section className="preferences-section" aria-labelledby="update-preferences-title">

@@ -2,16 +2,25 @@
 
 ## Build locally
 
-Use the Node version in `.nvmrc`, then run:
+Use the Node version in `.nvmrc`. To export the model on Linux x64, install Python 3.12, then run:
 
 ```sh
 npm ci
+npm run prepare:laya
 npm run make
 ```
 
 Find the distributables in `dist`. Forge compiles the production Webpack bundles and creates an intermediate app in `out`. Electron Builder packages those bundles, signs the release app, and generates the update metadata.
 
-Build on the target operating system and architecture. The workflow builds x64 and ARM64 versions of Windows, macOS, and Linux on native runners.
+`prepare:laya` downloads the pinned Laya checkpoint and exporter, installs an isolated Python environment under `.cache/laya`, and exports the model to `assets/laya`. The export checks its ONNX output against the original model before packaging. It also prepares the native Node inference runtime in `assets/laya-runtime`. Set `LAYA_PYTHON` to your Python 3.12 executable if it is not your default Python.
+
+Allow several gigabytes of free disk space for preparation. The exported model occupies about 1.6 GiB. Both generated directories are ignored by Git. The app bundles them outside its ASAR archive and runs offline without Python. Packaging fails if the model or native runtime is missing or incomplete.
+
+The checkpoint revision, exporter revision, license, and file checksums are recorded in `assets/laya/manifest.json`. The model directory includes the Apache 2.0 license and the original model card. The source revisions and Python dependency versions are pinned in `scripts/prepare-laya.py` and `scripts/prepare-laya.requirements.txt`.
+
+Build on the target operating system and architecture. The workflow exports and verifies the model once on Ubuntu x64, then shares that artifact with all six native Windows, macOS, and Linux builds. Each build prepares its own native inference runtime. To reuse an export locally, copy the complete `assets/laya` directory and run `npm run prepare:laya` on the target machine. A valid existing export skips Python and model downloads.
+
+On Intel Macs, reuse the `laya-model` workflow artifact or copy an export from Linux. The pinned PyTorch exporter has no Intel macOS wheel. Extract the complete artifact into `assets/laya` before running `npm run prepare:laya`. Python is not required when you reuse an export.
 
 | Platform | Install this build |
 | --- | --- |

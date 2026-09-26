@@ -11,15 +11,10 @@ import {
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
-  'api-key-missing': 'Add your OpenRouter API key in Preferences.',
-  unauthorized: 'Check your OpenRouter API key in Preferences.',
-  'insufficient-credit': 'Your OpenRouter account needs more credits.',
-  'rate-limited': 'Too many requests. Try again shortly.',
   'context-too-large': 'Shorten the description or use fewer starting tracks.',
   'invalid-response': 'Could not find suggestions. Try again.',
-  'service-unavailable': 'Suggestions unavailable. Check your connection and try again.',
-  'request-rejected': 'Could not find suggestions. Try again.',
-  'model-unavailable': 'Suggestions unavailable for your OpenRouter account.',
+  'model-unavailable': 'Could not load the bundled Laya model. Reinstall Arsenal and try again.',
+  'model-failed': 'Laya could not finish the request. Try again.',
   'invalid-tempo': 'Use a tempo from 30 to 300 BPM, with the lower number first in a range.',
   'timed-out': 'Suggestions took too long. Try again.',
   cancelled: 'Suggestions stopped.',
@@ -29,6 +24,7 @@ const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
 };
 
 const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
+  if (progress?.phase === 'loading-model') return 'Loading Laya on this computer…';
   return progress?.phase === 'scoring'
     ? `Finding suggestions… ${progress.completed} / ${progress.total}`
     : 'Finding suggestions…';
@@ -128,6 +124,7 @@ export const PlaylistSuggestions = ({
     <section className="playlist-helper" aria-labelledby="playlist-helper-title">
       <div className="playlist-helper-heading">
         <h3 id="playlist-helper-title">Suggestions</h3>
+        <span>Local Laya</span>
       </div>
       <form onSubmit={(event) => void generate(event)}>
         <label className="playlist-mood-field" htmlFor="playlist-mood">Mood</label>
