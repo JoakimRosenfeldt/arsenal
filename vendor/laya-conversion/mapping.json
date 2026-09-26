@@ -1,0 +1,2394 @@
+{
+  "model": "convaiinnovations/laya",
+  "modelRevision": "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851",
+  "sourceRevision": "4066d5d5fbf08b66c6757ddeedbd797bd7655bc0",
+  "checkpoint": {
+    "bytes": 842609210,
+    "sha256": "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c"
+  },
+  "files": {
+    "encoder.onnx": {
+      "bytes": 3488674,
+      "sha256": "9c938bc008841c220702521f7b2517a475f6b1bc17bdba9d41ed283366e76fbb"
+    },
+    "encoder.onnx.data": {
+      "bytes": 1579155456,
+      "sha256": "708d9a2322e6a9dd3fc4076c69057a018000955b48de3d6ad3542e84ad7baaf1",
+      "tensors": [
+        {
+          "name": "encoder.embeddings.norm.weight",
+          "inputOffset": 549432,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 0,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.0.mlp_norm.weight",
+          "inputOffset": 128217656,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 4096,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.1.attn_norm.weight",
+          "inputOffset": 136608312,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 8192,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.1.mlp_norm.weight",
+          "inputOffset": 152732216,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 12288,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.2.attn_norm.weight",
+          "inputOffset": 406268472,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 16384,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.2.mlp_norm.weight",
+          "inputOffset": 422392376,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 20480,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.3.attn_norm.weight",
+          "inputOffset": 626899512,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 24576,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.3.mlp_norm.weight",
+          "inputOffset": 643023416,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 28672,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.4.attn_norm.weight",
+          "inputOffset": 651414072,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 32768,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.4.mlp_norm.weight",
+          "inputOffset": 667537976,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 36864,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.5.attn_norm.weight",
+          "inputOffset": 675928632,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 40960,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.5.mlp_norm.weight",
+          "inputOffset": 692052536,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 45056,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.6.attn_norm.weight",
+          "inputOffset": 700443192,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 49152,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.6.mlp_norm.weight",
+          "inputOffset": 716567096,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 53248,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.7.attn_norm.weight",
+          "inputOffset": 724957752,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 57344,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.7.mlp_norm.weight",
+          "inputOffset": 741081656,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 61440,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.8.attn_norm.weight",
+          "inputOffset": 749472312,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 65536,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.8.mlp_norm.weight",
+          "inputOffset": 765596216,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 69632,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.9.attn_norm.weight",
+          "inputOffset": 773986872,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 73728,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.9.mlp_norm.weight",
+          "inputOffset": 790110776,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 77824,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.10.attn_norm.weight",
+          "inputOffset": 161122872,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 81920,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.10.mlp_norm.weight",
+          "inputOffset": 177246776,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 86016,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.11.attn_norm.weight",
+          "inputOffset": 185637432,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 90112,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.11.mlp_norm.weight",
+          "inputOffset": 201761336,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 94208,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.12.attn_norm.weight",
+          "inputOffset": 210151992,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 98304,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.12.mlp_norm.weight",
+          "inputOffset": 226275896,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 102400,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.13.attn_norm.weight",
+          "inputOffset": 234666552,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 106496,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.13.mlp_norm.weight",
+          "inputOffset": 250790456,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 110592,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.14.attn_norm.weight",
+          "inputOffset": 259181112,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 114688,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.14.mlp_norm.weight",
+          "inputOffset": 275305016,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 118784,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.15.attn_norm.weight",
+          "inputOffset": 283695672,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 122880,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.15.mlp_norm.weight",
+          "inputOffset": 299819576,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 126976,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.16.attn_norm.weight",
+          "inputOffset": 308210232,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 131072,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.16.mlp_norm.weight",
+          "inputOffset": 324334136,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 135168,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.17.attn_norm.weight",
+          "inputOffset": 332724792,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 139264,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.17.mlp_norm.weight",
+          "inputOffset": 348848696,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 143360,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.18.attn_norm.weight",
+          "inputOffset": 357239352,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 147456,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.18.mlp_norm.weight",
+          "inputOffset": 373363256,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 151552,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.19.attn_norm.weight",
+          "inputOffset": 381753912,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 155648,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.19.mlp_norm.weight",
+          "inputOffset": 397877816,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 159744,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.20.attn_norm.weight",
+          "inputOffset": 430783032,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 163840,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.20.mlp_norm.weight",
+          "inputOffset": 446906936,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 167936,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.21.attn_norm.weight",
+          "inputOffset": 455297592,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 172032,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.21.mlp_norm.weight",
+          "inputOffset": 471421496,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 176128,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.22.attn_norm.weight",
+          "inputOffset": 479812152,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 180224,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.22.mlp_norm.weight",
+          "inputOffset": 495936056,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 184320,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.23.attn_norm.weight",
+          "inputOffset": 504326712,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 188416,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.23.mlp_norm.weight",
+          "inputOffset": 520450616,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 192512,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.24.attn_norm.weight",
+          "inputOffset": 528841272,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 196608,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.24.mlp_norm.weight",
+          "inputOffset": 544965176,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 200704,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.25.attn_norm.weight",
+          "inputOffset": 553355832,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 204800,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.25.mlp_norm.weight",
+          "inputOffset": 569479736,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 208896,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.26.attn_norm.weight",
+          "inputOffset": 577870392,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 212992,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.26.mlp_norm.weight",
+          "inputOffset": 593994296,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 217088,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.27.attn_norm.weight",
+          "inputOffset": 602384952,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 221184,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.27.mlp_norm.weight",
+          "inputOffset": 618508856,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 225280,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.final_norm.weight",
+          "inputOffset": 103705144,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 229376,
+          "outputBytes": 4096
+        },
+        {
+          "name": "encoder.layers.0.attn.Wo.weight",
+          "inputOffset": 103707192,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 262144,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.1.attn.Wo.weight",
+          "inputOffset": 128219704,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 4456448,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.2.attn.Wo.weight",
+          "inputOffset": 397879864,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 8650752,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.3.attn.Wo.weight",
+          "inputOffset": 618510904,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 12845056,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.4.attn.Wo.weight",
+          "inputOffset": 643025464,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 17039360,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.5.attn.Wo.weight",
+          "inputOffset": 667540024,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 21233664,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.6.attn.Wo.weight",
+          "inputOffset": 692054584,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 25427968,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.7.attn.Wo.weight",
+          "inputOffset": 716569144,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 29622272,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.8.attn.Wo.weight",
+          "inputOffset": 741083704,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 33816576,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.9.attn.Wo.weight",
+          "inputOffset": 765598264,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 38010880,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.10.attn.Wo.weight",
+          "inputOffset": 152734264,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 42205184,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.11.attn.Wo.weight",
+          "inputOffset": 177248824,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 46399488,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.12.attn.Wo.weight",
+          "inputOffset": 201763384,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 50593792,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.13.attn.Wo.weight",
+          "inputOffset": 226277944,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 54788096,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.14.attn.Wo.weight",
+          "inputOffset": 250792504,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 58982400,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.15.attn.Wo.weight",
+          "inputOffset": 275307064,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 63176704,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.16.attn.Wo.weight",
+          "inputOffset": 299821624,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 67371008,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.17.attn.Wo.weight",
+          "inputOffset": 324336184,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 71565312,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.18.attn.Wo.weight",
+          "inputOffset": 348850744,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 75759616,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.19.attn.Wo.weight",
+          "inputOffset": 373365304,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 79953920,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.20.attn.Wo.weight",
+          "inputOffset": 422394424,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 84148224,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.21.attn.Wo.weight",
+          "inputOffset": 446908984,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 88342528,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.22.attn.Wo.weight",
+          "inputOffset": 471423544,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 92536832,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.23.attn.Wo.weight",
+          "inputOffset": 495938104,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 96731136,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.24.attn.Wo.weight",
+          "inputOffset": 520452664,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 100925440,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.25.attn.Wo.weight",
+          "inputOffset": 544967224,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 105119744,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.26.attn.Wo.weight",
+          "inputOffset": 569481784,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 109314048,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.27.attn.Wo.weight",
+          "inputOffset": 593996344,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 113508352,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "encoder.layers.0.mlp.Wo.weight",
+          "inputOffset": 122843704,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 117702656,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.1.mlp.Wo.weight",
+          "inputOffset": 147358264,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 128450560,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.2.mlp.Wo.weight",
+          "inputOffset": 417018424,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 139198464,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.3.mlp.Wo.weight",
+          "inputOffset": 637649464,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 149946368,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.4.mlp.Wo.weight",
+          "inputOffset": 662164024,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 160694272,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.5.mlp.Wo.weight",
+          "inputOffset": 686678584,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 171442176,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.6.mlp.Wo.weight",
+          "inputOffset": 711193144,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 182190080,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.7.mlp.Wo.weight",
+          "inputOffset": 735707704,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 192937984,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.8.mlp.Wo.weight",
+          "inputOffset": 760222264,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 203685888,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.9.mlp.Wo.weight",
+          "inputOffset": 784736824,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 214433792,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.10.mlp.Wo.weight",
+          "inputOffset": 171872824,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 225181696,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.11.mlp.Wo.weight",
+          "inputOffset": 196387384,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 235929600,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.12.mlp.Wo.weight",
+          "inputOffset": 220901944,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 246677504,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.13.mlp.Wo.weight",
+          "inputOffset": 245416504,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 257425408,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.14.mlp.Wo.weight",
+          "inputOffset": 269931064,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 268173312,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.15.mlp.Wo.weight",
+          "inputOffset": 294445624,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 278921216,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.16.mlp.Wo.weight",
+          "inputOffset": 318960184,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 289669120,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.17.mlp.Wo.weight",
+          "inputOffset": 343474744,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 300417024,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.18.mlp.Wo.weight",
+          "inputOffset": 367989304,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 311164928,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.19.mlp.Wo.weight",
+          "inputOffset": 392503864,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 321912832,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.20.mlp.Wo.weight",
+          "inputOffset": 441532984,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 332660736,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.21.mlp.Wo.weight",
+          "inputOffset": 466047544,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 343408640,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.22.mlp.Wo.weight",
+          "inputOffset": 490562104,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 354156544,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.23.mlp.Wo.weight",
+          "inputOffset": 515076664,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 364904448,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.24.mlp.Wo.weight",
+          "inputOffset": 539591224,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 375652352,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.25.mlp.Wo.weight",
+          "inputOffset": 564105784,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 386400256,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.26.mlp.Wo.weight",
+          "inputOffset": 588620344,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 397148160,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.27.mlp.Wo.weight",
+          "inputOffset": 613134904,
+          "inputBytes": 5373952,
+          "shape": [
+            1024,
+            2624
+          ],
+          "transpose": true,
+          "outputOffset": 407896064,
+          "outputBytes": 10747904
+        },
+        {
+          "name": "encoder.layers.0.attn.Wqkv.weight",
+          "inputOffset": 105804344,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 418643968,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.1.attn.Wqkv.weight",
+          "inputOffset": 130316856,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 431226880,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.2.attn.Wqkv.weight",
+          "inputOffset": 399977016,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 443809792,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.3.attn.Wqkv.weight",
+          "inputOffset": 620608056,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 456392704,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.4.attn.Wqkv.weight",
+          "inputOffset": 645122616,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 468975616,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.5.attn.Wqkv.weight",
+          "inputOffset": 669637176,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 481558528,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.6.attn.Wqkv.weight",
+          "inputOffset": 694151736,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 494141440,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.7.attn.Wqkv.weight",
+          "inputOffset": 718666296,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 506724352,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.8.attn.Wqkv.weight",
+          "inputOffset": 743180856,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 519307264,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.9.attn.Wqkv.weight",
+          "inputOffset": 767695416,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 531890176,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.10.attn.Wqkv.weight",
+          "inputOffset": 154831416,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 544473088,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.11.attn.Wqkv.weight",
+          "inputOffset": 179345976,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 557056000,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.12.attn.Wqkv.weight",
+          "inputOffset": 203860536,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 569638912,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.13.attn.Wqkv.weight",
+          "inputOffset": 228375096,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 582221824,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.14.attn.Wqkv.weight",
+          "inputOffset": 252889656,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 594804736,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.15.attn.Wqkv.weight",
+          "inputOffset": 277404216,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 607387648,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.16.attn.Wqkv.weight",
+          "inputOffset": 301918776,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 619970560,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.17.attn.Wqkv.weight",
+          "inputOffset": 326433336,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 632553472,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.18.attn.Wqkv.weight",
+          "inputOffset": 350947896,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 645136384,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.19.attn.Wqkv.weight",
+          "inputOffset": 375462456,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 657719296,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.20.attn.Wqkv.weight",
+          "inputOffset": 424491576,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 670302208,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.21.attn.Wqkv.weight",
+          "inputOffset": 449006136,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 682885120,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.22.attn.Wqkv.weight",
+          "inputOffset": 473520696,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 695468032,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.23.attn.Wqkv.weight",
+          "inputOffset": 498035256,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 708050944,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.24.attn.Wqkv.weight",
+          "inputOffset": 522549816,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 720633856,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.25.attn.Wqkv.weight",
+          "inputOffset": 547064376,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 733216768,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.26.attn.Wqkv.weight",
+          "inputOffset": 571578936,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 745799680,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.27.attn.Wqkv.weight",
+          "inputOffset": 596093496,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 758382592,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "encoder.layers.0.mlp.Wi.weight",
+          "inputOffset": 112095800,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 770965504,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.1.mlp.Wi.weight",
+          "inputOffset": 136610360,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 792461312,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.2.mlp.Wi.weight",
+          "inputOffset": 406270520,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 813957120,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.3.mlp.Wi.weight",
+          "inputOffset": 626901560,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 835452928,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.4.mlp.Wi.weight",
+          "inputOffset": 651416120,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 856948736,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.5.mlp.Wi.weight",
+          "inputOffset": 675930680,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 878444544,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.6.mlp.Wi.weight",
+          "inputOffset": 700445240,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 899940352,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.7.mlp.Wi.weight",
+          "inputOffset": 724959800,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 921436160,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.8.mlp.Wi.weight",
+          "inputOffset": 749474360,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 942931968,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.9.mlp.Wi.weight",
+          "inputOffset": 773988920,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 964427776,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.10.mlp.Wi.weight",
+          "inputOffset": 161124920,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 985923584,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.11.mlp.Wi.weight",
+          "inputOffset": 185639480,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1007419392,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.12.mlp.Wi.weight",
+          "inputOffset": 210154040,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1028915200,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.13.mlp.Wi.weight",
+          "inputOffset": 234668600,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1050411008,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.14.mlp.Wi.weight",
+          "inputOffset": 259183160,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1071906816,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.15.mlp.Wi.weight",
+          "inputOffset": 283697720,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1093402624,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.16.mlp.Wi.weight",
+          "inputOffset": 308212280,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1114898432,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.17.mlp.Wi.weight",
+          "inputOffset": 332726840,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1136394240,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.18.mlp.Wi.weight",
+          "inputOffset": 357241400,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1157890048,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.19.mlp.Wi.weight",
+          "inputOffset": 381755960,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1179385856,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.20.mlp.Wi.weight",
+          "inputOffset": 430785080,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1200881664,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.21.mlp.Wi.weight",
+          "inputOffset": 455299640,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1222377472,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.22.mlp.Wi.weight",
+          "inputOffset": 479814200,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1243873280,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.23.mlp.Wi.weight",
+          "inputOffset": 504328760,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1265369088,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.24.mlp.Wi.weight",
+          "inputOffset": 528843320,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1286864896,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.25.mlp.Wi.weight",
+          "inputOffset": 553357880,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1308360704,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.26.mlp.Wi.weight",
+          "inputOffset": 577872440,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1329856512,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.layers.27.mlp.Wi.weight",
+          "inputOffset": 602387000,
+          "inputBytes": 10747904,
+          "shape": [
+            5248,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 1351352320,
+          "outputBytes": 21495808
+        },
+        {
+          "name": "encoder.embeddings.tok_embeddings.weight",
+          "inputOffset": 551480,
+          "inputBytes": 103153664,
+          "shape": [
+            50368,
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 1372848128,
+          "outputBytes": 206307328
+        }
+      ]
+    },
+    "head.onnx": {
+      "bytes": 219809,
+      "sha256": "7f93b68e8163dae7737d6017d5c34bc36330553903689f55bfb72d68babf2429"
+    },
+    "head.onnx.data": {
+      "bytes": 106168320,
+      "sha256": "fafbd23c267403706e5e585f12d879bd8fce3babbf7728543869e60285014be0",
+      "tensors": [
+        {
+          "name": "act_head.0.bias",
+          "inputOffset": 21556,
+          "inputBytes": 512,
+          "shape": [
+            256
+          ],
+          "transpose": false,
+          "outputOffset": 0,
+          "outputBytes": 1024
+        },
+        {
+          "name": "act_head.2.weight",
+          "inputOffset": 548408,
+          "inputBytes": 1024,
+          "shape": [
+            2,
+            256
+          ],
+          "transpose": false,
+          "outputOffset": 1024,
+          "outputBytes": 2048
+        },
+        {
+          "name": "head.layers.0.self_attn.out_proj.bias",
+          "inputOffset": 813206072,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 3072,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.0.norm1.weight",
+          "inputOffset": 806902328,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 7168,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.0.norm1.bias",
+          "inputOffset": 806900280,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 11264,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.0.norm2.weight",
+          "inputOffset": 806906424,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 15360,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.0.norm2.bias",
+          "inputOffset": 806904376,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 19456,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.0.linear2.bias",
+          "inputOffset": 798509624,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 23552,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.1.self_attn.out_proj.bias",
+          "inputOffset": 838398520,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 27648,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.1.norm1.weight",
+          "inputOffset": 832094776,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 31744,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.1.norm1.bias",
+          "inputOffset": 832092728,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 35840,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.1.norm2.weight",
+          "inputOffset": 832098872,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 39936,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.1.norm2.bias",
+          "inputOffset": 832096824,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 44032,
+          "outputBytes": 4096
+        },
+        {
+          "name": "head.layers.1.linear2.bias",
+          "inputOffset": 823702072,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 48128,
+          "outputBytes": 4096
+        },
+        {
+          "name": "scorer.0.weight",
+          "inputOffset": 840499768,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 52224,
+          "outputBytes": 4096
+        },
+        {
+          "name": "scorer.0.bias",
+          "inputOffset": 840497720,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 56320,
+          "outputBytes": 4096
+        },
+        {
+          "name": "scorer.1.bias",
+          "inputOffset": 840501816,
+          "inputBytes": 2048,
+          "shape": [
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 60416,
+          "outputBytes": 4096
+        },
+        {
+          "name": "scorer.3.weight",
+          "inputOffset": 842601018,
+          "inputBytes": 2048,
+          "shape": [
+            1,
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 64512,
+          "outputBytes": 4096
+        },
+        {
+          "name": "type_emb.weight",
+          "inputOffset": 842603066,
+          "inputBytes": 6144,
+          "shape": [
+            3,
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 68608,
+          "outputBytes": 12288
+        },
+        {
+          "name": "head.layers.0.self_attn.in_proj_bias",
+          "inputOffset": 806908472,
+          "inputBytes": 6144,
+          "shape": [
+            3072
+          ],
+          "transpose": false,
+          "outputOffset": 80896,
+          "outputBytes": 12288
+        },
+        {
+          "name": "head.layers.1.self_attn.in_proj_bias",
+          "inputOffset": 832100920,
+          "inputBytes": 6144,
+          "shape": [
+            3072
+          ],
+          "transpose": false,
+          "outputOffset": 93184,
+          "outputBytes": 12288
+        },
+        {
+          "name": "head.layers.0.linear1.bias",
+          "inputOffset": 790112824,
+          "inputBytes": 8192,
+          "shape": [
+            4096
+          ],
+          "transpose": false,
+          "outputOffset": 105472,
+          "outputBytes": 16384
+        },
+        {
+          "name": "head.layers.1.linear1.bias",
+          "inputOffset": 815305272,
+          "inputBytes": 8192,
+          "shape": [
+            4096
+          ],
+          "transpose": false,
+          "outputOffset": 121856,
+          "outputBytes": 16384
+        },
+        {
+          "name": "act_head.0.weight",
+          "inputOffset": 22068,
+          "inputBytes": 526336,
+          "shape": [
+            256,
+            1028
+          ],
+          "transpose": false,
+          "outputOffset": 196608,
+          "outputBytes": 1052672
+        },
+        {
+          "name": "head.layers.0.self_attn.out_proj.weight",
+          "inputOffset": 813208120,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 1310720,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "head.layers.1.self_attn.out_proj.weight",
+          "inputOffset": 838400568,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": false,
+          "outputOffset": 5505024,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "scorer.1.weight",
+          "inputOffset": 840503864,
+          "inputBytes": 2097152,
+          "shape": [
+            1024,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 9699328,
+          "outputBytes": 4194304
+        },
+        {
+          "name": "head.layers.0.self_attn.in_proj_weight",
+          "inputOffset": 806914616,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 13893632,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "head.layers.1.self_attn.in_proj_weight",
+          "inputOffset": 832107064,
+          "inputBytes": 6291456,
+          "shape": [
+            3072,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 26476544,
+          "outputBytes": 12582912
+        },
+        {
+          "name": "head.layers.0.linear1.weight",
+          "inputOffset": 790121016,
+          "inputBytes": 8388608,
+          "shape": [
+            4096,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 39059456,
+          "outputBytes": 16777216
+        },
+        {
+          "name": "head.layers.0.linear2.weight",
+          "inputOffset": 798511672,
+          "inputBytes": 8388608,
+          "shape": [
+            1024,
+            4096
+          ],
+          "transpose": true,
+          "outputOffset": 55836672,
+          "outputBytes": 16777216
+        },
+        {
+          "name": "head.layers.1.linear1.weight",
+          "inputOffset": 815313464,
+          "inputBytes": 8388608,
+          "shape": [
+            4096,
+            1024
+          ],
+          "transpose": true,
+          "outputOffset": 72613888,
+          "outputBytes": 16777216
+        },
+        {
+          "name": "head.layers.1.linear2.weight",
+          "inputOffset": 823704120,
+          "inputBytes": 8388608,
+          "shape": [
+            1024,
+            4096
+          ],
+          "transpose": true,
+          "outputOffset": 89391104,
+          "outputBytes": 16777216
+        }
+      ]
+    },
+    "LICENSE.txt": {
+      "bytes": 10173,
+      "sha256": "a6cba85bc92e0cff7a450b1d873c0eaa2e9fc96bf472df0247a26bec77bf3ff9"
+    }
+  }
+}

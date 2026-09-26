@@ -18,10 +18,11 @@ import {
 import { RekordboxLibrary } from './main/rekordbox-library';
 import { readPlaylistSuggestionRequest } from './main/playlist-suggestions';
 import { AppUpdates } from './main/app-updates';
-import { OpenRouterConnection } from './main/openrouter';
+import { getLayaModelStatus, downloadLayaModel, cancelLayaModelDownload } from './main/laya-model';
 import { PLAYLIST_PROGRESS_CHANNEL } from './shared/playlist-suggestions';
 import { APP_UPDATE_CHANNELS } from './shared/app-updates';
 import { PREFERENCES_CHANNELS } from './shared/preferences';
+import { LAYA_MODEL_CHANNELS } from './shared/laya-model';
 import {
   TRACK_ARTWORK_SCHEME,
   TRACK_MEDIA_SCHEME,
@@ -54,7 +55,6 @@ const APP_ICON_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(app.getAppPath(), 'assets', 'icon.png');
 const library = new RekordboxLibrary();
-const openRouter = new OpenRouterConnection();
 let mainWindow: BrowserWindow | null = null;
 let preferencesWindow: BrowserWindow | null = null;
 let playlistWindow: BrowserWindow | null = null;
@@ -272,15 +272,6 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     assertTrustedSender(event, owner);
     openPreferences(updates);
   });
-  ipc.handle(PREFERENCES_CHANNELS.openRouter, (event) => {
-    assertTrustedSender(event, owner);
-    return openRouter.settings();
-  });
-  ipc.handle(PREFERENCES_CHANNELS.saveOpenRouterKey, (event, value: unknown) => {
-    assertTrustedSender(event, owner);
-    if (content.kind === 'playlist') throw new Error('Open Preferences to change the API key.');
-    return openRouter.saveKey(value);
-  });
   ipc.handle(PREFERENCES_CHANNELS.library, (event) => {
     assertTrustedSender(event, owner);
     return library.settings();
@@ -318,6 +309,19 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
       throw new Error('Wait for library actions to finish before restarting.');
     }
     updates.install();
+  });
+
+  ipc.handle(LAYA_MODEL_CHANNELS.status, (event) => {
+    assertTrustedSender(event, owner);
+    return getLayaModelStatus();
+  });
+  ipc.handle(LAYA_MODEL_CHANNELS.download, (event) => {
+    assertTrustedSender(event, owner);
+    return downloadLayaModel();
+  });
+  ipc.handle(LAYA_MODEL_CHANNELS.cancel, (event) => {
+    assertTrustedSender(event, owner);
+    return cancelLayaModelDownload();
   });
 
   if (content.kind === 'preferences') return;
@@ -476,7 +480,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     const request = readPlaylistSuggestionRequest(value);
     return request === null
       ? { kind: 'rejected', reason: 'invalid-request' }
-      : library.suggestPlaylist(request, openRouter.apiKey, (progress) => {
+      : library.suggestPlaylist(request, (progress) => {
         if (!owner.webContents.isDestroyed()) owner.webContents.send(PLAYLIST_PROGRESS_CHANNEL, progress);
       });
   });
@@ -774,7 +778,6 @@ const openPreferences = (updates: AppUpdates): void => {
 
 void app.whenReady().then(async () => {
   app.dock?.setIcon(APP_ICON_PATH);
-  await openRouter.initialize(join(app.getPath('userData'), 'ai-settings.json'));
   await library.initialize(
     join(app.getPath('userData'), 'last-library.json'),
   );
@@ -818,4 +821,7 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => library.cancelSuggestions());
+app.on('before-quit', () => {
+  library.cancelSuggestions();
+  void cancelLayaModelDownload();
+});

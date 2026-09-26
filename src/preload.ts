@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 import { APP_UPDATE_CHANNELS, type AppUpdatesApi, type UpdateStatus } from './shared/app-updates';
 import { PREFERENCES_CHANNELS, type LibrarySettings, type PreferencesApi } from './shared/preferences';
+import { LAYA_MODEL_CHANNELS, type LayaModelApi, type LayaModelStatus } from './shared/laya-model';
 import { PLAYLIST_DEBUG_CHANNEL, PLAYLIST_DEBUG_PREFIX, PLAYLIST_PROGRESS_CHANNEL, type PlaylistSuggestionProgress } from './shared/playlist-suggestions';
 
 ipcRenderer.on(PLAYLIST_DEBUG_CHANNEL, (_event: IpcRendererEvent, message: string, details: Record<string, unknown>) => {
@@ -51,8 +52,6 @@ contextBridge.exposeInMainWorld('djLibrary', api);
 
 const preferences: PreferencesApi = Object.freeze({
   open: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.open),
-  openRouter: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.openRouter),
-  saveOpenRouterKey: (apiKey) => ipcRenderer.invoke(PREFERENCES_CHANNELS.saveOpenRouterKey, apiKey),
   library: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.library),
   saveMinimumSongLength: (seconds) => ipcRenderer.invoke(PREFERENCES_CHANNELS.saveMinimumSongLength, seconds),
   onLibraryChanged: (listener) => {
@@ -62,6 +61,18 @@ const preferences: PreferencesApi = Object.freeze({
   },
 });
 contextBridge.exposeInMainWorld('preferences', preferences);
+
+const layaModel: LayaModelApi = Object.freeze({
+  status: () => ipcRenderer.invoke(LAYA_MODEL_CHANNELS.status),
+  download: () => ipcRenderer.invoke(LAYA_MODEL_CHANNELS.download),
+  cancelDownload: () => ipcRenderer.invoke(LAYA_MODEL_CHANNELS.cancel),
+  onStatus: (listener) => {
+    const handleChange = (_event: IpcRendererEvent, status: LayaModelStatus): void => listener(status);
+    ipcRenderer.on(LAYA_MODEL_CHANNELS.changed, handleChange);
+    return () => { ipcRenderer.removeListener(LAYA_MODEL_CHANNELS.changed, handleChange); };
+  },
+});
+contextBridge.exposeInMainWorld('layaModel', layaModel);
 
 const updates: AppUpdatesApi = Object.freeze({
   status: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.status),

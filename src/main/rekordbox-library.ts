@@ -32,7 +32,7 @@ import {
 import { findDuplicateScan } from './find-duplicates';
 import { evaluateSmartPlaylist } from './smart-playlists';
 import { describeSmartRules, evaluateArsenalSmartPlaylist, smartDefinitionError, type SmartPlaylistDefinition } from '../shared/smart-playlists';
-import { suggestJevPlaylist } from './jev-playlist';
+import { suggestLayaPlaylist } from './laya-playlist';
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from '../shared/playlist-suggestions';
 import {
   parseRekordboxXml,
@@ -392,7 +392,7 @@ export class RekordboxLibrary {
     return { matchingCount: result.matchingCount, total: result.tracks.length, tracks: result.tracks.slice(0, 50) };
   }
 
-  async suggestPlaylist(request: PlaylistSuggestionRequest, apiKey: string, onProgress: (progress: PlaylistSuggestionProgress) => void): Promise<PlaylistSuggestionResult> {
+  async suggestPlaylist(request: PlaylistSuggestionRequest, onProgress: (progress: PlaylistSuggestionProgress) => void): Promise<PlaylistSuggestionResult> {
     const catalog = this.catalog;
     if (catalog === null || request.revision !== catalog.revision) {
       return { kind: 'rejected', reason: 'stale-library' };
@@ -401,7 +401,7 @@ export class RekordboxLibrary {
     const controller = new AbortController();
     this.suggestionController = controller;
     try {
-      const result = await suggestJevPlaylist(catalog.songs, request, apiKey, controller.signal, onProgress);
+      const result = await suggestLayaPlaylist(catalog.songs, request, controller.signal, onProgress);
       return this.catalog === catalog ? result : { kind: 'rejected', reason: 'stale-library' };
     } catch {
       return { kind: 'rejected', reason: controller.signal.aborted ? 'cancelled' : 'failed' };

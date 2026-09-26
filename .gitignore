@@ -91,3 +91,7 @@ typings/
 # Electron-Forge
 out/
 dist/
+
+# Generated offline model and native inference runtime
+assets/laya/
+assets/laya-runtime/

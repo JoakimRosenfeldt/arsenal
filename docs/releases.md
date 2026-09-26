@@ -2,16 +2,27 @@
 
 ## Build locally
 
-Use the Node version in `.nvmrc`, then run:
+Use the Node version in `.nvmrc`. To export the model on Linux x64, install Python 3.12, then run:
 
 ```sh
 npm ci
+npm run prepare:laya
 npm run make
 ```
 
 Find the distributables in `dist`. Forge compiles the production Webpack bundles and creates an intermediate app in `out`. Electron Builder packages those bundles, signs the release app, and generates the update metadata.
 
-Build on the target operating system and architecture. The workflow builds x64 and ARM64 versions of Windows, macOS, and Linux on native runners.
+`prepare:laya` downloads the pinned Laya checkpoint and exporter, installs an isolated Python environment under `.cache/laya`, and exports the model to `assets/laya`. The export checks its ONNX output against the original model before packaging. It also prepares the native Node inference runtime in `assets/laya-runtime`. Set `LAYA_PYTHON` to your Python 3.12 executable if it is not your default Python.
+
+Allow several gigabytes of free disk space for preparation. The exported model occupies about 1.6 GiB. Both generated directories are ignored by Git. The app bundles them outside its ASAR archive and runs offline without Python. Packaging fails if a present model or the required native runtime is incomplete.
+
+You can run `npm start` or `npm run make` without `assets/laya`. The app then downloads the original checkpoint directly from the pinned Hugging Face revision and converts it locally before generating recommendations. The download is about 810 MiB and needs at least 2.5 GiB of free disk space during installation. The converter runs in the bundled Node runtime and requires no Python installation. The app verifies the download and converted files, removes the checkpoint after conversion, and keeps the 1.6 GiB model in its user data directory. No separate model release is required.
+
+The checkpoint revision, exporter revision, license, and file checksums are recorded in `assets/laya/manifest.json`. Model preparation and verification copy that manifest into `src/shared/laya-model-manifest.json`. Keep this file when building without `assets/laya`. The committed ONNX graphs and tensor mapping in `vendor/laya-conversion` let the app convert the original checkpoint into the same model files. The Python exporter verifies its tensor data against that mapping before using the committed graphs. The model directory includes the Apache 2.0 license and the original model card. The source revisions and Python dependency versions are pinned in `scripts/prepare-laya.py` and `scripts/prepare-laya.requirements.txt`.
+
+Build on the target operating system and architecture. The workflow exports and verifies the model once on Ubuntu x64, then shares that artifact with all six native Windows, macOS, and Linux builds. Each build prepares its own native inference runtime. To reuse an export locally, copy the complete `assets/laya` directory and run `npm run prepare:laya` on the target machine. A valid existing export skips Python and model downloads.
+
+On Intel Macs, reuse the `laya-model` workflow artifact or copy an export from Linux. The pinned PyTorch exporter has no Intel macOS wheel. Extract the complete artifact into `assets/laya` before running `npm run prepare:laya`. Python is not required when you reuse an export.
 
 | Platform | Install this build |
 | --- | --- |
@@ -46,7 +57,7 @@ Pull requests, pushes to `main`, and manual workflow runs produce build artifact
 3. Create and push a matching tag, such as `v1.0.1` for package version `1.0.1`.
 4. Wait for **Build executables** to finish all six builds.
 
-The workflow uploads the installers, archives, blockmaps, and update manifests to a draft GitHub release, then publishes it. It uses the workflow's `GITHUB_TOKEN`. No personal access token is needed.
+The workflow uploads the installers, archives, blockmaps, and update manifests to a draft release, then publishes it. It uses the workflow's `GITHUB_TOKEN`. No personal access token is needed. In-app model downloads come directly from Hugging Face.
 
 If an upload fails, rerun the failed jobs to finish the draft. To change an already published build, bump the version and publish a new tag. The workflow refuses to overwrite published versions.
 

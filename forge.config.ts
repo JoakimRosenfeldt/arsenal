@@ -3,6 +3,8 @@ import { MakerZIP } from '@electron-forge/maker-zip';
 import { WebpackPlugin } from '@electron-forge/plugin-webpack';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 import { mainConfig } from './webpack.main.config';
 import { rendererConfig } from './webpack.renderer.config';
@@ -11,10 +13,15 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: './assets/icon',
-    extraResource: ['./assets/icon.png'],
+    extraResource: [
+      './assets/icon.png',
+      ...(existsSync('./assets/laya') ? ['./assets/laya'] : []),
+      './assets/laya-runtime',
+    ],
     osxSign: {
       identity: '-',
       identityValidation: false,
+      ignore: '/Contents/Resources/(?:laya/|laya-runtime/conversion/)',
       preAutoEntitlements: false,
       preEmbedProvisioningProfile: false,
       optionsForFile: () => ({
@@ -25,6 +32,12 @@ const config: ForgeConfig = {
     },
   },
   rebuildConfig: {},
+  hooks: {
+    prePackage: async () => {
+      execFileSync(process.execPath, ['scripts/prepare-laya.cjs', '--check', '--optional'], { stdio: 'inherit' });
+      execFileSync(process.execPath, ['scripts/prepare-laya-runtime.mjs', '--check'], { stdio: 'inherit' });
+    },
+  },
   makers: [new MakerZIP({}, ['darwin'])],
   plugins: [
     new WebpackPlugin({

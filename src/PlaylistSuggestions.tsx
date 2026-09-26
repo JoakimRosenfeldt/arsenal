@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
 import { TrackArtwork, type PlaybackController } from './CueboxPlayer';
+import { LayaModel, useLayaModel } from './LayaModel';
 import type { SongRow } from './shared/dj-library';
 import {
   MAX_MOOD_LENGTH,
@@ -11,15 +12,10 @@ import {
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
-  'api-key-missing': 'Add your OpenRouter API key in Preferences.',
-  unauthorized: 'Check your OpenRouter API key in Preferences.',
-  'insufficient-credit': 'Your OpenRouter account needs more credits.',
-  'rate-limited': 'Too many requests. Try again shortly.',
   'context-too-large': 'Shorten the description or use fewer starting tracks.',
   'invalid-response': 'Could not find suggestions. Try again.',
-  'service-unavailable': 'Suggestions unavailable. Check your connection and try again.',
-  'request-rejected': 'Could not find suggestions. Try again.',
-  'model-unavailable': 'Suggestions unavailable for your OpenRouter account.',
+  'model-unavailable': 'Laya is unavailable. Download it here or in Preferences, then try again.',
+  'model-failed': 'Laya could not finish the request. Try again.',
   'invalid-tempo': 'Use a tempo from 30 to 300 BPM, with the lower number first in a range.',
   'timed-out': 'Suggestions took too long. Try again.',
   cancelled: 'Suggestions stopped.',
@@ -29,6 +25,7 @@ const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
 };
 
 const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
+  if (progress?.phase === 'loading-model') return 'Loading Laya on this computer…';
   return progress?.phase === 'scoring'
     ? `Finding suggestions… ${progress.completed} / ${progress.total}`
     : 'Finding suggestions…';
@@ -47,6 +44,7 @@ export const PlaylistSuggestions = ({
   playback: PlaybackController;
   revision: string;
 }>): JSX.Element => {
+  const laya = useLayaModel();
   const [mood, setMood] = useState('');
   const [progress, setProgress] = useState<PlaylistSuggestionProgress | null>(null);
   const [generating, setGenerating] = useState(false);
@@ -76,7 +74,7 @@ export const PlaylistSuggestions = ({
 
   const generate = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (pending.current || busy || (mood.trim().length === 0 && chosenSongs.size === 0)) {
+    if (pending.current || busy || laya.status.kind !== 'ready' || (mood.trim().length === 0 && chosenSongs.size === 0)) {
       return;
     }
     const requestSequence = ++sequence.current;
@@ -128,7 +126,9 @@ export const PlaylistSuggestions = ({
     <section className="playlist-helper" aria-labelledby="playlist-helper-title">
       <div className="playlist-helper-heading">
         <h3 id="playlist-helper-title">Suggestions</h3>
+        <span>Local Laya</span>
       </div>
+      {laya.status.kind !== 'ready' && <LayaModel model={laya} />}
       <form onSubmit={(event) => void generate(event)}>
         <label className="playlist-mood-field" htmlFor="playlist-mood">Mood</label>
         <textarea
@@ -145,7 +145,7 @@ export const PlaylistSuggestions = ({
           {generating ? (
             <button className="quiet-button" type="button" onClick={cancel}>Stop</button>
           ) : (
-            <button className="accent-button compact" type="submit" disabled={busy || (mood.trim().length === 0 && chosenSongs.size === 0)}>
+            <button className="accent-button compact" type="submit" disabled={busy || laya.status.kind !== 'ready' || (mood.trim().length === 0 && chosenSongs.size === 0)}>
               {result === null ? 'Suggest tracks' : 'Suggest again'}
             </button>
           )}

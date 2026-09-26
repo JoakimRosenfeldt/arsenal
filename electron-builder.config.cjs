@@ -1,4 +1,6 @@
 const signedMac = Boolean(process.env.CSC_LINK || process.env.CSC_NAME);
+const { execFileSync } = require('node:child_process');
+const { existsSync } = require('node:fs');
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
@@ -12,7 +14,16 @@ module.exports = {
     '!node_modules/**/*',
   ],
   asar: true,
-  extraResources: [{ from: 'assets/icon.png', to: 'icon.png' }],
+  extraResources: [
+    { from: 'assets/icon.png', to: 'icon.png' },
+    ...(existsSync('assets/laya') ? [{ from: 'assets/laya', to: 'laya' }] : []),
+    { from: 'assets/laya-runtime', to: 'laya-runtime' },
+    { from: 'assets/laya-runtime/node_modules', to: 'laya-runtime/node_modules' },
+  ],
+  beforePack: () => {
+    execFileSync(process.execPath, ['scripts/prepare-laya.cjs', '--check', '--optional'], { stdio: 'inherit' });
+    execFileSync(process.execPath, ['scripts/prepare-laya-runtime.mjs', '--check'], { stdio: 'inherit' });
+  },
   npmRebuild: false,
   electronFuses: {
     runAsNode: false,
@@ -32,6 +43,7 @@ module.exports = {
   },
   mac: {
     icon: 'assets/icon.icns',
+    signIgnore: '/Contents/Resources/(?:laya/|laya-runtime/conversion/)',
     target: ['dmg', 'zip'],
     category: 'public.app-category.music',
     identity: signedMac ? undefined : '-',
