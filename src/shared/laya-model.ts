@@ -10,6 +10,7 @@ export type LayaModelStatus =
   | Readonly<{ kind: 'ready' }>
   | Readonly<{ kind: 'missing' }>
   | Readonly<{ kind: 'downloading'; receivedBytes: number; totalBytes: number }>
+  | Readonly<{ kind: 'converting'; completedBytes: number; totalBytes: number }>
   | Readonly<{ kind: 'failed'; message: string }>;
 
 export type LayaModelApi = Readonly<{

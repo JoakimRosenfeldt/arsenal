@@ -43,7 +43,7 @@ module.exports = {
   },
   mac: {
     icon: 'assets/icon.icns',
-    signIgnore: '/Contents/Resources/laya/',
+    signIgnore: '/Contents/Resources/(?:laya/|laya-runtime/conversion/)',
     target: ['dmg', 'zip'],
     category: 'public.app-category.music',
     identity: signedMac ? undefined : '-',

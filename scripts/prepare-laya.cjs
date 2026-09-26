@@ -14,6 +14,13 @@ async function verify() {
   if (manifest.modelRevision !== revision || manifest.sourceRevision !== sourceRevision) {
     throw new Error('The bundled Laya model is out of date. Run npm run prepare:laya.');
   }
+  const conversion = JSON.parse(readFileSync(path.join(root, 'vendor', 'laya-conversion', 'mapping.json'), 'utf8'));
+  for (const [name, expected] of Object.entries(conversion.files)) {
+    const bundled = manifest.files[name];
+    if (!bundled || bundled.bytes !== expected.bytes || bundled.sha256 !== expected.sha256) {
+      throw new Error(`Laya does not match the conversion templates: ${name}. Run npm run prepare:laya.`);
+    }
+  }
   const requirementsHash = createHash('sha256')
     .update(readFileSync(path.join(__dirname, 'prepare-laya.requirements.txt'), 'utf8').replace(/\r\n/g, '\n'))
     .digest('hex');

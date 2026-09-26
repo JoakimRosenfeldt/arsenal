@@ -14,6 +14,7 @@ from urllib.request import urlopen
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / ".cache" / "laya"
 OUTPUT = ROOT / "assets" / "laya"
+CONVERSION = ROOT / "vendor" / "laya-conversion"
 SOURCE_REVISION = "4066d5d5fbf08b66c6757ddeedbd797bd7655bc0"
 MODEL_REVISION = "55cf4c4ebb4ebe31b2550e8bdf3bd21b99753851"
 MODEL_SHA256 = "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c"
@@ -64,6 +65,14 @@ def main():
             **os.environ, "PYTHONPATH": str(source), "HF_HUB_OFFLINE": "1",
             "TRANSFORMERS_OFFLINE": "1", "OMP_NUM_THREADS": "4", "MKL_NUM_THREADS": "4",
         })
+        templates = json.loads((CONVERSION / "mapping.json").read_text(encoding="utf-8"))["files"]
+        for name in ["encoder.onnx.data", "head.onnx.data"]:
+            expected = templates[name]
+            data = exported / name
+            if data.stat().st_size != expected["bytes"] or checksum(data) != expected["sha256"]:
+                raise RuntimeError(f"Laya export does not match the conversion templates: {name}")
+        for name in ["encoder.onnx", "head.onnx"]:
+            shutil.copyfile(CONVERSION / name, exported / name)
         shutil.copyfile(source / "LICENSE", exported / "LICENSE.txt")
         shutil.copyfile(checkpoint / "README.md", exported / "MODEL_CARD.md")
         manifest = {

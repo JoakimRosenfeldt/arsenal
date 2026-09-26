@@ -21,7 +21,7 @@ const config: ForgeConfig = {
     osxSign: {
       identity: '-',
       identityValidation: false,
-      ignore: '/Contents/Resources/laya/',
+      ignore: '/Contents/Resources/(?:laya/|laya-runtime/conversion/)',
       preAutoEntitlements: false,
       preEmbedProvisioningProfile: false,
       optionsForFile: () => ({

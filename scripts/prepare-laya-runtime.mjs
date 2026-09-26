@@ -13,6 +13,8 @@ if (!process.argv.includes('--check')) {
   await rm(destination, { recursive: true, force: true });
   await mkdir(modules, { recursive: true });
   await cp(join(root, 'src/main/laya-worker.mjs'), join(destination, 'worker.mjs'));
+  await cp(join(root, 'src/main/laya-converter.mjs'), join(destination, 'converter.mjs'));
+  await cp(join(root, 'vendor/laya-conversion'), join(destination, 'conversion'), { recursive: true });
   await cp(join(root, 'vendor/laya'), join(modules, 'laya'), {
     recursive: true, filter: (source) => !source.endsWith('update.mjs'),
   });
@@ -42,6 +44,14 @@ if (JSON.stringify(stored) !== JSON.stringify(manifest)) {
 const sourceWorker = await readFile(join(root, 'src/main/laya-worker.mjs'));
 const bundledWorker = await readFile(join(destination, 'worker.mjs'));
 if (!sourceWorker.equals(bundledWorker)) throw new Error('Laya worker is stale. Run npm run prepare:laya-runtime.');
+if (!(await readFile(join(root, 'src/main/laya-converter.mjs'))).equals(await readFile(join(destination, 'converter.mjs')))) {
+  throw new Error('Laya converter is stale. Run npm run prepare:laya-runtime.');
+}
+for (const file of await readdir(join(root, 'vendor/laya-conversion'))) {
+  if (!(await readFile(join(root, 'vendor/laya-conversion', file))).equals(await readFile(join(destination, 'conversion', file)))) {
+    throw new Error('Laya conversion templates are stale. Run npm run prepare:laya-runtime.');
+  }
+}
 const binding = join(modules, 'onnxruntime-node', nativeDirectory, 'onnxruntime_binding.node');
 await readFile(binding);
 for (const file of await readdir(join(root, 'vendor/laya'))) {

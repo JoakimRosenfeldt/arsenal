@@ -35,7 +35,7 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: assets/laya
-          key: laya-${{ hashFiles('scripts/prepare-laya.*') }}
+          key: laya-${{ hashFiles('scripts/prepare-laya.*', 'vendor/laya-conversion/*') }}
 
       - name: Export and verify Laya
         run: node scripts/prepare-laya.cjs
@@ -160,64 +160,6 @@ jobs:
           pattern: arsenal-*
           path: release
           merge-multiple: true
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: laya-model
-          path: laya-model
-
-      - name: Publish shared Laya model
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        shell: bash
-        run: |
-          model_tag=$(node <<'NODE'
-          const { createHash } = require('node:crypto');
-          const manifest = require('./laya-model/manifest.json');
-          const filesHash = createHash('sha256').update(JSON.stringify(manifest.files)).digest('hex');
-          console.log(`laya-${manifest.modelRevision.slice(0, 12)}-${filesHash.slice(0, 12)}`);
-          NODE
-          )
-          if ! gh release view "$model_tag" --json isDraft --jq .isDraft > model-draft.txt; then
-            gh release create "$model_tag" --target "$GITHUB_SHA" \
-              --title "Laya model $model_tag" \
-              --notes 'Shared Laya model files for Arsenal. The app verifies each download against its embedded manifest.' \
-              --draft --prerelease --latest=false
-            echo true > model-draft.txt
-          fi
-          if [ "$(cat model-draft.txt)" = true ]; then
-            mkdir model-upload
-            for file in laya-model/*; do
-              ln "$file" "model-upload/laya-$(basename "$file")"
-            done
-            gh release upload "$model_tag" model-upload/* --clobber
-          fi
-          gh api "repos/$GH_REPO/releases/tags/$model_tag" > model-release.json
-          node <<'NODE'
-          const { createHash } = require('node:crypto');
-          const { readFileSync } = require('node:fs');
-          const manifestBytes = readFileSync('laya-model/manifest.json');
-          const manifest = JSON.parse(manifestBytes.toString('utf8'));
-          const release = JSON.parse(readFileSync('model-release.json', 'utf8'));
-          if (!release.prerelease) throw new Error('The model release must be a prerelease.');
-          const files = {
-            ...manifest.files,
-            'manifest.json': {
-              bytes: manifestBytes.length,
-              sha256: createHash('sha256').update(manifestBytes).digest('hex'),
-            },
-          };
-          for (const [name, expected] of Object.entries(files)) {
-            const asset = release.assets.find((file) => file.name === `laya-${name}`);
-            if (!asset || asset.state !== 'uploaded' || asset.size !== expected.bytes || asset.digest !== `sha256:${expected.sha256}`) {
-              throw new Error(`The model release has a missing or mismatched asset: laya-${name}`);
-            }
-          }
-          NODE
-          if [ "$(cat model-draft.txt)" = true ]; then
-            gh release edit "$model_tag" --draft=false --prerelease --latest=false
-          fi
 
       - name: Publish completed builds
         env:
