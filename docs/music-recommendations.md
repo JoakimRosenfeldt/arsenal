@@ -24,6 +24,6 @@ Explicit BPM ranges use Rekordbox metadata. `124-128 BPM` includes both endpoint
 
 Arsenal loads the model in a separate process for each request and releases it when the request ends. Progress shows model loading and the number of scored tracks. Stop, library replacement, window closure, and app shutdown terminate active inference. Requests time out after two minutes without progress or 30 minutes in total. Errors discard partial results.
 
-The model occupies about 1.6 GiB on disk and needs additional RAM during inference. Loading time and scoring speed depend on the computer. Missing or incomplete model files enable the in-app download. Downloads use the model assets from the matching Arsenal release. Developers can regenerate the bundle with `npm run prepare:laya`, as described in [the build instructions](releases.md).
+The model occupies about 1.6 GiB on disk and needs additional RAM during inference. Loading time and scoring speed depend on the computer. Missing or incomplete model files enable the in-app download. Downloads use a fixed model release, independent of the Arsenal version, so development builds can download the same files. Developers can regenerate the bundle with `npm run prepare:laya`, as described in [the build instructions](releases.md).
 
 The build pins the model and SDK revisions, verifies the ONNX export against PyTorch, and includes model provenance, checksums, and Apache 2.0 license files. Model preparation needs an internet connection. Installed recommendations do not.

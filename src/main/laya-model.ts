@@ -9,14 +9,15 @@ import { LAYA_MODEL_CHANNELS, type LayaModelStatus } from '../shared/laya-model'
 
 const files = Object.entries(manifest.files);
 const totalBytes = files.reduce((sum, [, file]) => sum + file.bytes, 0);
+const modelRelease = `laya-${manifest.modelRevision.slice(0, 12)}-${createHash('sha256')
+  .update(JSON.stringify(manifest.files)).digest('hex').slice(0, 12)}`;
 let status: LayaModelStatus = { kind: 'checking' };
 let directory: string | null = null;
 let generation = 0;
 let download: Promise<LayaModelStatus> | null = null;
 let controller: AbortController | null = null;
 
-const downloadDirectory = (): string => join(app.getPath('userData'), 'models', 'laya',
-  `${manifest.modelRevision}-${manifest.files['encoder.onnx'].sha256.slice(0, 12)}`);
+const downloadDirectory = (): string => join(app.getPath('userData'), 'models', 'laya', modelRelease);
 
 const publish = (next: LayaModelStatus): void => {
   status = next;
@@ -86,14 +87,14 @@ const install = async (abort: AbortController): Promise<LayaModelStatus> => {
       throw new Error('Not enough disk space. Free at least 1.7 GiB and try again.');
     }
     staging = await mkdtemp(join(parent, `.download-${process.pid}-`));
-    const baseUrl = `https://github.com/JoakimRosenfeldt/arsenal/releases/download/v${app.getVersion()}`;
+    const baseUrl = `https://github.com/JoakimRosenfeldt/arsenal/releases/download/${modelRelease}`;
     for (const [name, expected] of files) {
       abort.signal.throwIfAborted();
       const response = await fetch(`${baseUrl}/laya-${name}`, { signal: abort.signal });
       if (!response.ok || response.body === null) {
         await response.body?.cancel();
         throw new Error(response.status === 404
-          ? 'The model download is not available for this version. Update Arsenal and try again.'
+          ? 'The Laya model download is unavailable. Try again later.'
           : `Could not download Laya. The server returned HTTP ${response.status}. Try again.`);
       }
       idleTimeout.refresh();
