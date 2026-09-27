@@ -101,8 +101,12 @@ export const rekordboxSyncLibrary = (parsed: ParsedRekordboxLibrary): SyncLibrar
     playlists: [
       ...parsed.folders.filter((folder) => !cratesWithTracks.has(JSON.stringify(folder.folderPath)))
         .map((folder): SyncPlaylist => ({ path: folder.folderPath, trackPaths: [], kind: 'folder' })),
-      ...parsed.playlists.map((playlist) => ({
+      ...parsed.playlists.map((playlist): SyncPlaylist => ({
         path: playlist.seratoCrateTracks && playlist.folderPath.length > 0 ? playlist.folderPath : [...playlist.folderPath, playlist.name],
+        kind: playlist.kind === 'smart' ? 'smart' : 'playlist',
+        ...(playlist.kind === 'smart' ? { smart: playlist.seratoSmartRules ?? (playlist.smartDefinition
+          ? { kind: 'arsenal', definition: playlist.smartDefinition }
+          : { kind: 'rekordbox', rules: playlist.rules }) } : {}),
         trackPaths: playlist.keys.flatMap((key) => {
           const path = playlist.referenceKind === 'track-id' ? byId.get(key) : byLocation.get(key);
           return path === undefined ? [] : [path];
@@ -122,7 +126,11 @@ const metadataFields = {
 
 const blankXml = '<?xml version="1.0" encoding="UTF-8"?>\n<DJ_PLAYLISTS Version="1.0.0"><PRODUCT Name="Arsenal" Version="1.0" Company="Arsenal"/><COLLECTION Entries="0"/><PLAYLISTS><NODE Type="0" Name="ROOT" Count="0"/></PLAYLISTS></DJ_PLAYLISTS>\n';
 
-export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fields?: SyncFields): string => {
+export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fields?: SyncFields, resolvedPaths?: ReadonlyMap<string, string>, replace = false): string => {
+  const pathKey = (path: string): string => resolvedPaths?.get(normalizePath(path)) ?? normalizePath(path);
+  const replaceTracks = replace && fields?.tracks !== false;
+  const replacePlaylists = replace && fields?.playlists !== false;
+  const incomingPlaylists = fields?.playlists === false ? [] : incoming.playlists;
   const document = parseXml(source);
   const collection = children(document.root, 'COLLECTION')[0];
   const playlists = children(document.root, 'PLAYLISTS')[0];
@@ -133,18 +141,35 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
   const tracks = children(collection, 'TRACK');
   const ids = new Set(tracks.map((node) => node.attributes.TrackID));
   const byPath = new Map<string, XmlNode>();
+  const desiredPaths = new Set(incoming.tracks.map((track) => pathKey(track.path)));
+  const removedTracks = new Set<XmlNode>();
+  const duplicateIds = new Map<string, XmlNode>();
+  const duplicateLocations = new Map<string, XmlNode>();
   for (const node of tracks) {
     const path = pathFromLocation(node.attributes.Location ?? null);
+    if (replaceTracks && (path === null || !desiredPaths.has(pathKey(path)))) {
+      removedTracks.add(node);
+      continue;
+    }
     if (path === null) continue;
-    const key = normalizePath(path);
-    if (byPath.has(key)) throw new Error(`Rekordbox contains multiple tracks for ${path}. Resolve this duplicate before syncing.`);
+    const key = pathKey(path);
+    const existing = byPath.get(key);
+    if (existing) {
+      if (!replaceTracks) throw new Error(`Rekordbox contains multiple tracks for ${path}. Resolve this duplicate before syncing.`);
+      removedTracks.add(node);
+      if (node.attributes.TrackID) duplicateIds.set(node.attributes.TrackID, existing);
+      if (node.attributes.Location) duplicateLocations.set(node.attributes.Location, existing);
+      continue;
+    }
     byPath.set(key, node);
   }
+  collection.parts = collection.parts.filter((part) => typeof part === 'string' || !removedTracks.has(part));
   let nextId = 1;
   for (const track of incoming.tracks) {
-    const key = normalizePath(track.path);
+    const key = pathKey(track.path);
     let node = byPath.get(key);
     if (!node) {
+      if (fields?.tracks === false) continue;
       node = { name: 'TRACK', attributes: { Location: locationFor(track.path) }, parts: [] };
       collection.parts.push('\n', node);
       byPath.set(key, node);
@@ -187,9 +212,36 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
   }
   collection.attributes.Entries = String(children(collection, 'TRACK').length);
 
-  const folderPaths = new Set(incoming.playlists.flatMap((playlist) =>
+  if (replacePlaylists) {
+    playlistRoot.parts = playlistRoot.parts.filter((part) => typeof part === 'string' || part.name !== 'NODE');
+  } else if (replaceTracks) {
+    const retainedTracks = children(collection, 'TRACK');
+    const retainedIds = new Set(retainedTracks.map((track) => track.attributes.TrackID));
+    const retainedLocations = new Set(retainedTracks.map((track) => track.attributes.Location));
+    const pruneReferences = (node: XmlNode): void => {
+      const seen = new Set<string>();
+      node.parts = node.parts.filter((part) => {
+        if (typeof part === 'string' || part.name !== 'TRACK') return true;
+        const key = part.attributes.Key;
+        if (key === undefined) return false;
+        if (node.attributes.KeyType !== '0' && node.attributes.KeyType !== '1') throw new Error('Unsupported Rekordbox playlist reference type.');
+        const byLocation = node.attributes.KeyType === '1';
+        const duplicate = (byLocation ? duplicateLocations : duplicateIds).get(key);
+        const replacement = duplicate?.attributes[byLocation ? 'Location' : 'TrackID'] ?? key;
+        if (!(byLocation ? retainedLocations : retainedIds).has(replacement) || seen.has(replacement)) return false;
+        seen.add(replacement);
+        part.attributes.Key = replacement;
+        return true;
+      });
+      if (node.attributes.Type !== '0') node.attributes.Entries = String(children(node, 'TRACK').length);
+      children(node, 'NODE').forEach(pruneReferences);
+    };
+    pruneReferences(playlistRoot);
+  }
+
+  const folderPaths = new Set(incomingPlaylists.flatMap((playlist) =>
     playlist.path.slice(0, -1).map((_, index) => JSON.stringify(playlist.path.slice(0, index + 1)))));
-  for (const playlist of incoming.playlists) {
+  for (const playlist of incomingPlaylists) {
     if (playlist.kind === 'folder') folderPaths.add(JSON.stringify(playlist.path));
   }
   const collectFolders = (parent: XmlNode, path: readonly string[]): void => {
@@ -202,7 +254,7 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
     }
   };
   collectFolders(playlistRoot, []);
-  const incomingPaths = new Set(incoming.playlists.map((playlist) => JSON.stringify(playlist.path)));
+  const incomingPaths = new Set(incomingPlaylists.map((playlist) => JSON.stringify(playlist.path)));
   const crateTrackNode = (folder: XmlNode, path: readonly string[]): XmlNode => {
     const matches = children(folder, 'NODE').filter((node) => node.attributes.ArsenalSeratoCrateTracks === '1');
     if (matches.length > 1) throw new Error(`The crate ${path.join(' / ')} has multiple track containers.`);
@@ -221,8 +273,9 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
     return node;
   };
   const isRegular = (node: XmlNode): boolean => node.attributes.Type === '1' && !isSmartPlaylistNode(node.attributes) &&
-    !node.parts.some((part) => typeof part === 'string' && part.includes('arsenal-smart-playlist:'));
-  for (const playlist of incoming.playlists) {
+    !node.parts.some((part) => typeof part === 'string' ? /arsenal-(?:smart-playlist|serato-smart-crate):/.test(part)
+      : part.name === 'SMARTLIST' || part.name === 'CONDITION');
+  for (const playlist of incomingPlaylists) {
     if (playlist.path.length === 0 || playlist.path.some((name) => !name || [...name].some((character) => character.charCodeAt(0) < 32))) {
       throw new Error('A crate has an invalid name.');
     }
@@ -240,6 +293,7 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
         parent.parts.push('\n', node);
       }
       if (folder) {
+        if (last && playlist.kind === 'smart') throw new Error(`The smart crate ${playlist.path.join(' / ')} cannot also be a folder.`);
         if (node.attributes.Type !== '0') {
           if (!isRegular(node)) throw new Error(`A smart playlist blocks the folder ${currentPath.join(' / ')}.`);
           const existing = { ...node, attributes: { ...node.attributes } };
@@ -255,18 +309,35 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
         node = crateTrackNode(node, currentPath);
       }
       if (node.attributes.Type === '0' && playlist.trackPaths.length === 0) continue;
-      if (!isRegular(node)) {
+      if (playlist.kind === 'smart') {
+        if (!playlist.smart) throw new Error(`The smart crate ${playlist.path.join(' / ')} is missing its rules.`);
+        if (node.attributes.Type === '0') throw new Error(`A folder blocks the smart crate ${playlist.path.join(' / ')}.`);
+        const { smart } = playlist;
+        for (const key of ['LogicalOperator', 'SmartList', 'SmartPlaylist', 'Intelligent', 'IsSmart']) delete node.attributes[key];
+        node.attributes.Type = '1';
+        node.parts = node.parts.filter((part) => typeof part === 'string' || !['SMARTLIST', 'CONDITION'].includes(part.name))
+          .map((part) => typeof part === 'string' ? part.replace(/<!--arsenal-(?:smart-playlist|serato-smart-crate):[\s\S]*?-->/g, '') : part);
+        if (smart.kind === 'rekordbox') {
+          node.attributes.Type = '2';
+          if (smart.rules.logicalOperator !== null) node.attributes.LogicalOperator = smart.rules.logicalOperator;
+          node.parts.push(...smart.rules.conditions.map((condition): XmlNode => ({ name: 'CONDITION', attributes: { ...condition }, parts: [] })));
+        } else {
+          const prefix = smart.kind === 'arsenal' ? 'arsenal-smart-playlist:' : 'arsenal-serato-smart-crate:';
+          const rules = smart.kind === 'arsenal' ? smart.definition : smart;
+          node.parts.push(`<!--${prefix}${Buffer.from(JSON.stringify(rules)).toString('base64')}-->`);
+        }
+      } else if (!isRegular(node)) {
         throw new Error(`The crate ${playlist.path.join(' / ')} conflicts with a Rekordbox folder or smart playlist.`);
       }
       if (node.attributes.KeyType !== '0' && node.attributes.KeyType !== '1') throw new Error('Unsupported Rekordbox playlist reference type.');
       const references = new Map<string, XmlNode>();
       for (const path of playlist.trackPaths) {
-        const track = byPath.get(normalizePath(path));
+        const track = byPath.get(pathKey(path));
         const key = node.attributes.KeyType === '1' ? track?.attributes.Location : track?.attributes.TrackID;
         if (key === undefined) throw new Error(`The crate references a track outside the collection: ${path}`);
         references.set(key, { name: 'TRACK', attributes: { Key: key }, parts: [] });
       }
-      for (const reference of children(node, 'TRACK')) {
+      for (const reference of replacePlaylists || playlist.kind === 'smart' ? [] : children(node, 'TRACK')) {
         const key = reference.attributes.Key;
         if (key !== undefined) references.set(key, reference);
       }

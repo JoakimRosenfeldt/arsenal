@@ -213,6 +213,7 @@ export type SyncFields = Readonly<{
 
 export type SyncRequest = Readonly<{
   direction: SyncDirection;
+  mode?: 'merge' | 'replace';
   conflictSource: LibrarySourceKind;
   fields: SyncFields;
   timingOffsetMs: number;

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { SyncLibrary } from './library-sync-model';
 import { readSeratoLegacy, writeSeratoLegacy } from './serato-legacy';
@@ -23,6 +24,12 @@ export const findSeratoSource = async (selected: string): Promise<SeratoSource> 
     const path = join(directory, name);
     if (await isFile(path)) return { kind: 'sqlite', path };
   }
+  if (resolve(directory) === join(homedir(), 'Music', '_Serato_')) {
+    const modern = process.platform === 'win32'
+      ? join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'Serato', 'Library', 'root.sqlite')
+      : join(homedir(), 'Library', 'Application Support', 'Serato', 'Library', 'root.sqlite');
+    if (await isFile(modern)) return { kind: 'sqlite', path: modern };
+  }
   if (await isFile(join(directory, 'database V2'))) return { kind: 'legacy', path: directory };
   if (file.isFile() && basename(selected).toLowerCase() === 'database v2') return { kind: 'legacy', path: directory };
   throw new Error('Choose a Serato Library folder containing root.sqlite or location.sqlite, or an _Serato_ folder containing database V2.');
@@ -39,7 +46,10 @@ export const assertSeratoClosed = async (): Promise<void> => {
 export const readSeratoLibrary = (source: SeratoSource): Promise<SyncLibrary> =>
   source.kind === 'sqlite' ? readSeratoSqlite(source.path) : readSeratoLegacy(source.path);
 
-export const writeSeratoLibrary = async (source: SeratoSource, incoming: SyncLibrary, options: Readonly<{ metadata: boolean }>) => {
+export const writeSeratoLibrary = async (source: SeratoSource, incoming: SyncLibrary, options: Readonly<{
+  metadata: boolean; replaceTracks?: boolean; replacePlaylists?: boolean;
+}>) => {
   await assertSeratoClosed();
-  return source.kind === 'sqlite' ? writeSeratoSqlite(source.path, incoming, options) : writeSeratoLegacy(source.path, incoming, options);
+  if (source.kind === 'sqlite') return writeSeratoSqlite(source.path, incoming, options);
+  return { ...await writeSeratoLegacy(source.path, incoming, options), warnings: [] };
 };

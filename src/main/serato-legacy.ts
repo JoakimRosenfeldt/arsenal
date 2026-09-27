@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, parse, posix, resolve, sep, win32 } f
 
 import type { SongRow } from '../shared/dj-library';
 import { mergeLibraries, normalizePath, type SyncLibrary, type SyncPlaylist, type SyncTrack } from './library-sync-model';
+import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath } from './serato-paths';
 
 type RecordField = Readonly<{ tag: string; data: Buffer }>;
 type NativeFile = Readonly<{ path: string; bytes: Buffer | null; records: readonly RecordField[] }>;
@@ -138,8 +139,8 @@ const songFromFields = (fields: readonly RecordField[], path: string): SongRow =
   };
 };
 
-const crateNames = async (directory: string): Promise<string[]> => {
-  try { return (await readdir(directory)).filter((name) => name.toLowerCase().endsWith('.crate')).sort(); } catch (error) {
+const crateNames = async (directory: string, extension = '.crate'): Promise<string[]> => {
+  try { return (await readdir(directory)).filter((name) => name.toLowerCase().endsWith(extension)).sort(); } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [];
     throw error;
   }
@@ -155,7 +156,7 @@ const readNativeLibrary = async (directory: string, allowMissing: boolean) => {
     const fields = parseRecords(record.data, database.path);
     const location = getText(fields, 'pfil');
     if (!location) throw new Error('A Serato database track is missing its file path.');
-    const path = absoluteMediaPath(location, root);
+    const path = await resolveSeratoMediaPath(absoluteMediaPath(location, root));
     const key = normalizePath(path);
     tracks.set(key, { path, song: songFromFields(fields, path) });
     trackRecords.set(key, fields);
@@ -172,7 +173,7 @@ const readNativeLibrary = async (directory: string, allowMissing: boolean) => {
       const fields = parseRecords(record.data, file.path);
       const location = getText(fields, 'ptrk');
       if (!location) throw new Error(`A Serato crate track is missing its file path: ${name}`);
-      const path = absoluteMediaPath(location, root);
+      const path = await resolveSeratoMediaPath(absoluteMediaPath(location, root));
       paths.push(path);
       members.set(normalizePath(path), record);
       if (!tracks.has(normalizePath(path))) tracks.set(normalizePath(path), { path, song: songFromFields([], path) });
@@ -183,7 +184,7 @@ const readNativeLibrary = async (directory: string, allowMissing: boolean) => {
   return { root, database, trackRecords, crates, library, subcrates, names };
 };
 
-export const readSeratoLegacy = async (directory: string): Promise<SyncLibrary> => (await readNativeLibrary(directory, false)).library;
+export const readSeratoLegacy = async (directory: string): Promise<SyncLibrary> => resolveSeratoLibraryPaths((await readNativeLibrary(directory, false)).library);
 
 const fieldsForTrack = (track: SyncTrack, root: string, existing: readonly RecordField[] = []): RecordField[] => {
   const song = track.song;
@@ -230,11 +231,25 @@ const defaultCrateRecords = (): RecordField[] => [
 export const writeSeratoLegacy = async (
   directory: string,
   incoming: SyncLibrary,
-  options: Readonly<{ metadata?: boolean }> = {},
+  options: Readonly<{ metadata?: boolean; replaceTracks?: boolean; replacePlaylists?: boolean }> = {},
 ): Promise<{ trackCount: number; playlistCount: number; backupPaths: string[] }> => {
+  const smart = incoming.playlists.find((playlist) => playlist.kind === 'smart' || playlist.smart !== undefined);
+  if (smart) throw new Error(`Smart playlist "${smart.path.join(' / ')}" needs a Serato 4 library. Choose Serato 4's Library folder to sync it as a smart crate.`);
   const native = await readNativeLibrary(directory, true);
-  const merged = mergeLibraries(incoming, native.library);
-  const updates = new Map<string, { before: Buffer | null; after: Buffer }>();
+  incoming = await resolveSeratoLibraryPaths(incoming, native.library);
+  for (const track of incoming.tracks) {
+    if (!native.trackRecords.has(normalizePath(track.path))) await assertSeratoMediaFile(track.path);
+  }
+  const combined = mergeLibraries(incoming, native.library);
+  const tracks = options.replaceTracks ? incoming.tracks : combined.tracks;
+  const availablePaths = new Set(tracks.map((track) => normalizePath(track.path)));
+  const merged: SyncLibrary = {
+    tracks,
+    playlists: (options.replacePlaylists ? incoming.playlists : combined.playlists).map((playlist) => ({
+      ...playlist, trackPaths: playlist.trackPaths.filter((path) => availablePaths.has(normalizePath(path))),
+    })),
+  };
+  const updates = new Map<string, { before: Buffer | null; after: Buffer | null }>();
   const incomingPaths = new Set(incoming.tracks.map((track) => normalizePath(track.path)));
   const trackRecords = new Map(merged.tracks.map((track) => {
     const key = normalizePath(track.path);
@@ -248,7 +263,7 @@ export const writeSeratoLegacy = async (
     if (record.tag !== 'otrk') { records.push(record); continue; }
     const location = getText(parseRecords(record.data, native.database.path), 'pfil');
     if (!location) throw new Error('A Serato database track is missing its file path.');
-    const key = normalizePath(absoluteMediaPath(location, native.root));
+    const key = normalizePath(await resolveSeratoMediaPath(absoluteMediaPath(location, native.root)));
     const replacement = trackRecords.get(key);
     if (replacement) { records.push(replacement); trackRecords.delete(key); }
   }
@@ -263,14 +278,25 @@ export const writeSeratoLegacy = async (
     const filenameKey = basename(path).toLowerCase();
     if (filenames.has(filenameKey)) throw new Error(`Serato crate names differ only by letter case: ${playlist.path.join(' / ')}`);
     filenames.add(filenameKey);
-    if (crate && !incomingCrates.has(JSON.stringify(playlist.path))) continue;
+    if (crate && !incomingCrates.has(JSON.stringify(playlist.path)) && !options.replaceTracks) continue;
     const contents = (crate?.records ?? defaultCrateRecords()).filter((record) => record.tag !== 'otrk');
     for (const path of playlist.trackPaths) {
       contents.push(crate?.members.get(normalizePath(path)) ?? { tag: 'otrk', data: encodeRecords([textField('ptrk', relativeMediaPath(path, native.root))]) });
     }
     updates.set(path, { before: crate?.bytes ?? null, after: encodeRecords(contents) });
   }
-  for (const [path, { before, after }] of updates) if (before?.equals(after)) updates.delete(path);
+  const smartDirectory = join(directory, 'SmartCrates');
+  const smartNames = options.replacePlaylists ? await crateNames(smartDirectory, '.scrate') : [];
+  if (options.replacePlaylists) {
+    for (const crate of native.crates) {
+      if (!incomingCrates.has(JSON.stringify(crate.playlist.path))) updates.set(crate.path, { before: crate.bytes, after: null });
+    }
+    for (const name of smartNames) {
+      const path = join(smartDirectory, name);
+      updates.set(path, { before: await readFile(path), after: null });
+    }
+  }
+  for (const [path, { before, after }] of updates) if (after !== null && before?.equals(after)) updates.delete(path);
   if (updates.size === 0) return { trackCount: merged.tracks.length, playlistCount: merged.playlists.length, backupPaths: [] };
 
   const suffix = `.arsenal-${Date.now()}-${randomUUID()}`;
@@ -279,6 +305,7 @@ export const writeSeratoLegacy = async (
   const backupPaths: string[] = [];
   try {
     for (const [path, { after }] of updates) {
+      if (after === null) continue;
       await mkdir(dirname(path), { recursive: true });
       const temporary = `${path}${suffix}.tmp`;
       const mode = (await stat(path).catch((error: unknown) => {
@@ -289,6 +316,7 @@ export const writeSeratoLegacy = async (
       staged.push(temporary);
     }
     if (JSON.stringify(await crateNames(native.subcrates)) !== JSON.stringify(native.names)) throw new Error('Serato crates changed during sync. Close Serato and retry.');
+    if (options.replacePlaylists && JSON.stringify(await crateNames(smartDirectory, '.scrate')) !== JSON.stringify(smartNames)) throw new Error('Serato smart crates changed during sync. Close Serato and retry.');
     for (const file of [native.database, ...native.crates]) {
       const current = await readOptional(file.path);
       if (file.bytes === null ? current !== null : !current?.equals(file.bytes)) throw new Error('The Serato library changed during sync. Close Serato and retry.');
@@ -302,8 +330,9 @@ export const writeSeratoLegacy = async (
         backupPaths.push(backup);
       }
     }
-    for (const [path] of updates) {
-      await rename(`${path}${suffix}.tmp`, path);
+    for (const [path, { after }] of updates) {
+      if (after === null) await rm(path);
+      else await rename(`${path}${suffix}.tmp`, path);
       committed.push(path);
     }
   } catch (error) {

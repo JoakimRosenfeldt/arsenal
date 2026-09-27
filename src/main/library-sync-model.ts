@@ -1,5 +1,7 @@
 import { posix } from 'node:path';
 import type { SongRow } from '../shared/dj-library';
+import type { SmartPlaylistDefinition } from '../shared/smart-playlists';
+import type { SmartPlaylistRules } from './smart-playlists';
 
 export type SyncCue = Readonly<{ index: number; name: string; start: number; color: readonly [number, number, number] }>;
 export type SyncLoop = SyncCue & Readonly<{ end: number; locked: boolean; hotCue?: boolean }>;
@@ -10,7 +12,16 @@ export type SyncPerformance = Readonly<{
   beatgrids: readonly SyncBeatgrid[];
 }>;
 export type SyncTrack = Readonly<{ path: string; song: SongRow; performance?: SyncPerformance }>;
-export type SyncPlaylist = Readonly<{ path: readonly string[]; trackPaths: readonly string[]; kind?: 'folder' | 'playlist' }>;
+export type SyncSmartRules =
+  | Readonly<{ kind: 'arsenal'; definition: SmartPlaylistDefinition }>
+  | Readonly<{ kind: 'rekordbox'; rules: SmartPlaylistRules }>
+  | Readonly<{ kind: 'serato'; version: number; rules: string }>;
+export type SyncPlaylist = Readonly<{
+  path: readonly string[];
+  trackPaths: readonly string[];
+  kind?: 'folder' | 'playlist' | 'smart';
+  smart?: SyncSmartRules;
+}>;
 export type SyncLibrary = Readonly<{
   tracks: readonly SyncTrack[];
   playlists: readonly SyncPlaylist[];

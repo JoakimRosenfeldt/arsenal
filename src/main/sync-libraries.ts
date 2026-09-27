@@ -7,6 +7,7 @@ import { parseRekordboxXml } from './parse-rekordbox-xml';
 import { mergeRekordboxXml, rekordboxSyncLibrary } from './sync-rekordbox-xml';
 import { assertSeratoClosed, readSeratoLibrary, writeSeratoLibrary, type SeratoSource } from './serato-library';
 import { readSeratoPerformance, writeSeratoPerformance } from './serato-performance';
+import { resolveSeratoLibraryPaths, seratoMediaPathKey } from './serato-paths';
 
 export const readSeratoWithPerformance = async (source: SeratoSource, includePerformance = true) => {
   const library = await readSeratoLibrary(source);
@@ -99,18 +100,25 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
   const backupPaths: string[] = [];
   let wroteLibrary = false;
   try {
+    if (request.mode === 'replace' && request.direction === 'both') throw new Error('Overwrite is only available for one-way sync.');
     await assertSeratoClosed();
     let xml: string | null = null;
     try { xml = await readFile(rekordboxPath, 'utf8'); } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT') || request.direction !== 'serato-to-rekordbox') throw error;
     }
     const parsed = xml === null ? null : await parseRekordboxXml(rekordboxPath);
-    const rekordbox = parsed === null ? { tracks: [], playlists: [] } : rekordboxSyncLibrary(parsed);
+    const originalRekordbox = parsed === null ? { tracks: [], playlists: [] } : rekordboxSyncLibrary(parsed);
     const hasPerformance = request.fields.hotCues || request.fields.loops || request.fields.beatgrids;
     const read = await readSeratoWithPerformance(serato, hasPerformance && request.direction !== 'rekordbox-to-serato');
+    if (workspace !== null) workspace = await resolveSeratoLibraryPaths(workspace, read.library);
     const native = workspace === null ? read.library : mergeLibraries(
       { ...read.library, playlists: workspace.playlists }, { ...workspace, playlists: read.library.playlists },
     );
+    const rekordbox = await resolveSeratoLibraryPaths(originalRekordbox, native);
+    const canonicalPaths = new Map(await Promise.all(rekordbox.tracks.map(async (track) =>
+      [await seratoMediaPathKey(track.path), normalizePath(track.path)] as const)));
+    const resolvedPaths = new Map(await Promise.all(originalRekordbox.tracks.map(async (track) =>
+      [normalizePath(track.path), canonicalPaths.get(await seratoMediaPathKey(track.path)) ?? normalizePath(track.path)] as const)));
     const warnings = [...read.warnings];
     const localSerato = shiftPerformance({ ...native, tracks: native.tracks.filter((track) => track.song.source === 'local') }, -(request.timingOffsetMs ?? 0) / 1000, request.fields);
     const source = request.direction === 'both'
@@ -118,11 +126,16 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
       : request.direction === 'rekordbox-to-serato' ? rekordbox : localSerato;
     const toRekordbox = selectedSource(source, rekordbox, request.fields);
     const toSerato = shiftPerformance(selectedSource(source, localSerato, request.fields), (request.timingOffsetMs ?? 0) / 1000, request.fields);
-    const nextXml = request.direction === 'rekordbox-to-serato' ? null : mergeRekordboxXml(toRekordbox, xml ?? undefined, request.fields);
+    const nextXml = request.direction === 'rekordbox-to-serato' ? null : mergeRekordboxXml(toRekordbox, xml ?? undefined, request.fields, resolvedPaths, request.mode === 'replace');
     if (request.direction !== 'serato-to-rekordbox') {
       if (request.fields.tracks || request.fields.metadata || request.fields.playlists) {
-        const result = await writeSeratoLibrary(serato, toSerato, { metadata: request.fields.metadata });
+        const result = await writeSeratoLibrary(serato, toSerato, {
+          metadata: request.fields.metadata,
+          replaceTracks: request.mode === 'replace' && request.fields.tracks,
+          replacePlaylists: request.mode === 'replace' && request.fields.playlists,
+        });
         backupPaths.push(...result.backupPaths);
+        warnings.push(...result.warnings);
         wroteLibrary = true;
       }
       if (hasPerformance || request.fields.metadata) {
@@ -154,12 +167,13 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
     const playlistCount = request.fields.playlists ? source.playlists.length : 0;
     const message = [
       `Synced ${selectedCount} tracks and ${playlistCount} playlists/crates.`,
+      request.mode === 'replace' ? 'Replaced the selected destination library data. Audio files were kept.' : '',
       nextXml === null ? 'Reopen Serato to load the changes.' : `Rekordbox XML saved to ${rekordboxPath}. Import its tracks and playlists into Rekordbox.`,
       skippedTrackCount ? `${skippedTrackCount} tracks were skipped because they are not local files or adding tracks was disabled.` : '',
-      warnings.length ? `${warnings.length} audio-tag operations were skipped. ${warnings.slice(0, 3).join(' ')}${warnings.length > 3 ? ' See the sync report for the rest.' : ''}` : '',
+      warnings.length ? `${warnings.length} sync warnings. ${warnings.slice(0, 3).join(' ')}${warnings.length > 3 ? ' See the sync report for the rest.' : ''}` : '',
     ].filter(Boolean).join(' ');
     const reportPath = `${rekordboxPath}.arsenal-sync-report.json`;
-    const report = { completedAt: new Date().toISOString(), direction: request.direction, fields: request.fields, timingOffsetMs: request.timingOffsetMs, backupPaths, warnings, skippedTrackCount };
+    const report = { completedAt: new Date().toISOString(), direction: request.direction, mode: request.mode ?? 'merge', fields: request.fields, timingOffsetMs: request.timingOffsetMs, backupPaths, warnings, skippedTrackCount };
     try {
       const reportFile = await open(reportPath, 'w', 0o600);
       try { await reportFile.writeFile(JSON.stringify(report, null, 2) + '\n'); } finally { await reportFile.close(); }

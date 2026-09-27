@@ -7,7 +7,7 @@ import { SaxesParser } from 'saxes';
 import type { PlaylistFolder, SongRow, SongSource } from '../shared/dj-library';
 import { readSmartDefinition, type SmartPlaylistDefinition } from '../shared/smart-playlists';
 import type { SmartPlaylistRules } from './smart-playlists';
-import type { SyncPerformance } from './library-sync-model';
+import type { SyncPerformance, SyncSmartRules } from './library-sync-model';
 
 export type ParsedTrack = Readonly<{
   song: SongRow;
@@ -34,6 +34,7 @@ export type ParsedPlaylist = Readonly<{
   keys: readonly string[];
   rules: SmartPlaylistRules;
   seratoCrateTracks?: boolean;
+  seratoSmartRules?: Extract<SyncSmartRules, { kind: 'serato' }>;
 }>;
 
 export type ParsedRekordboxLibrary = Readonly<{
@@ -213,6 +214,7 @@ type MutablePlaylist = {
   referenceKind: PlaylistReferenceKind;
   keys: string[];
   seratoCrateTracks: boolean;
+  seratoSmartRules?: Extract<SyncSmartRules, { kind: 'serato' }>;
   rules: {
     logicalOperator: string | null;
     conditions: Readonly<Record<string, string>>[];
@@ -458,13 +460,17 @@ export const parseRekordboxXml = async (
   });
 
   parser.on('comment', (comment) => {
-    const prefix = 'arsenal-smart-playlist:';
     const node = playlistNodeStack.at(-1);
-    if (node?.kind !== 'playlist' || !comment.startsWith(prefix) || elementStack.at(-1) !== 'NODE') return;
+    const prefix = ['arsenal-smart-playlist:', 'arsenal-serato-smart-crate:'].find((value) => comment.startsWith(value));
+    if (node?.kind !== 'playlist' || !prefix || elementStack.at(-1) !== 'NODE') return;
     node.playlist.kind = 'smart';
     try {
       const raw: unknown = JSON.parse(Buffer.from(comment.slice(prefix.length), 'base64').toString('utf8'));
-      node.playlist.smartDefinition = readSmartDefinition(raw);
+      if (prefix === 'arsenal-smart-playlist:') node.playlist.smartDefinition = readSmartDefinition(raw);
+      else if (typeof raw === 'object' && raw !== null && 'version' in raw && 'rules' in raw &&
+        typeof raw.version === 'number' && Number.isSafeInteger(raw.version) && typeof raw.rules === 'string') {
+        node.playlist.seratoSmartRules = { kind: 'serato', version: raw.version, rules: raw.rules };
+      }
     } catch {
       // Keep the exported tracks if saved rules cannot be read.
     }

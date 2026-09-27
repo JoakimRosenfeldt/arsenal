@@ -52,7 +52,8 @@ import {
 import { findSeratoSource } from './serato-library';
 import { mergeRekordboxXml, rekordboxSyncLibrary } from './sync-rekordbox-xml';
 import { readSeratoWithPerformance, saveLibraryXml, syncLibraryFiles } from './sync-libraries';
-import { mergeLibraries } from './library-sync-model';
+import { mergeLibraries, normalizePath } from './library-sync-model';
+import { resolveSeratoLibraryPaths } from './serato-paths';
 
 type CatalogTrack = ParsedTrack;
 
@@ -514,7 +515,7 @@ export class RekordboxLibrary {
         if (rekordboxPath === null) {
           if (request.direction === 'serato-to-rekordbox') {
             const choice = await dialog.showSaveDialog(owner, {
-              title: 'Choose the Rekordbox XML to create or merge into', buttonLabel: 'Use this XML',
+              title: request.mode === 'replace' ? 'Choose the Rekordbox XML to overwrite' : 'Choose the Rekordbox XML to create or merge into', buttonLabel: 'Use this XML',
               defaultPath: join(homedir(), 'rekordbox.xml'), filters: [{ name: 'Rekordbox XML', extensions: ['xml'] }],
             });
             if (choice.canceled || !choice.filePath) return { kind: 'cancelled' };
@@ -545,9 +546,17 @@ export class RekordboxLibrary {
           if (this.catalog.sourceKind === 'serato') {
             const { library } = await readSeratoWithPerformance(serato);
             const previous = await readFile(this.catalog.sourcePath, 'utf8');
-            const refreshed = workspace === null ? library : mergeLibraries(
-              { ...library, playlists: workspace.playlists }, { ...workspace, playlists: library.playlists },
+            const normalizedWorkspace = workspace === null ? null : await resolveSeratoLibraryPaths(workspace, library);
+            let refreshed = normalizedWorkspace === null ? library : mergeLibraries(
+              { ...library, playlists: normalizedWorkspace.playlists }, { ...normalizedWorkspace, playlists: library.playlists },
             );
+            if (request.mode === 'replace' && request.direction === 'rekordbox-to-serato') {
+              const tracks = request.fields.tracks ? library.tracks : refreshed.tracks;
+              const available = new Set(tracks.map((track) => normalizePath(track.path)));
+              refreshed = { tracks, playlists: request.fields.playlists ? library.playlists : refreshed.playlists.map((playlist) => ({
+                ...playlist, trackPaths: playlist.trackPaths.filter((path) => available.has(normalizePath(path))),
+              })) };
+            }
             await saveLibraryXml(this.catalog.sourcePath, mergeRekordboxXml(refreshed), previous, false);
           }
           this.catalog = await this.catalogFor(this.catalog.sourcePath, this.catalog.seratoPath);

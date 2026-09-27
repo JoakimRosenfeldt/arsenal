@@ -368,6 +368,10 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
       (request.conflictSource !== 'rekordbox' && request.conflictSource !== 'serato')) {
       throw new Error('Invalid library sync request');
     }
+    const mode = request.mode === undefined ? 'merge' : request.mode;
+    if (mode !== 'merge' && mode !== 'replace' || mode === 'replace' && request.direction === 'both') {
+      throw new Error('Overwrite is available only when syncing in one direction');
+    }
     const fields = request.fields;
     if (!isRecord(fields) || typeof fields.tracks !== 'boolean' || typeof fields.metadata !== 'boolean' ||
       typeof fields.playlists !== 'boolean' || typeof fields.hotCues !== 'boolean' || typeof fields.loops !== 'boolean' ||
@@ -383,6 +387,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     try {
       return await library.syncLibraries(owner, {
         direction: request.direction,
+        mode,
         conflictSource: request.conflictSource,
         timingOffsetMs: request.timingOffsetMs,
         fields: {
