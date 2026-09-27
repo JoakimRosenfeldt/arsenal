@@ -33,6 +33,7 @@ import {
   type SongRow,
   type SongFilters,
   type SyncRequest,
+  type SyncResult,
 } from './shared/dj-library';
 
 import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
@@ -393,8 +394,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     }
   };
 
-  const syncLibraries = async (request: SyncRequest): Promise<string | null> => {
-    if (busy) return null;
+  const syncLibraries = async (request: SyncRequest): Promise<SyncResult> => {
+    if (busy) return { kind: 'cancelled' };
     setBusy(true);
     searchSequence.current += 1;
     setSearching(false);
@@ -402,15 +403,18 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setFeedback(null);
     try {
       const result = await window.djLibrary.syncLibraries(request);
-      if (result.kind === 'cancelled') return null;
-      if (result.kind === 'rejected') return result.message;
-      const status = await window.djLibrary.status();
-      if (status.kind === 'ready') await refreshLibrary(status.library);
-      setSyncOpen(false);
-      setFeedback({ tone: result.skippedTrackCount > 0 || result.warnings.length > 0 ? 'warning' : 'success', message: result.message });
-      return null;
-    } catch {
-      return 'Could not finish syncing. Check the libraries and try again.';
+      if (result.kind !== 'synced') return result;
+      try {
+        const status = await window.djLibrary.status();
+        if (status.kind === 'ready') await refreshLibrary(status.library);
+      } catch {
+        return { ...result, warnings: [...result.warnings, 'Sync finished, but Arsenal could not refresh the library view. Reopen the library to see the changes.'] };
+      }
+      return result;
+    } catch (error) {
+      return { kind: 'rejected', warnings: [], backupPaths: [],
+        message: error instanceof Error ? error.message : 'Could not finish syncing. Check the libraries and try again.',
+      };
     } finally {
       setBusy(false);
     }

@@ -2620,6 +2620,59 @@ button.sidebar-search {
   margin: 12px 0;
 }
 
+.library-sync-result {
+  margin-top: 22px;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--success);
+  border-radius: 6px;
+  background: var(--canvas);
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  scroll-margin-top: 16px;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.library-sync-result-warning {
+  border-left-color: var(--warning);
+}
+
+.library-sync-result h3 {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.library-sync-result h4 {
+  margin: 14px 0 6px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.library-sync-result p {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+}
+
+.library-sync-result summary {
+  margin-top: 12px;
+  cursor: pointer;
+}
+
+.library-sync-result-list {
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.library-sync-result-list li + li {
+  margin-top: 8px;
+}
+
 .library-sync-timing {
   color: var(--text-soft);
   font-size: 12px;

@@ -510,6 +510,7 @@ export class RekordboxLibrary {
 
   syncLibraries(owner: BrowserWindow, request: SyncRequest): Promise<SyncResult> {
     return this.enqueue(async () => {
+      let result: SyncResult | null = null;
       try {
         let rekordboxPath = this.catalog?.sourceKind === 'rekordbox' ? this.catalog.sourcePath : null;
         if (rekordboxPath === null) {
@@ -541,7 +542,7 @@ export class RekordboxLibrary {
         const serato = await findSeratoSource(seratoPath);
         const workspace = this.catalog?.sourceKind === 'serato'
           ? rekordboxSyncLibrary(await parseRekordboxXml(this.catalog.sourcePath)) : null;
-        const result = await syncLibraryFiles({ rekordboxPath, serato, request, workspace });
+        result = await syncLibraryFiles({ rekordboxPath, serato, request, workspace });
         if (result.kind === 'synced' && this.catalog !== null) {
           if (this.catalog.sourceKind === 'serato') {
             const { library } = await readSeratoWithPerformance(serato);
@@ -564,7 +565,11 @@ export class RekordboxLibrary {
         }
         return result;
       } catch (error) {
-        return { kind: 'rejected', message: error instanceof Error ? error.message : 'Could not sync the libraries.' };
+        const message = error instanceof Error ? error.message : 'Could not sync the libraries.';
+        if (result?.kind === 'synced') {
+          return { ...result, warnings: [...result.warnings, `The libraries were synced, but Arsenal could not refresh its library: ${message}`] };
+        }
+        return { kind: 'rejected', message, warnings: [], backupPaths: [] };
       }
     });
   }

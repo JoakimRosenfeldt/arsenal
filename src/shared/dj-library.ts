@@ -230,7 +230,12 @@ export type SyncResult =
       backupPaths: readonly string[];
       message: string;
     }>
-  | Readonly<{ kind: 'rejected'; message: string }>;
+  | Readonly<{
+      kind: 'rejected';
+      message: string;
+      warnings: readonly string[];
+      backupPaths: readonly string[];
+    }>;
 
 export type PageRequest = Readonly<{
   offset: number;

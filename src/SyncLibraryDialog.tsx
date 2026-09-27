@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
-import type { LibrarySummary, SyncDirection, SyncFields, SyncRequest } from './shared/dj-library';
+import type { LibrarySummary, SyncDirection, SyncFields, SyncRequest, SyncResult } from './shared/dj-library';
 
 const directions = [
   { value: 'both', label: 'Both ways' },
@@ -21,16 +21,17 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
   busy: boolean;
   library: LibrarySummary | null;
   onClose: () => void;
-  onSync: (request: SyncRequest) => Promise<string | null>;
+  onSync: (request: SyncRequest) => Promise<SyncResult>;
 }>): JSX.Element => {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const resultRef = useRef<HTMLElement>(null);
   const [direction, setDirection] = useState<SyncDirection>('both');
   const [mode, setMode] = useState<NonNullable<SyncRequest['mode']>>('merge');
   const [conflictSource, setConflictSource] = useState<SyncRequest['conflictSource']>(library?.sourceKind ?? 'rekordbox');
   const [fields, setFields] = useState<SyncFields>({
     tracks: true, metadata: true, playlists: true, hotCues: true, loops: true, beatgrids: true,
   });
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
   const [timingOffset, setTimingOffset] = useState('0');
   const sourceKind = direction === 'both' ? null : direction === 'rekordbox-to-serato' ? 'rekordbox' : 'serato';
   const destinationName = direction === 'rekordbox-to-serato' ? 'Serato' : 'Rekordbox XML';
@@ -39,17 +40,26 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
   const hasPerformance = fields.hotCues || fields.loops || fields.beatgrids;
   const timingOffsetMs = hasPerformance ? Number(timingOffset) : 0;
   const validTiming = !hasPerformance || (timingOffset.trim() !== '' && Number.isSafeInteger(timingOffsetMs) && Math.abs(timingOffsetMs) <= 1000);
+  const hasIssues = result !== null && (result.kind === 'rejected' || result.warnings.length > 0 || result.skippedTrackCount > 0);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
   }, []);
 
+  useEffect(() => {
+    if (result !== null) {
+      resultRef.current?.focus({ preventScroll: true });
+      resultRef.current?.scrollIntoView({ block: 'start' });
+    }
+  }, [result]);
+
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (busy || !hasFields || !validTiming) return;
-    setError(null);
-    setError(await onSync({ direction, mode, conflictSource: sourceKind ?? conflictSource, fields, timingOffsetMs }));
+    setResult(null);
+    const next = await onSync({ direction, mode, conflictSource: sourceKind ?? conflictSource, fields, timingOffsetMs });
+    setResult(next.kind === 'cancelled' ? result : next);
   };
 
   return (
@@ -73,13 +83,38 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
             onClick={() => dialogRef.current?.close()} aria-label="Close library sync">×</button>
         </div>
 
+        {result !== null && (
+          <section className={`library-sync-result${hasIssues ? ' library-sync-result-warning' : ''}`} ref={resultRef}
+            tabIndex={-1} role={hasIssues ? 'alert' : 'status'} aria-labelledby="library-sync-result-title">
+            <h3 id="library-sync-result-title">{result.kind === 'rejected' ? 'Sync stopped'
+              : hasIssues ? 'Sync completed with issues' : 'Sync completed'}</h3>
+            <p>{result.message}</p>
+            {result.warnings.length > 0 && (
+              <>
+                <h4>Warnings ({result.warnings.length})</h4>
+                <ul className="library-sync-result-list" aria-label="Sync warnings" tabIndex={0}>
+                  {result.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
+                </ul>
+              </>
+            )}
+            {result.backupPaths.length > 0 && (
+              <details>
+                <summary>Backup files ({result.backupPaths.length})</summary>
+                <ul className="library-sync-result-list" aria-label="Sync backup files" tabIndex={0}>
+                  {result.backupPaths.map((path, index) => <li key={index}>{path}</li>)}
+                </ul>
+              </details>
+            )}
+          </section>
+        )}
+
         <fieldset className="tracklist-export-options library-sync-directions" disabled={busy}>
           <legend>Direction</legend>
           <div>
             {directions.map((option) => (
               <label key={option.value}>
                 <input type="radio" name="sync-direction" checked={direction === option.value}
-                  onChange={() => { setDirection(option.value); if (option.value === 'both') setMode('merge'); setError(null); }} />
+                  onChange={() => { setDirection(option.value); if (option.value === 'both') setMode('merge'); }} />
                 <span>{option.label}</span>
               </label>
             ))}
@@ -91,9 +126,9 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
             <legend>Update {destinationName}</legend>
             <div>
               <label><input type="radio" name="sync-mode" checked={mode === 'merge'}
-                onChange={() => { setMode('merge'); setError(null); }} /> Merge</label>
+                onChange={() => setMode('merge')} /> Merge</label>
               <label><input type="radio" name="sync-mode" checked={mode === 'replace'}
-                onChange={() => { setMode('replace'); setError(null); }} /> Overwrite</label>
+                onChange={() => setMode('replace')} /> Overwrite</label>
             </div>
           </fieldset>
         )}
@@ -147,11 +182,10 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
           <p>Close Serato before syncing. Backups are saved beside changed files. Import the updated XML into Rekordbox to apply its changes.</p>
         </div>
 
-        {error !== null && <p className="tracklist-export-note" role="alert">{error}</p>}
         {!hasFields && <p className="tracklist-export-note">Choose at least one category to sync.</p>}
         {!validTiming && <p className="tracklist-export-note">Enter a whole number between -1000 and 1000 milliseconds.</p>}
         <div className="library-sync-actions">
-          <button className="quiet-button" type="button" disabled={busy} onClick={() => dialogRef.current?.close()}>Cancel</button>
+          <button className="quiet-button" type="button" disabled={busy} onClick={() => dialogRef.current?.close()}>{result === null ? 'Cancel' : 'Close'}</button>
           <button className="accent-button" type="submit" disabled={busy || !hasFields || !validTiming}>
             {busy ? 'Syncing…' : mode === 'replace' ? 'Choose libraries and overwrite' : 'Choose libraries and sync'}
           </button>

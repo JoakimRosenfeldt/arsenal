@@ -98,6 +98,7 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
   workspace: SyncLibrary | null;
 }>): Promise<SyncResult> => {
   const backupPaths: string[] = [];
+  const warnings: string[] = [];
   let wroteLibrary = false;
   try {
     if (request.mode === 'replace' && request.direction === 'both') throw new Error('Overwrite is only available for one-way sync.');
@@ -110,6 +111,7 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
     const originalRekordbox = parsed === null ? { tracks: [], playlists: [] } : rekordboxSyncLibrary(parsed);
     const hasPerformance = request.fields.hotCues || request.fields.loops || request.fields.beatgrids;
     const read = await readSeratoWithPerformance(serato, hasPerformance && request.direction !== 'rekordbox-to-serato');
+    warnings.push(...read.warnings);
     if (workspace !== null) workspace = await resolveSeratoLibraryPaths(workspace, read.library);
     const native = workspace === null ? read.library : mergeLibraries(
       { ...read.library, playlists: workspace.playlists }, { ...workspace, playlists: read.library.playlists },
@@ -119,7 +121,6 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
       [await seratoMediaPathKey(track.path), normalizePath(track.path)] as const)));
     const resolvedPaths = new Map(await Promise.all(originalRekordbox.tracks.map(async (track) =>
       [normalizePath(track.path), canonicalPaths.get(await seratoMediaPathKey(track.path)) ?? normalizePath(track.path)] as const)));
-    const warnings = [...read.warnings];
     const localSerato = shiftPerformance({ ...native, tracks: native.tracks.filter((track) => track.song.source === 'local') }, -(request.timingOffsetMs ?? 0) / 1000, request.fields);
     const source = request.direction === 'both'
       ? request.conflictSource === 'rekordbox' ? mergeLibraries(rekordbox, localSerato) : mergeLibraries(localSerato, rekordbox)
@@ -170,7 +171,6 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
       request.mode === 'replace' ? 'Replaced the selected destination library data. Audio files were kept.' : '',
       nextXml === null ? 'Reopen Serato to load the changes.' : `Rekordbox XML saved to ${rekordboxPath}. Import its tracks and playlists into Rekordbox.`,
       skippedTrackCount ? `${skippedTrackCount} tracks were skipped because they are not local files or adding tracks was disabled.` : '',
-      warnings.length ? `${warnings.length} sync warnings. ${warnings.slice(0, 3).join(' ')}${warnings.length > 3 ? ' See the sync report for the rest.' : ''}` : '',
     ].filter(Boolean).join(' ');
     const reportPath = `${rekordboxPath}.arsenal-sync-report.json`;
     const report = { completedAt: new Date().toISOString(), direction: request.direction, mode: request.mode ?? 'merge', fields: request.fields, timingOffsetMs: request.timingOffsetMs, backupPaths, warnings, skippedTrackCount };
@@ -179,10 +179,11 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
       try { await reportFile.writeFile(JSON.stringify(report, null, 2) + '\n'); } finally { await reportFile.close(); }
     } catch {
       return { kind: 'synced', trackCount: selectedCount, playlistCount, skippedTrackCount, backupPaths, warnings: [...warnings, 'Could not save the sync report.'],
-        message: `${message} Could not save the sync report. Backups: ${backupPaths.join(', ') || 'No files changed.'}` };
+        message };
     }
     return { kind: 'synced', trackCount: selectedCount, playlistCount, skippedTrackCount, backupPaths, warnings, message: `${message} Report and backup locations: ${reportPath}` };
   } catch (error) {
-    return { kind: 'rejected', message: `${error instanceof Error ? error.message : 'Could not sync the libraries.'}${wroteLibrary ? ` Some files were already updated. Backups: ${backupPaths.join(', ')}` : ''}` };
+    return { kind: 'rejected', warnings, backupPaths,
+      message: `${error instanceof Error ? error.message : 'Could not sync the libraries.'}${wroteLibrary ? ' Some files were already updated.' : ''}` };
   }
 };
