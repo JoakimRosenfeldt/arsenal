@@ -28,6 +28,7 @@ import {
 } from './main/track-artwork';
 import {
   DJ_LIBRARY_CHANNELS,
+  readSyncRequest,
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
   SONG_SOURCE_LABELS,
@@ -360,45 +361,34 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     }
   });
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.syncLibraries, async (event, request: unknown) => {
+  ipc.handle(DJ_LIBRARY_CHANNELS.syncPreferences, (event) => {
     assertTrustedSender(event, owner);
-    if (content.kind !== 'main') throw new Error('Sync from the library window');
-    if (!isRecord(request) ||
-      (request.direction !== 'rekordbox-to-serato' && request.direction !== 'serato-to-rekordbox' && request.direction !== 'both') ||
-      (request.conflictSource !== 'rekordbox' && request.conflictSource !== 'serato')) {
-      throw new Error('Invalid library sync request');
-    }
-    const mode = request.mode === undefined ? 'merge' : request.mode;
-    if (mode !== 'merge' && mode !== 'replace' || mode === 'replace' && request.direction === 'both') {
-      throw new Error('Overwrite is available only when syncing in one direction');
-    }
-    const fields = request.fields;
-    if (!isRecord(fields) || typeof fields.tracks !== 'boolean' || typeof fields.metadata !== 'boolean' ||
-      typeof fields.playlists !== 'boolean' || typeof fields.hotCues !== 'boolean' || typeof fields.loops !== 'boolean' ||
-      typeof fields.beatgrids !== 'boolean' ||
-      ![fields.tracks, fields.metadata, fields.playlists, fields.hotCues, fields.loops, fields.beatgrids].some(Boolean)) {
-      throw new Error('Choose at least one category to sync');
-    }
-    if (typeof request.timingOffsetMs !== 'number' || !Number.isSafeInteger(request.timingOffsetMs) ||
-      request.timingOffsetMs < -1000 || request.timingOffsetMs > 1000) {
-      throw new Error('Timing correction must be a whole number between -1000 and 1000 milliseconds');
+    if (content.kind !== 'main') throw new Error('Choose sync libraries from the library window');
+    return library.syncPreferences();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.chooseSyncLibrary, async (event, kind: unknown, direction: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Choose sync libraries from the library window');
+    if ((kind !== 'rekordbox' && kind !== 'serato') ||
+      (direction !== 'rekordbox-to-serato' && direction !== 'serato-to-rekordbox' && direction !== 'both')) {
+      throw new Error('Invalid sync library selection');
     }
     libraryActions += 1;
     try {
-      return await library.syncLibraries(owner, {
-        direction: request.direction,
-        mode,
-        conflictSource: request.conflictSource,
-        timingOffsetMs: request.timingOffsetMs,
-        fields: {
-          tracks: fields.tracks,
-          metadata: fields.metadata,
-          playlists: fields.playlists,
-          hotCues: fields.hotCues,
-          loops: fields.loops,
-          beatgrids: fields.beatgrids,
-        },
-      });
+      return await library.chooseSyncLibrary(owner, kind, direction);
+    } finally {
+      libraryActions -= 1;
+    }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.syncLibraries, async (event, request: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Sync from the library window');
+    const validated = readSyncRequest(request);
+    libraryActions += 1;
+    try {
+      return await library.syncLibraries(owner, validated);
     } finally {
       libraryActions -= 1;
     }

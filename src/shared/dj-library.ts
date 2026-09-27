@@ -6,6 +6,8 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   importExport: 'dj-library:import-export',
   importSerato: 'dj-library:import-serato',
   syncLibraries: 'dj-library:sync-libraries',
+  syncPreferences: 'dj-library:sync-preferences',
+  chooseSyncLibrary: 'dj-library:choose-sync-library',
   listSongs: 'dj-library:list-songs',
   findDuplicates: 'dj-library:find-duplicates',
   listPlaylists: 'dj-library:list-playlists',
@@ -219,6 +221,39 @@ export type SyncRequest = Readonly<{
   timingOffsetMs: number;
 }>;
 
+export type SyncPreferences = Readonly<{
+  request: SyncRequest | null;
+  rekordboxPath: string | null;
+  seratoPath: string | null;
+}>;
+
+export const readSyncRequest = (request: unknown): SyncRequest => {
+  const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+  if (!isRecord(request) ||
+    (request.direction !== 'rekordbox-to-serato' && request.direction !== 'serato-to-rekordbox' && request.direction !== 'both') ||
+    (request.conflictSource !== 'rekordbox' && request.conflictSource !== 'serato')) {
+    throw new Error('Invalid library sync request');
+  }
+  const mode = request.mode === undefined ? 'merge' : request.mode;
+  if (mode !== 'merge' && mode !== 'replace' || mode === 'replace' && request.direction === 'both') {
+    throw new Error('Overwrite is available only when syncing in one direction');
+  }
+  const fields = request.fields;
+  if (!isRecord(fields) || typeof fields.tracks !== 'boolean' || typeof fields.metadata !== 'boolean' ||
+    typeof fields.playlists !== 'boolean' || typeof fields.hotCues !== 'boolean' || typeof fields.loops !== 'boolean' ||
+    typeof fields.beatgrids !== 'boolean' ||
+    ![fields.tracks, fields.metadata, fields.playlists, fields.hotCues, fields.loops, fields.beatgrids].some(Boolean)) {
+    throw new Error('Choose at least one category to sync');
+  }
+  if (typeof request.timingOffsetMs !== 'number' || !Number.isSafeInteger(request.timingOffsetMs) ||
+    request.timingOffsetMs < -1000 || request.timingOffsetMs > 1000) {
+    throw new Error('Timing correction must be a whole number between -1000 and 1000 milliseconds');
+  }
+  return { direction: request.direction, mode, conflictSource: request.conflictSource, timingOffsetMs: request.timingOffsetMs,
+    fields: { tracks: fields.tracks, metadata: fields.metadata, playlists: fields.playlists,
+      hotCues: fields.hotCues, loops: fields.loops, beatgrids: fields.beatgrids } };
+};
+
 export type SyncResult =
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{
@@ -356,6 +391,8 @@ export type DjLibraryApi = Readonly<{
   importRekordboxExport(): Promise<ImportResult>;
   importSeratoLibrary(): Promise<ImportResult>;
   syncLibraries(request: SyncRequest): Promise<SyncResult>;
+  syncPreferences(): Promise<SyncPreferences>;
+  chooseSyncLibrary(kind: LibrarySourceKind, direction: SyncDirection): Promise<SyncPreferences | null>;
   listSongs(page: PageRequest): Promise<SongPage>;
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;

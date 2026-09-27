@@ -2609,6 +2609,33 @@ button.sidebar-search {
   gap: 12px;
 }
 
+.library-sync-locations > div {
+  display: grid;
+  gap: 12px;
+}
+
+.library-sync-location {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.library-sync-location strong,
+.library-sync-location span {
+  display: block;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.library-sync-location span {
+  margin-top: 4px;
+  color: var(--text-soft);
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .library-sync-description {
   color: var(--text-soft);
   font-size: 12px;

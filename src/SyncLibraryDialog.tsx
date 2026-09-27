@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
-import type { LibrarySummary, SyncDirection, SyncFields, SyncRequest, SyncResult } from './shared/dj-library';
+import type { LibrarySourceKind, LibrarySummary, SyncDirection, SyncFields, SyncPreferences, SyncRequest, SyncResult } from './shared/dj-library';
 
 const directions = [
   { value: 'both', label: 'Both ways' },
@@ -25,6 +25,8 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
 }>): JSX.Element => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const resultRef = useRef<HTMLElement>(null);
+  const [preferences, setPreferences] = useState<SyncPreferences | null>(null);
+  const [pending, setPending] = useState(true);
   const [direction, setDirection] = useState<SyncDirection>('both');
   const [mode, setMode] = useState<NonNullable<SyncRequest['mode']>>('merge');
   const [conflictSource, setConflictSource] = useState<SyncRequest['conflictSource']>(library?.sourceKind ?? 'rekordbox');
@@ -35,16 +37,39 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
   const [timingOffset, setTimingOffset] = useState('0');
   const sourceKind = direction === 'both' ? null : direction === 'rekordbox-to-serato' ? 'rekordbox' : 'serato';
   const destinationName = direction === 'rekordbox-to-serato' ? 'Serato' : 'Rekordbox XML';
-  const usesOpenLibrary = library !== null && (sourceKind === null || library.sourceKind === sourceKind);
+  const working = busy || pending;
+  const needsLibraries = preferences?.rekordboxPath === null || preferences?.seratoPath === null;
   const hasFields = Object.values(fields).some(Boolean);
   const hasPerformance = fields.hotCues || fields.loops || fields.beatgrids;
-  const timingOffsetMs = hasPerformance ? Number(timingOffset) : 0;
-  const validTiming = !hasPerformance || (timingOffset.trim() !== '' && Number.isSafeInteger(timingOffsetMs) && Math.abs(timingOffsetMs) <= 1000);
+  const parsedTimingOffset = Number(timingOffset);
+  const validOffset = timingOffset.trim() !== '' && Number.isSafeInteger(parsedTimingOffset) && Math.abs(parsedTimingOffset) <= 1000;
+  const timingOffsetMs = validOffset ? parsedTimingOffset : 0;
+  const validTiming = !hasPerformance || validOffset;
   const hasIssues = result !== null && (result.kind === 'rejected' || result.warnings.length > 0 || result.skippedTrackCount > 0);
 
   useEffect(() => {
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void window.djLibrary.syncPreferences().then((saved) => {
+      if (!active) return;
+      setPreferences(saved);
+      if (saved.request !== null) {
+        setDirection(saved.request.direction);
+        setMode(saved.request.mode ?? 'merge');
+        setConflictSource(saved.request.conflictSource);
+        setFields(saved.request.fields);
+        setTimingOffset(String(saved.request.timingOffsetMs));
+      }
+    }).catch((error: unknown) => {
+      if (active) setResult({ kind: 'rejected', warnings: [], backupPaths: [],
+        message: `Could not load saved sync settings. ${error instanceof Error ? error.message : 'Close and reopen this dialog to try again.'}`,
+      });
+    }).finally(() => { if (active) setPending(false); });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
@@ -56,18 +81,45 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
 
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    if (busy || !hasFields || !validTiming) return;
+    if (working || preferences === null || !hasFields || !validTiming) return;
+    setPending(true);
     setResult(null);
-    const next = await onSync({ direction, mode, conflictSource: sourceKind ?? conflictSource, fields, timingOffsetMs });
-    setResult(next.kind === 'cancelled' ? result : next);
+    try {
+      let next = await onSync({ direction, mode, conflictSource: sourceKind ?? conflictSource, fields, timingOffsetMs });
+      try {
+        setPreferences(await window.djLibrary.syncPreferences());
+      } catch {
+        const message = 'Could not refresh the saved library locations. Close and reopen this dialog before syncing again.';
+        setPreferences(null);
+        next = next.kind === 'cancelled' ? { kind: 'rejected', message, warnings: [], backupPaths: [] }
+          : { ...next, warnings: [...next.warnings, message] };
+      }
+      setResult(next.kind === 'cancelled' ? result : next);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const chooseLibrary = async (kind: LibrarySourceKind): Promise<void> => {
+    setPending(true);
+    try {
+      const selected = await window.djLibrary.chooseSyncLibrary(kind, direction);
+      if (selected !== null) setPreferences(selected);
+    } catch (error) {
+      setResult({ kind: 'rejected', warnings: [], backupPaths: [],
+        message: error instanceof Error ? error.message : 'Could not choose the library. Try again.',
+      });
+    } finally {
+      setPending(false);
+    }
   };
 
   return (
     <dialog className="tracklist-export-dialog library-sync-dialog" ref={dialogRef} onClose={onClose}
       aria-labelledby="library-sync-title" aria-describedby="library-sync-description"
-      onCancel={(event) => { if (busy) event.preventDefault(); }}
+      onCancel={(event) => { if (working) event.preventDefault(); }}
       onClick={(event) => {
-        if (busy || event.target !== event.currentTarget) return;
+        if (working || event.target !== event.currentTarget) return;
         const { left, right, top, bottom } = event.currentTarget.getBoundingClientRect();
         if (event.clientX < left || event.clientX > right || event.clientY < top || event.clientY > bottom) {
           event.currentTarget.close();
@@ -79,7 +131,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
             <h2 id="library-sync-title">Sync libraries</h2>
             <p>Rekordbox XML and Serato</p>
           </div>
-          <button className="inspector-close" type="button" disabled={busy}
+          <button className="inspector-close" type="button" disabled={working}
             onClick={() => dialogRef.current?.close()} aria-label="Close library sync">×</button>
         </div>
 
@@ -108,7 +160,9 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
           </section>
         )}
 
-        <fieldset className="tracklist-export-options library-sync-directions" disabled={busy}>
+        {preferences === null && pending && <p className="library-sync-description" role="status">Loading saved sync settings…</p>}
+
+        <fieldset className="tracklist-export-options library-sync-directions" disabled={working || preferences === null}>
           <legend>Direction</legend>
           <div>
             {directions.map((option) => (
@@ -122,7 +176,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
         </fieldset>
 
         {direction !== 'both' && (
-          <fieldset className="tracklist-export-options" disabled={busy}>
+          <fieldset className="tracklist-export-options" disabled={working || preferences === null}>
             <legend>Update {destinationName}</legend>
             <div>
               <label><input type="radio" name="sync-mode" checked={mode === 'merge'}
@@ -133,7 +187,24 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
           </fieldset>
         )}
 
-        <fieldset className="tracklist-export-options library-sync-fields" disabled={busy}>
+        <fieldset className="tracklist-export-options library-sync-locations" disabled={working || preferences === null}>
+          <legend>Libraries</legend>
+          <div>
+            {(['rekordbox', 'serato'] as const).map((kind) => {
+              const label = kind === 'rekordbox' ? 'Rekordbox XML' : 'Serato library';
+              const path = preferences?.[kind === 'rekordbox' ? 'rekordboxPath' : 'seratoPath'];
+              return (
+                <div className="library-sync-location" key={kind}>
+                  <div><strong>{label}</strong><span>{path ?? 'No library selected'}</span></div>
+                  <button className="quiet-button" type="button" onClick={() => void chooseLibrary(kind)}
+                    aria-label={`${path ? 'Change' : 'Choose'} ${label}`}>{path ? 'Change' : 'Choose…'}</button>
+                </div>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        <fieldset className="tracklist-export-options library-sync-fields" disabled={working || preferences === null}>
           <legend>Sync</legend>
           <div>
             {fieldOptions.map((option) => (
@@ -147,7 +218,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
         </fieldset>
 
         {direction === 'both' && (
-          <fieldset className="tracklist-export-options" disabled={busy}>
+          <fieldset className="tracklist-export-options" disabled={working || preferences === null}>
             <legend>If track data differs, use</legend>
             <div>
               <label><input type="radio" name="conflict-source" checked={conflictSource === 'rekordbox'}
@@ -163,7 +234,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
             <summary>Timing correction</summary>
             <label htmlFor="sync-timing-offset">Correction in milliseconds
               <input id="sync-timing-offset" type="number" min={-1000} max={1000} step={1} required
-                value={timingOffset} disabled={busy} onChange={(event) => setTimingOffset(event.currentTarget.value)} />
+                value={timingOffset} disabled={working || preferences === null} onChange={(event) => setTimingOffset(event.currentTarget.value)} />
             </label>
             <p>Added when sending to Serato, subtracted when sending to Rekordbox. Leave 0 to preserve stored positions.</p>
           </details>
@@ -175,9 +246,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
             : 'Tracks and playlist memberships are merged without deletions.'} {direction === 'both'
             ? `${conflictSource === 'rekordbox' ? 'Rekordbox' : 'Serato'} values win for matching tracks.`
             : 'Source values win for matching tracks.'}</p>
-          <p>{usesOpenLibrary
-            ? `Uses your open ${library.sourceKind === 'serato' ? 'Serato library' : 'Rekordbox XML'}: ${library.sourceName}. Choose the other library in the next dialog.`
-            : 'Choose a Rekordbox XML file and a Serato library folder in the next dialogs.'}</p>
+          <p>Your last used settings and library locations are saved for the next sync. Choose or change the libraries above.</p>
           <p>Supports Serato 4 Library folders and older _Serato_ libraries. Hot cues, loops and beatgrids use audio tags in MP3, AIFF, WAV, FLAC and M4A/MP4 files. Unsupported files are listed in the sync report.</p>
           <p>Close Serato before syncing. Backups are saved beside changed files. Import the updated XML into Rekordbox to apply its changes.</p>
         </div>
@@ -185,9 +254,11 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
         {!hasFields && <p className="tracklist-export-note">Choose at least one category to sync.</p>}
         {!validTiming && <p className="tracklist-export-note">Enter a whole number between -1000 and 1000 milliseconds.</p>}
         <div className="library-sync-actions">
-          <button className="quiet-button" type="button" disabled={busy} onClick={() => dialogRef.current?.close()}>{result === null ? 'Cancel' : 'Close'}</button>
-          <button className="accent-button" type="submit" disabled={busy || !hasFields || !validTiming}>
-            {busy ? 'Syncing…' : mode === 'replace' ? 'Choose libraries and overwrite' : 'Choose libraries and sync'}
+          <button className="quiet-button" type="button" disabled={working} onClick={() => dialogRef.current?.close()}>{result === null ? 'Cancel' : 'Close'}</button>
+          <button className="accent-button" type="submit" disabled={working || preferences === null || !hasFields || !validTiming}>
+            {busy ? 'Syncing…' : mode === 'replace'
+              ? needsLibraries ? 'Choose libraries and overwrite' : 'Overwrite library'
+              : needsLibraries ? 'Choose libraries and sync' : 'Sync libraries'}
           </button>
         </div>
       </form>
