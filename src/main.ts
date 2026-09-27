@@ -349,6 +349,56 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     }
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.importSerato, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Import from the library window');
+    libraryActions += 1;
+    try {
+      return await library.importSerato(owner);
+    } finally {
+      libraryActions -= 1;
+    }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.syncLibraries, async (event, request: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Sync from the library window');
+    if (!isRecord(request) ||
+      (request.direction !== 'rekordbox-to-serato' && request.direction !== 'serato-to-rekordbox' && request.direction !== 'both') ||
+      (request.conflictSource !== 'rekordbox' && request.conflictSource !== 'serato')) {
+      throw new Error('Invalid library sync request');
+    }
+    const fields = request.fields;
+    if (!isRecord(fields) || typeof fields.tracks !== 'boolean' || typeof fields.metadata !== 'boolean' ||
+      typeof fields.playlists !== 'boolean' || typeof fields.hotCues !== 'boolean' || typeof fields.loops !== 'boolean' ||
+      typeof fields.beatgrids !== 'boolean' ||
+      ![fields.tracks, fields.metadata, fields.playlists, fields.hotCues, fields.loops, fields.beatgrids].some(Boolean)) {
+      throw new Error('Choose at least one category to sync');
+    }
+    if (typeof request.timingOffsetMs !== 'number' || !Number.isSafeInteger(request.timingOffsetMs) ||
+      request.timingOffsetMs < -1000 || request.timingOffsetMs > 1000) {
+      throw new Error('Timing correction must be a whole number between -1000 and 1000 milliseconds');
+    }
+    libraryActions += 1;
+    try {
+      return await library.syncLibraries(owner, {
+        direction: request.direction,
+        conflictSource: request.conflictSource,
+        timingOffsetMs: request.timingOffsetMs,
+        fields: {
+          tracks: fields.tracks,
+          metadata: fields.metadata,
+          playlists: fields.playlists,
+          hotCues: fields.hotCues,
+          loops: fields.loops,
+          beatgrids: fields.beatgrids,
+        },
+      });
+    } finally {
+      libraryActions -= 1;
+    }
+  });
+
   ipc.handle(
     DJ_LIBRARY_CHANNELS.listSongs,
     (event, request: unknown) => {

@@ -18,6 +18,10 @@ const api: DjLibraryApi = Object.freeze({
   status: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.status),
   importRekordboxExport: () =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importExport),
+  importSeratoLibrary: () =>
+    ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importSerato),
+  syncLibraries: (request) =>
+    ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.syncLibraries, request),
   listSongs: (page) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listSongs, page),
   findDuplicates: (mode) =>

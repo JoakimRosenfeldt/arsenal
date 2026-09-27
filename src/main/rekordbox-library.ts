@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, stat, writeFile } from 'node:fs/promises';
-import { basename, isAbsolute } from 'node:path';
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join } from 'node:path';
+import { homedir } from 'node:os';
 
 import { dialog, shell, type BrowserWindow } from 'electron';
 import { DEFAULT_SONG_FILTERS, songMetadataGapCount } from '../shared/dj-library';
@@ -15,6 +16,7 @@ import type {
   LibraryMutationResult,
   LibraryStatus,
   LibrarySummary,
+  LibrarySourceKind,
   LocalFileAction,
   MutationFailure,
   PageRequest,
@@ -23,6 +25,8 @@ import type {
   SongPage,
   SongRow,
   SongSearchRequest,
+  SyncRequest,
+  SyncResult,
 } from '../shared/dj-library';
 import {
   editRekordboxXml,
@@ -45,18 +49,19 @@ import {
   type ArtworkAsset,
   isSupportedAudioPath,
 } from './track-artwork';
+import { findSeratoSource } from './serato-library';
+import { mergeRekordboxXml, rekordboxSyncLibrary } from './sync-rekordbox-xml';
+import { readSeratoWithPerformance, saveLibraryXml, syncLibraryFiles } from './sync-libraries';
+import { mergeLibraries } from './library-sync-model';
 
-type CatalogTrack = Readonly<{
-  song: SongRow;
-  mediaPath: string | null;
-  rekordboxId: string | null;
-  rawLocation: string | null;
-}>;
+type CatalogTrack = ParsedTrack;
 
 type CurrentCatalog = Readonly<{
   revision: string;
   sourcePath: string;
   sourceName: string;
+  sourceKind: LibrarySourceKind;
+  seratoPath: string | null;
   importedAt: string;
   fingerprint: string;
   tracks: readonly CatalogTrack[];
@@ -70,6 +75,7 @@ type CurrentCatalog = Readonly<{
 
 type RememberedLibrary = Readonly<{
   rekordboxXmlPath: string | null;
+  seratoPath: string | null;
   minimumSongLengthSeconds: number;
   ignoredDuplicateGroups: Readonly<Record<string, readonly string[]>>;
 }>;
@@ -110,7 +116,8 @@ const readRememberedLibrary = async (
     const minimumSongLengthSeconds = typeof stored.minimumSongLengthSeconds === 'number' &&
       Number.isSafeInteger(stored.minimumSongLengthSeconds) && stored.minimumSongLengthSeconds >= 0
       ? stored.minimumSongLengthSeconds : DEFAULT_MINIMUM_SONG_LENGTH_SECONDS;
-    return { rekordboxXmlPath: rememberedPath, ignoredDuplicateGroups, minimumSongLengthSeconds };
+    const seratoPath = typeof stored.seratoPath === 'string' && isAbsolute(stored.seratoPath) ? stored.seratoPath : null;
+    return { rekordboxXmlPath: rememberedPath, seratoPath, ignoredDuplicateGroups, minimumSongLengthSeconds };
   } catch {
     return null;
   }
@@ -147,6 +154,7 @@ const searchTextFor = (song: SongRow): string =>
 const summaryFor = (catalog: CurrentCatalog): LibrarySummary => ({
   revision: catalog.revision,
   sourceName: catalog.sourceName,
+  sourceKind: catalog.sourceKind,
   importedAt: catalog.importedAt,
   songCount: catalog.songs.length,
   playlistCount: catalog.playlists.length,
@@ -278,6 +286,8 @@ export class RekordboxLibrary {
 
   private rememberedPath: string | null = null;
 
+  private rememberedSeratoPath: string | null = null;
+
   private minimumSongLengthSeconds = DEFAULT_MINIMUM_SONG_LENGTH_SECONDS;
 
   private ignoredDuplicateGroups: RememberedLibrary['ignoredDuplicateGroups'] = {};
@@ -290,6 +300,7 @@ export class RekordboxLibrary {
     this.stateFilePath = stateFilePath;
     const remembered = await readRememberedLibrary(stateFilePath);
     this.rememberedPath = remembered?.rekordboxXmlPath ?? null;
+    this.rememberedSeratoPath = remembered?.seratoPath ?? null;
     this.ignoredDuplicateGroups = remembered?.ignoredDuplicateGroups ?? {};
     this.minimumSongLengthSeconds = remembered?.minimumSongLengthSeconds ?? DEFAULT_MINIMUM_SONG_LENGTH_SECONDS;
     if (this.rememberedPath === null) {
@@ -297,7 +308,7 @@ export class RekordboxLibrary {
     }
 
     try {
-      this.catalog = await this.catalogFor(this.rememberedPath);
+      this.catalog = await this.catalogFor(this.rememberedPath, this.rememberedSeratoPath);
     } catch {
       this.catalog = null;
     }
@@ -463,13 +474,105 @@ export class RekordboxLibrary {
     }
   }
 
+  importSerato(owner: BrowserWindow): Promise<ImportResult> {
+    return this.enqueue(async () => {
+      const selection = await dialog.showOpenDialog(owner, {
+        title: 'Choose the Serato Library or _Serato_ folder', buttonLabel: 'Import Serato library',
+        defaultPath: this.rememberedSeratoPath ?? this.defaultSeratoPath(), properties: ['openDirectory'],
+      });
+      const selected = selection.filePaths[0];
+      if (selection.canceled || selected === undefined) return { kind: 'cancelled' };
+      try {
+        const source = await findSeratoSource(selected);
+        const { library, warnings } = await readSeratoWithPerformance(source);
+        if (this.stateFilePath === null) return { kind: 'rejected', reason: 'cannot-save-library' };
+        const directory = join(dirname(this.stateFilePath), 'libraries');
+        await mkdir(directory, { recursive: true });
+        const workspacePath = join(directory, `serato-${randomUUID()}.xml`);
+        await saveLibraryXml(workspacePath, mergeRekordboxXml(library), null, false);
+        const nextCatalog = await this.catalogFor(workspacePath, source.path);
+        const previousSeratoPath = this.rememberedSeratoPath;
+        this.rememberedSeratoPath = source.path;
+        if (!await this.remember(workspacePath)) {
+          this.rememberedSeratoPath = previousSeratoPath;
+          return { kind: 'rejected', reason: 'cannot-save-library' };
+        }
+        this.cancelSuggestions();
+        this.catalog = nextCatalog;
+        this.rememberedPath = workspacePath;
+        return { kind: 'imported', library: summaryFor(nextCatalog), warnings };
+      } catch {
+        return { kind: 'rejected', reason: 'not-serato-library' };
+      }
+    });
+  }
+
+  syncLibraries(owner: BrowserWindow, request: SyncRequest): Promise<SyncResult> {
+    return this.enqueue(async () => {
+      try {
+        let rekordboxPath = this.catalog?.sourceKind === 'rekordbox' ? this.catalog.sourcePath : null;
+        if (rekordboxPath === null) {
+          if (request.direction === 'serato-to-rekordbox') {
+            const choice = await dialog.showSaveDialog(owner, {
+              title: 'Choose the Rekordbox XML to create or merge into', buttonLabel: 'Use this XML',
+              defaultPath: join(homedir(), 'rekordbox.xml'), filters: [{ name: 'Rekordbox XML', extensions: ['xml'] }],
+            });
+            if (choice.canceled || !choice.filePath) return { kind: 'cancelled' };
+            rekordboxPath = choice.filePath;
+          } else {
+            const choice = await dialog.showOpenDialog(owner, {
+              title: 'Choose a Rekordbox XML export', buttonLabel: 'Use this XML', properties: ['openFile'],
+              filters: [{ name: 'Rekordbox XML', extensions: ['xml'] }],
+            });
+            rekordboxPath = choice.filePaths[0] ?? null;
+            if (choice.canceled || rekordboxPath === null) return { kind: 'cancelled' };
+          }
+        }
+        let seratoPath = this.catalog?.seratoPath ?? null;
+        if (seratoPath === null) {
+          const choice = await dialog.showOpenDialog(owner, {
+            title: 'Choose the Serato Library or _Serato_ folder', buttonLabel: 'Use this Serato library',
+            defaultPath: this.defaultSeratoPath(), properties: ['openDirectory'],
+          });
+          seratoPath = choice.filePaths[0] ?? null;
+          if (choice.canceled || seratoPath === null) return { kind: 'cancelled' };
+        }
+        const serato = await findSeratoSource(seratoPath);
+        const workspace = this.catalog?.sourceKind === 'serato'
+          ? rekordboxSyncLibrary(await parseRekordboxXml(this.catalog.sourcePath)) : null;
+        const result = await syncLibraryFiles({ rekordboxPath, serato, request, workspace });
+        if (result.kind === 'synced' && this.catalog !== null) {
+          if (this.catalog.sourceKind === 'serato') {
+            const { library } = await readSeratoWithPerformance(serato);
+            const previous = await readFile(this.catalog.sourcePath, 'utf8');
+            const refreshed = workspace === null ? library : mergeLibraries(
+              { ...library, playlists: workspace.playlists }, { ...workspace, playlists: library.playlists },
+            );
+            await saveLibraryXml(this.catalog.sourcePath, mergeRekordboxXml(refreshed), previous, false);
+          }
+          this.catalog = await this.catalogFor(this.catalog.sourcePath, this.catalog.seratoPath);
+          this.cancelSuggestions();
+        }
+        return result;
+      } catch (error) {
+        return { kind: 'rejected', message: error instanceof Error ? error.message : 'Could not sync the libraries.' };
+      }
+    });
+  }
+
+  private defaultSeratoPath(): string {
+    if (process.platform === 'darwin') return join(homedir(), 'Library', 'Application Support', 'Serato', 'Library');
+    if (process.platform === 'win32') return join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'Serato', 'Library');
+    return join(homedir(), 'Music', '_Serato_');
+  }
+
   mutate(change: LibraryMutation): Promise<LibraryMutationResult> {
     return this.enqueue(() => this.applyMutation(change));
   }
 
   private requireCatalog(): CurrentCatalog {
     if (this.catalog === null) {
-      throw new Error('No Rekordbox export is open');
+      throw new Error('No library is open');
     }
     return this.catalog;
   }
@@ -507,6 +610,7 @@ export class RekordboxLibrary {
       this.cancelSuggestions();
       this.catalog = nextCatalog;
       this.rememberedPath = selectedPath;
+      this.rememberedSeratoPath = null;
       await this.remember(selectedPath);
       return { kind: 'imported', library: summaryFor(nextCatalog) };
     } catch (error: unknown) {
@@ -738,7 +842,7 @@ export class RekordboxLibrary {
         expectedFingerprint: catalog.fingerprint,
         filePath: catalog.sourcePath,
       });
-      return { kind: 'ready', catalog: await this.catalogFor(catalog.sourcePath) };
+      return { kind: 'ready', catalog: await this.catalogFor(catalog.sourcePath, catalog.seratoPath) };
     } catch (error: unknown) {
       if (error instanceof RekordboxWriteError) {
         if (error.reason === 'source-changed') {
@@ -752,7 +856,7 @@ export class RekordboxLibrary {
     }
   }
 
-  private async catalogFor(filePath: string): Promise<CurrentCatalog> {
+  private async catalogFor(filePath: string, seratoPath: string | null = null): Promise<CurrentCatalog> {
     const parsed = await parseRekordboxXml(filePath);
     const revision = randomUUID();
     const mediaPathBySongId = new Map<string, string>();
@@ -777,7 +881,9 @@ export class RekordboxLibrary {
     return {
       revision,
       sourcePath: filePath,
-      sourceName: basename(filePath),
+      sourceName: seratoPath === null ? basename(filePath) : 'Serato library',
+      sourceKind: seratoPath === null ? 'rekordbox' : 'serato',
+      seratoPath,
       importedAt: new Date().toISOString(),
       fingerprint: parsed.fingerprint,
       tracks,
@@ -808,7 +914,7 @@ export class RekordboxLibrary {
       return false;
     }
 
-    const state: RememberedLibrary = { rekordboxXmlPath, ignoredDuplicateGroups, minimumSongLengthSeconds };
+    const state: RememberedLibrary = { rekordboxXmlPath, seratoPath: this.rememberedSeratoPath, ignoredDuplicateGroups, minimumSongLengthSeconds };
     try {
       await writeFile(this.stateFilePath, `${JSON.stringify(state)}\n`, {
         encoding: 'utf8',

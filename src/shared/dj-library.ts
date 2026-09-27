@@ -4,6 +4,8 @@ import type { SmartPlaylistDefinition } from './smart-playlists';
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   importExport: 'dj-library:import-export',
+  importSerato: 'dj-library:import-serato',
+  syncLibraries: 'dj-library:sync-libraries',
   listSongs: 'dj-library:list-songs',
   findDuplicates: 'dj-library:find-duplicates',
   listPlaylists: 'dj-library:list-playlists',
@@ -131,8 +133,11 @@ export type DuplicateScan = Readonly<{
   trackCount: number;
 }>;
 
+export type LibrarySourceKind = 'rekordbox' | 'serato';
+
 export type LibrarySummary = Readonly<{
   revision: string;
+  sourceKind: LibrarySourceKind;
   sourceName: string;
   importedAt: string;
   songCount: number;
@@ -186,12 +191,45 @@ export type LibraryStatus =
 export type ImportFailure =
   | 'cannot-read'
   | 'not-rekordbox-xml'
+  | 'not-serato-library'
+  | 'cannot-save-library'
   | 'malformed-xml';
 
 export type ImportResult =
-  | Readonly<{ kind: 'imported'; library: LibrarySummary }>
+  | Readonly<{ kind: 'imported'; library: LibrarySummary; warnings?: readonly string[] }>
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{ kind: 'rejected'; reason: ImportFailure }>;
+
+export type SyncDirection = 'rekordbox-to-serato' | 'serato-to-rekordbox' | 'both';
+
+export type SyncFields = Readonly<{
+  tracks: boolean;
+  metadata: boolean;
+  playlists: boolean;
+  hotCues: boolean;
+  loops: boolean;
+  beatgrids: boolean;
+}>;
+
+export type SyncRequest = Readonly<{
+  direction: SyncDirection;
+  conflictSource: LibrarySourceKind;
+  fields: SyncFields;
+  timingOffsetMs: number;
+}>;
+
+export type SyncResult =
+  | Readonly<{ kind: 'cancelled' }>
+  | Readonly<{
+      kind: 'synced';
+      trackCount: number;
+      playlistCount: number;
+      skippedTrackCount: number;
+      warnings: readonly string[];
+      backupPaths: readonly string[];
+      message: string;
+    }>
+  | Readonly<{ kind: 'rejected'; message: string }>;
 
 export type PageRequest = Readonly<{
   offset: number;
@@ -310,6 +348,8 @@ export type LibraryMutationResult =
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   importRekordboxExport(): Promise<ImportResult>;
+  importSeratoLibrary(): Promise<ImportResult>;
+  syncLibraries(request: SyncRequest): Promise<SyncResult>;
   listSongs(page: PageRequest): Promise<SongPage>;
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;

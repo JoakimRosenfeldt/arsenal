@@ -1004,6 +1004,49 @@ input:disabled {
   margin-top: 24px;
 }
 
+.library-import-description {
+  margin: 20px 0 0;
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.library-import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.library-import-actions .accent-button {
+  margin-top: 0;
+}
+
+.library-empty-sync {
+  width: max-content;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.library-source-note {
+  margin: 0;
+  padding: 0 28px 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.library-source-note span {
+  margin-left: 12px;
+  color: var(--text-soft);
+}
+
+.library-import-menu > summary[aria-disabled="true"] {
+  opacity: .5;
+  cursor: default;
+}
+
 .loading-state {
   display: grid;
   height: 100%;
@@ -2553,6 +2596,66 @@ button.sidebar-search {
 
 .tracklist-export-actions .accent-button {
   flex: none;
+}
+
+.library-sync-directions > div {
+  flex-direction: column;
+  gap: 12px;
+}
+
+.library-sync-fields > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.library-sync-description {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.library-sync-description p {
+  margin: 12px 0;
+}
+
+.library-sync-timing {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.library-sync-timing summary {
+  cursor: pointer;
+}
+
+.library-sync-timing label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.library-sync-timing input {
+  width: 90px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--canvas);
+}
+
+.library-sync-timing p {
+  color: var(--muted);
+}
+
+.library-sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
 }
 
 .playlist-name-field select,
