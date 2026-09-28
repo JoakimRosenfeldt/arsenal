@@ -1070,6 +1070,8 @@ export class RekordboxLibrary {
         return this.removeSongs(catalog, change);
       case 'set-playlist-tracks':
         return this.setPlaylistTracks(catalog, change);
+      case 'remove-playlist':
+        return this.removePlaylist(catalog, change);
       case 'create-playlist':
       case 'create-folder':
       case 'save-smart-playlist':
@@ -1194,6 +1196,20 @@ export class RekordboxLibrary {
     this.cancelSuggestions();
     this.catalog = reload.catalog;
     return { kind: 'playlist-updated', library: summaryFor(reload.catalog), playlistId: playlist.id };
+  }
+
+  private async removePlaylist(
+    catalog: CurrentCatalog,
+    change: Extract<LibraryMutation, { kind: 'remove-playlist' }>,
+  ): Promise<LibraryMutationResult> {
+    if (!catalog.playlists.some((playlist) => playlist.id === change.playlistId)) {
+      return { kind: 'rejected', reason: 'invalid-playlist' };
+    }
+    const reload = await this.writeAndReload(catalog, { kind: 'remove-playlist', playlistId: change.playlistId });
+    if (reload.kind === 'rejected') return reload;
+    this.cancelSuggestions();
+    this.catalog = reload.catalog;
+    return { kind: 'playlist-removed', library: summaryFor(reload.catalog) };
   }
 
   private async createPlaylistNode(

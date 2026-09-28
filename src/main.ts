@@ -246,6 +246,13 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
     }
     return { kind: 'set-playlist-tracks', revision: value.revision, playlistId: value.playlistId, songIds: value.songIds };
   }
+  if (value.kind === 'remove-playlist') {
+    if (typeof value.revision !== 'string' || value.revision.length === 0 ||
+      typeof value.playlistId !== 'string' || value.playlistId.length === 0) {
+      throw new Error('Invalid playlist removal');
+    }
+    return { kind: 'remove-playlist', revision: value.revision, playlistId: value.playlistId };
+  }
   throw new Error('Invalid library mutation');
 };
 
@@ -516,6 +523,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
       Menu.buildFromTemplate([
         ...(playlistId === null ? [] : [
           { label: 'Export tracklist…', click: () => resolve('export-tracklist' as const) },
+          { label: 'Remove playlist…', click: () => resolve('remove-playlist' as const) },
           { type: 'separator' as const },
         ]),
         { label: 'New playlist…', click: () => resolve('playlist') },

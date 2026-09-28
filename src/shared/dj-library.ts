@@ -173,7 +173,7 @@ export type PlaylistFolder = Readonly<{
 }>;
 
 export type PlaylistCreationKind = 'playlist' | 'folder' | 'smart-playlist';
-export type PlaylistMenuAction = PlaylistCreationKind | 'export-tracklist';
+export type PlaylistMenuAction = PlaylistCreationKind | 'export-tracklist' | 'remove-playlist';
 export type PlaylistWindowRequest = Readonly<{ revision: string; parentFolderId: string | null }> & (
   | Readonly<{ kind: 'playlist'; songIds: readonly string[] }>
   | Readonly<{ kind: 'folder' | 'smart-playlist' }>
@@ -374,6 +374,11 @@ export type LibraryMutation =
       songIds: readonly string[];
     }>
   | Readonly<{
+      kind: 'remove-playlist';
+      revision: string;
+      playlistId: string;
+    }>
+  | Readonly<{
       kind: 'save-smart-playlist';
       revision: string;
       name: string;
@@ -422,6 +427,10 @@ export type LibraryMutationResult =
       kind: 'playlist-updated';
       library: LibrarySummary;
       playlistId: string;
+    }>
+  | Readonly<{
+      kind: 'playlist-removed';
+      library: LibrarySummary;
     }>
   | Readonly<{
       kind: 'folder-created';

@@ -39,6 +39,10 @@ export type RekordboxXmlEdit =
       }>[];
     }>
   | Readonly<{
+      kind: 'remove-playlist';
+      playlistId: string;
+    }>
+  | Readonly<{
       kind: 'update-smart-playlist';
       playlistId: string;
       name: string;
@@ -316,7 +320,7 @@ const openingReplacement = (
 
 const removalReplacement = (
   source: string,
-  span: ElementSpan,
+  span: ElementSpan | PlaylistNodeSpan,
 ): Replacement => {
   const lineStart = source.lastIndexOf('\n', span.start - 1) + 1;
   const prefix = source.slice(lineStart, span.start);
@@ -600,6 +604,25 @@ const setPlaylistTracks = (
   return applyReplacements(source, replacements);
 };
 
+const removePlaylist = (
+  source: string,
+  index: XmlIndex,
+  playlistId: string,
+): string => {
+  const node = index.playlistNodes.find((candidate) => candidate.id === playlistId);
+  if (node === undefined || (node.nodeType !== '1' && !isSmartPlaylistNode(node.attributes))) {
+    throw new RekordboxWriteError('target-not-found', 'The playlist no longer exists');
+  }
+  const parent = index.playlistNodes
+    .filter((candidate) => candidate.start < node.start && candidate.end > node.end)
+    .at(-1);
+  if (parent === undefined) throw new RekordboxWriteError('invalid-document', 'The playlist has no parent node');
+  return applyReplacements(source, [
+    openingReplacement(source, parent, 'Count', String(parent.childNodeCount - 1)),
+    removalReplacement(source, node),
+  ]);
+};
+
 const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
   const index = scanXml(source);
   let edited: string;
@@ -607,6 +630,8 @@ const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
     edited = removeTracks(source, index, edit);
   } else if (edit.kind === 'set-playlist-tracks') {
     edited = setPlaylistTracks(source, index, edit);
+  } else if (edit.kind === 'remove-playlist') {
+    edited = removePlaylist(source, index, edit.playlistId);
   } else if (edit.kind === 'update-smart-playlist') {
     const node = index.playlistNodes.find((candidate) => candidate.id === edit.playlistId);
     if (node === undefined) throw new RekordboxWriteError('target-not-found', 'The playlist no longer exists');

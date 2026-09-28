@@ -502,7 +502,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       setFeedback(
         result.kind === 'songs-removed'
           ? feedbackForRemoval(result)
-          : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : result.kind === 'playlist-updated' ? 'Playlist saved.' : 'Playlist created.' },
+          : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : result.kind === 'playlist-updated' ? 'Playlist saved.' : result.kind === 'playlist-removed' ? 'Playlist removed.' : 'Playlist created.' },
       );
       if (result.kind === 'playlist-created' || result.kind === 'smart-playlist-saved' || result.kind === 'playlist-updated') {
         setEditor(null);
@@ -510,6 +510,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         setActivePage('playlists');
       } else if (result.kind === 'folder-created') {
         setEditor(null);
+      } else if (result.kind === 'playlist-removed') {
+        setSelectedPlaylistId(null);
       }
       return true;
     } catch {
@@ -641,6 +643,11 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       const kind = await window.djLibrary.playlistMenu(playlistId);
       if (kind === 'export-tracklist') {
         setExportPlaylistId(playlistId);
+      } else if (kind === 'remove-playlist') {
+        const playlist = playlists?.find((candidate) => candidate.id === playlistId);
+        if (playlistId !== null && playlist && window.confirm(`Remove "${playlist.name}"? The tracks will stay in your library.`)) {
+          await applyMutation((revision) => ({ kind: 'remove-playlist', revision, playlistId }));
+        }
       } else if (kind !== null) {
         openPlaylistEditor({ parentFolderId, revision: libraryVersion, ...(kind === 'playlist' ? { kind, songIds: [] } : { kind }) });
       }
