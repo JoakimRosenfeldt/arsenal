@@ -37,7 +37,7 @@ Use a Developer ID Application certificate for distribution outside the Mac App 
 
 For signed local builds, set `CSC_LINK` and `CSC_KEY_PASSWORD` along with the three Apple variables above before running `npm run make`. You can use `CSC_NAME` instead of `CSC_LINK` when the certificate is already in your keychain.
 
-Pull requests, pushes to `main`, and manual workflow runs produce build artifacts without signing credentials. macOS builds use ad-hoc signing for these previews. Use a signed release build to test automatic updates on macOS. Windows builds use unsigned per-user NSIS installers.
+Pushes to `main` produce build artifacts without signing credentials. macOS builds use ad-hoc signing for these builds. Use a signed release build to test automatic updates on macOS. Windows builds use unsigned per-user NSIS installers.
 
 ## Publish a version
 
