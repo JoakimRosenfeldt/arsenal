@@ -953,44 +953,61 @@ export class RekordboxLibrary {
       if (context === null) return { kind: 'rejected', warnings: [], backupPaths: [], message: 'Run sync again to check the current libraries for missing files.' };
       const repairedPaths = new Set<string>();
       try {
-        if (!context.result.files.some((file) => file.path === action.path)) throw new Error('This file is not in the current missing-file report. Retry sync.');
+        const requestedPaths = 'paths' in action ? action.paths : action.kind === 'relink-many'
+          ? action.replacements.map((replacement) => replacement.path) : [action.path];
+        if (!requestedPaths.length || requestedPaths.some((path) => !context.result.files.some((file) => file.path === path))) {
+          throw new Error('A selected file is not in the current missing-file report. Retry sync.');
+        }
+        const selectedPaths = new Set(requestedPaths.map(normalizePath));
+        if (action.kind === 'relink-many' && selectedPaths.size !== action.replacements.length) {
+          throw new Error('Choose each missing file only once.');
+        }
         const libraries = await this.refreshMissingSyncReport(context);
-        const missing = context.result.files.find((file) => normalizePath(file.path) === normalizePath(action.path));
-        if (!missing) return context.result;
-        if (action.kind === 'search') {
+        const missingFiles = context.result.files.filter((file) => selectedPaths.has(normalizePath(file.path)));
+        if (!missingFiles.length) return context.result;
+        if (action.kind === 'search' || action.kind === 'search-many') {
           const picked = await dialog.showOpenDialog(owner, { title: 'Search folder for missing audio', properties: ['openDirectory'] });
           const directory = picked.filePaths[0];
           if (picked.canceled || !directory) return context.result;
-          const found = await searchSyncMissingFiles([missing], [directory]);
-          context.result = { ...context.result, files: context.result.files.map((file) => file.path === missing.path ? found.files[0] ?? file : file),
+          const found = await searchSyncMissingFiles(missingFiles, [directory]);
+          const searched = new Map(found.files.map((file) => [normalizePath(file.path), file]));
+          context.result = { ...context.result, files: context.result.files.map((file) => searched.get(normalizePath(file.path)) ?? file),
             warnings: [...context.result.warnings, ...found.warnings] };
           return context.result;
         }
-        let replacementPath: string | null = action.kind === 'relink' ? action.replacementPath : null;
+        const replacements = new Map<string, string>(action.kind === 'relink-many'
+          ? action.replacements.map((replacement) => [normalizePath(replacement.path), replacement.replacementPath])
+          : action.kind === 'relink' ? [[normalizePath(action.path), action.replacementPath]] : []);
         if (action.kind === 'locate') {
-          const picked = await dialog.showOpenDialog(owner, { title: `Locate ${basename(missing.path)}`, defaultPath: dirname(missing.path),
+          const picked = await dialog.showOpenDialog(owner, { title: `Locate ${basename(action.path)}`, defaultPath: dirname(action.path),
             properties: ['openFile'], filters: [{ name: 'Audio files', extensions: ['aac', 'aif', 'aifc', 'aiff', 'flac', 'm4a', 'mp2', 'mp3', 'mp4', 'oga', 'ogg', 'opus', 'wav', 'wma', 'wv'] }] });
-          replacementPath = picked.filePaths[0] ?? null;
-          if (picked.canceled || replacementPath === null) return context.result;
+          const replacementPath = picked.filePaths[0];
+          if (picked.canceled || replacementPath === undefined) return context.result;
+          replacements.set(normalizePath(action.path), replacementPath);
         }
-        if (replacementPath !== null && !isSupportedAudioPath(replacementPath)) throw new Error('Choose a supported audio file.');
-        const chosenPath = replacementPath;
-        if (chosenPath !== null) context.result = { ...context.result, files: context.result.files.map((file) => file.path === missing.path
-          ? { ...file, candidates: [...new Set([chosenPath, ...file.candidates])] } : file) };
-        const repairs = libraries.filter(({ library }) => library.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path)))
-          .sort((left, right) => Number(left.target.kind === 'xml') - Number(right.target.kind === 'xml'));
-        for (const { target } of repairs) {
-          try {
-            const current = target.kind === 'xml' ? rekordboxSyncLibrary(await parseRekordboxXml(target.path)) : await readSeratoLibrary(target);
-            if (!current.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path))) continue;
-            const result = target.kind === 'xml' ? await repairRekordboxMissingFile(target.path, missing.path, replacementPath)
-              : await repairSeratoMissingFile(target, missing.path, replacementPath);
-            repairedPaths.add(normalizePath(target.path));
-            context.result = { ...context.result, backupPaths: [...context.result.backupPaths, ...result.backupPaths],
-              warnings: [...context.result.warnings, ...result.warnings] };
-          } catch (error) {
-            context.result = { ...context.result, warnings: [...context.result.warnings,
-              `${target.path}: ${error instanceof Error ? error.message : 'Could not repair the connected library.'}`] };
+        for (const missing of missingFiles) {
+          const replacementPath = replacements.get(normalizePath(missing.path)) ?? null;
+          if (replacementPath !== null && !isSupportedAudioPath(replacementPath)) {
+            context.result = { ...context.result, warnings: [...context.result.warnings, `${missing.path}: Choose a supported audio file.`] };
+            continue;
+          }
+          if (replacementPath !== null) context.result = { ...context.result, files: context.result.files.map((file) => file.path === missing.path
+            ? { ...file, candidates: [...new Set([replacementPath, ...file.candidates])] } : file) };
+          const repairs = libraries.filter(({ library }) => library.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path)))
+            .sort((left, right) => Number(left.target.kind === 'xml') - Number(right.target.kind === 'xml'));
+          for (const { target } of repairs) {
+            try {
+              const current = target.kind === 'xml' ? rekordboxSyncLibrary(await parseRekordboxXml(target.path)) : await readSeratoLibrary(target);
+              if (!current.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path))) continue;
+              const result = target.kind === 'xml' ? await repairRekordboxMissingFile(target.path, missing.path, replacementPath)
+                : await repairSeratoMissingFile(target, missing.path, replacementPath);
+              repairedPaths.add(normalizePath(target.path));
+              context.result = { ...context.result, backupPaths: [...context.result.backupPaths, ...result.backupPaths],
+                warnings: [...context.result.warnings, ...result.warnings] };
+            } catch (error) {
+              context.result = { ...context.result, warnings: [...context.result.warnings,
+                `${missing.path} in ${target.path}: ${error instanceof Error ? error.message : 'Could not repair the connected library.'}`] };
+            }
           }
         }
         await this.refreshMissingSyncReport(context);

@@ -2939,8 +2939,28 @@ button.sidebar-search {
   border-top: 1px solid var(--line);
 }
 
-.library-sync-missing-file > strong {
+.library-sync-file-selection strong {
   color: var(--text);
+}
+
+.library-sync-bulk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.library-sync-file-selection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.library-sync-file-selection input {
+  flex-shrink: 0;
+  accent-color: var(--accent);
 }
 
 .library-sync-file-path {

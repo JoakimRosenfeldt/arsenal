@@ -29,6 +29,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
 }>): JSX.Element => {
   const resultRef = useRef<HTMLElement>(null);
+  const removalRef = useRef<HTMLDivElement>(null);
   const savedRequestKey = useRef<string | null>(null);
   const savedPrimaryId = useRef<string | null | undefined>(undefined);
   const [preferences, setPreferences] = useState<SyncPreferences | null>(null);
@@ -41,7 +42,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   });
   const [result, setResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
   const [repairError, setRepairError] = useState<string | null>(null);
-  const [removePath, setRemovePath] = useState<string | null>(null);
+  const [selectedPaths, setSelectedPaths] = useState<readonly string[]>([]);
+  const [removePaths, setRemovePaths] = useState<readonly string[]>([]);
   const [timingOffset, setTimingOffset] = useState('0');
   const sourceKind = direction === 'both' ? null : direction === 'rekordbox-to-serato' ? 'rekordbox' : 'serato';
   const primary = connections?.connections.find((connection) => connection.id === connections.sourceOfTruthId);
@@ -63,6 +65,13 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const timingOffsetMs = validOffset ? parsedTimingOffset : 0;
   const validTiming = !hasPerformance || validOffset;
   const missingFiles = result?.kind === 'missing-files' ? result.files : null;
+  const selectedPathSet = new Set(selectedPaths);
+  const selectedFiles = missingFiles?.filter((file) => selectedPathSet.has(file.path)) ?? [];
+  const selectedMatches = selectedFiles.flatMap((file) => file.candidates.length === 1
+    ? file.candidates.map((replacementPath) => ({ path: file.path, replacementPath })) : []);
+  const removePathSet = new Set(removePaths);
+  const removalFiles = missingFiles?.filter((file) => removePathSet.has(file.path)) ?? [];
+  const removalLibraries = [...new Set(removalFiles.flatMap((file) => file.libraryPaths ?? []))];
   const hasMissingFiles = missingFiles !== null && missingFiles.length > 0;
   const hasIssues = result !== null && (result.kind === 'rejected' || hasMissingFiles || result.warnings.length > 0 ||
     result.kind === 'synced' && result.skippedTrackCount > 0);
@@ -100,13 +109,21 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     }
   }, [result]);
 
+  useEffect(() => {
+    if (removePaths.length > 0) {
+      removalRef.current?.focus({ preventScroll: true });
+      removalRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [removePaths]);
+
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
     if (working || preferences === null || needsLibraries || !hasFields || !validTiming) return;
     setPending(true);
     setResult(null);
     setRepairError(null);
-    setRemovePath(null);
+    setSelectedPaths([]);
+    setRemovePaths([]);
     try {
       let next = await onSync({ direction, mode, conflictSource, fields, timingOffsetMs });
       try {
@@ -137,7 +154,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
       setPreferences(await window.djLibrary.selectSyncLibrary(id));
       setResult((current) => current?.kind === 'missing-files' ? current : null);
       setRepairError(null);
-      setRemovePath(null);
+      setRemovePaths([]);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not choose the library. Try again.';
       if (missingFiles !== null) setRepairError(message);
@@ -165,10 +182,12 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
           warnings: [...new Set([...(current?.warnings ?? []), ...next.warnings])],
           backupPaths: [...new Set([...(current?.backupPaths ?? []), ...next.backupPaths])],
         }));
-        setRemovePath(null);
+        const remainingPaths = new Set(next.kind === 'missing-files' ? next.files.map((file) => file.path) : []);
+        setSelectedPaths((current) => current.filter((path) => remainingPaths.has(path)));
+        setRemovePaths([]);
       }
     } catch (error: unknown) {
-      setRepairError(error instanceof Error ? error.message : 'Could not update the missing file. Try again.');
+      setRepairError(error instanceof Error ? error.message : 'Could not update the missing files. Try again.');
     } finally {
       setPending(false);
     }
@@ -192,13 +211,64 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
                 {repairError !== null && <p className="library-sync-recovery-error" role="alert">{repairError}</p>}
                 {hasMissingFiles ? (
                   <>
-                    <p>Relinking updates every connected library that references the file, regardless of sync direction. After reconnecting a drive, check files again.</p>
+                    <p>Changes apply to all connected libraries.</p>
+                    <div className="library-sync-bulk-actions" aria-label="Missing file selection">
+                      <label className="library-sync-file-selection">
+                        <input type="checkbox" disabled={working} checked={selectedFiles.length === missingFiles.length}
+                          ref={(input) => { if (input !== null) input.indeterminate = selectedFiles.length > 0 && selectedFiles.length < missingFiles.length; }}
+                          onChange={(event) => setSelectedPaths(event.currentTarget.checked ? missingFiles.map((file) => file.path) : [])} />
+                        <span>Select all</span>
+                      </label>
+                      <span aria-live="polite">{selectedFiles.length} selected</span>
+                      <button className="quiet-button" type="button" disabled={working || selectedFiles.length === 0}
+                        onClick={() => void resolveMissing({ kind: 'search-many', paths: selectedFiles.map((file) => file.path) })}>Search folder…</button>
+                      <button className="quiet-button" type="button" disabled={working || selectedMatches.length === 0}
+                        onClick={() => void resolveMissing({ kind: 'relink-many', replacements: selectedMatches })}>
+                        {selectedMatches.length > 0 ? `Use ${selectedMatches.length} ${selectedMatches.length === 1 ? 'match' : 'matches'}` : 'Use matches'}
+                      </button>
+                      <button className="quiet-button" type="button" disabled={working || selectedFiles.length === 0}
+                        onClick={() => setRemovePaths(selectedFiles.map((file) => file.path))}>Remove selected…</button>
+                    </div>
+                    {selectedFiles.length > 0 && <p>Use matches relinks songs with one possible match. Review multiple matches individually.</p>}
+                    {removalFiles.length > 0 && (
+                      <div className="library-sync-remove-confirmation" ref={removalRef} tabIndex={-1}
+                        role="group" aria-labelledby="library-sync-remove-title">
+                        <strong id="library-sync-remove-title">Remove {removalFiles.length === 1 ? 'this song' : `${removalFiles.length} songs`} from all connected libraries?</strong>
+                        <ul className="library-sync-result-list" aria-label="Songs to remove">
+                          {removalFiles.map((file) => <li key={file.path}>{file.title || 'Untitled track'}
+                            <div className="library-sync-file-path">{file.path}</div>
+                          </li>)}
+                        </ul>
+                        {removalLibraries.length > 0 && (
+                          <details>
+                            <summary>Libraries affected ({removalLibraries.length})</summary>
+                            <ul className="library-sync-result-list" aria-label="Collections to remove from">
+                              {removalLibraries.map((path) => <li key={path}>{path}</li>)}
+                            </ul>
+                          </details>
+                        )}
+                        <p>Removes the songs and their playlist memberships. Audio files stay on disk.</p>
+                        <div className="library-sync-file-actions">
+                          <button className="quiet-button" type="button" disabled={working} onClick={() => setRemovePaths([])}>Cancel</button>
+                          <button className="quiet-button" type="button" disabled={working}
+                            onClick={() => void resolveMissing({ kind: 'remove-many', paths: removalFiles.map((file) => file.path) })}>Remove from collections</button>
+                        </div>
+                      </div>
+                    )}
                     <ul className="library-sync-missing-list" aria-label="Missing audio files">
                       {missingFiles.map((file) => {
                         const collections = file.libraries.map((kind) => kind === 'rekordbox' ? 'Rekordbox XML' : 'Serato').join(' and ');
                         return (
                           <li key={file.path} className="library-sync-missing-file">
-                            <strong>{file.title || 'Untitled track'}{file.artist ? ` · ${file.artist}` : ''}</strong>
+                            <label className="library-sync-file-selection">
+                              <input type="checkbox" disabled={working} checked={selectedPathSet.has(file.path)}
+                                aria-label={`Select ${file.title || 'Untitled track'} (${file.path})`}
+                                onChange={(event) => {
+                                  const checked = event.currentTarget.checked;
+                                  setSelectedPaths((current) => checked ? [...current, file.path] : current.filter((path) => path !== file.path));
+                                }} />
+                              <strong>{file.title || 'Untitled track'}{file.artist ? ` · ${file.artist}` : ''}</strong>
+                            </label>
                             <p className="library-sync-file-path">{file.path}</p>
                             <p>In {collections}</p>
                             {file.libraryPaths !== undefined && file.libraryPaths.length > 0 && (
@@ -231,25 +301,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
                               <button className="quiet-button" type="button" disabled={working}
                                 onClick={() => void resolveMissing({ kind: 'locate', path: file.path })}>Choose file…</button>
                               <button className="quiet-button" type="button" disabled={working}
-                                onClick={() => setRemovePath(file.path)}>Remove entry…</button>
+                                onClick={() => setRemovePaths([file.path])}>Remove entry…</button>
                             </div>
-                            {removePath === file.path && (
-                              <div className="library-sync-remove-confirmation">
-                                <p>Remove this entry from the connected {collections} collections?</p>
-                                <p className="library-sync-file-path">{file.path}</p>
-                                {file.libraryPaths !== undefined && file.libraryPaths.length > 0 && (
-                                  <ul className="library-sync-result-list" aria-label="Collections to remove from">
-                                    {file.libraryPaths.map((path) => <li key={path}>{path}</li>)}
-                                  </ul>
-                                )}
-                                <p>Removes the track and its playlist memberships from these collections. Audio files stay on disk.</p>
-                                <div className="library-sync-file-actions">
-                                  <button className="quiet-button" type="button" disabled={working} onClick={() => setRemovePath(null)}>Keep entry</button>
-                                  <button className="quiet-button" type="button" disabled={working}
-                                    onClick={() => void resolveMissing({ kind: 'remove', path: file.path })}>Remove from collections</button>
-                                </div>
-                              </div>
-                            )}
                           </li>
                         );
                       })}

@@ -294,7 +294,9 @@ export type SyncMissingFile = Readonly<{
 
 export type SyncMissingFileAction =
   | Readonly<{ kind: 'search' | 'locate' | 'remove'; path: string }>
-  | Readonly<{ kind: 'relink'; path: string; replacementPath: string }>;
+  | Readonly<{ kind: 'relink'; path: string; replacementPath: string }>
+  | Readonly<{ kind: 'search-many' | 'remove-many'; paths: readonly string[] }>
+  | Readonly<{ kind: 'relink-many'; replacements: readonly Readonly<{ path: string; replacementPath: string }>[] }>;
 
 export type SyncResult =
   | Readonly<{ kind: 'cancelled' }>

@@ -435,17 +435,31 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   ipc.handle(DJ_LIBRARY_CHANNELS.resolveSyncMissingFile, async (event, value: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Resolve missing files from the library window');
-    if (!isRecord(value) || typeof value.path !== 'string' ||
-      !(isAbsolute(value.path) || win32.isAbsolute(value.path)) || value.path.includes('\0')) {
-      throw new Error('Invalid missing file selection');
-    }
+    if (!isRecord(value)) throw new Error('Invalid missing file selection');
+    const missingPath = (path: unknown): path is string => typeof path === 'string' &&
+      (isAbsolute(path) || win32.isAbsolute(path)) && !path.includes('\0');
+    const replacementPath = (path: unknown): path is string => typeof path === 'string' && isAbsolute(path) && !path.includes('\0');
     let action: SyncMissingFileAction;
-    if (value.kind === 'relink') {
-      if (typeof value.replacementPath !== 'string' || !isAbsolute(value.replacementPath) || value.replacementPath.includes('\0')) {
-        throw new Error('Choose a valid replacement audio file');
+    if (value.kind === 'search-many' || value.kind === 'remove-many') {
+      if (!Array.isArray(value.paths) || value.paths.length === 0) throw new Error('Choose valid missing files');
+      const paths: unknown[] = Array.from(value.paths);
+      if (!paths.every(missingPath)) throw new Error('Choose valid missing files');
+      action = { kind: value.kind, paths: [...new Set(paths)] };
+    } else if (value.kind === 'relink-many') {
+      if (!Array.isArray(value.replacements) || value.replacements.length === 0) throw new Error('Choose replacement audio files');
+      const replacements = Array.from(value.replacements, (entry: unknown) => {
+        if (!isRecord(entry) || !missingPath(entry.path) || !replacementPath(entry.replacementPath)) throw new Error('Choose valid replacement audio files');
+        return { path: entry.path, replacementPath: entry.replacementPath };
+      });
+      if (new Set(replacements.map((entry) => entry.path)).size !== replacements.length) throw new Error('Choose each missing file only once');
+      action = { kind: value.kind, replacements };
+    } else if (value.kind === 'relink') {
+      if (!missingPath(value.path) || !replacementPath(value.replacementPath)) {
+        throw new Error('Choose a valid missing file and replacement audio file');
       }
       action = { kind: value.kind, path: value.path, replacementPath: value.replacementPath };
     } else if (value.kind === 'search' || value.kind === 'locate' || value.kind === 'remove') {
+      if (!missingPath(value.path)) throw new Error('Invalid missing file selection');
       action = { kind: value.kind, path: value.path };
     } else {
       throw new Error('Invalid missing file action');
