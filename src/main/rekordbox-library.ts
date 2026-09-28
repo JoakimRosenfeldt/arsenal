@@ -668,6 +668,37 @@ export class RekordboxLibrary {
     return this.requireCatalog().folders;
   }
 
+  async playlistOrder(): Promise<readonly (readonly string[])[]> {
+    const catalog = this.requireCatalog();
+    const activeOrder = [...catalog.folders.map((folder) => ({ path: folder.folderPath, order: folder.order })),
+      ...catalog.playlists.map((playlist) => ({ path: [...playlist.folderPath, playlist.name], order: playlist.order }))]
+      .sort((left, right) => left.order - right.order).map((node) => node.path);
+    const primary = this.connectedLibraries.find((connection) => connection.id === this.sourceOfTruthId);
+    if (primary === undefined || primary.id === this.activeConnectionId) return activeOrder;
+    try {
+      const xmlPath = primary.kind === 'rekordbox' ? primary.path : primary.dirty ? primary.workspacePath : null;
+      if (xmlPath !== null) {
+        const parsed = await parseRekordboxXml(xmlPath);
+        return [...parsed.folders.map((folder) => ({ path: folder.folderPath, order: folder.order })),
+          ...parsed.playlists.map((playlist) => ({ path: [...playlist.folderPath, playlist.name], order: playlist.order }))]
+          .sort((left, right) => left.order - right.order).map((node) => node.path);
+      }
+      const library = await readSeratoLibrary(await findSeratoSource(primary.path));
+      const paths: string[][] = [];
+      const seen = new Set<string>();
+      for (const playlist of library.playlists) {
+        for (let depth = 1; depth <= playlist.path.length; depth += 1) {
+          const path = playlist.path.slice(0, depth);
+          const key = JSON.stringify(path);
+          if (!seen.has(key)) { seen.add(key); paths.push(path); }
+        }
+      }
+      return paths;
+    } catch {
+      return activeOrder;
+    }
+  }
+
   previewSmartPlaylist(revision: string, definition: SmartPlaylistDefinition) {
     const catalog = this.requireCatalog();
     if (revision !== catalog.revision) throw new Error('The library changed. Reopen the rule editor.');

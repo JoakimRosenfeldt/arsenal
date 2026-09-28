@@ -118,6 +118,26 @@ const feedbackForRemoval = (
   };
 };
 
+const loadPlaylistTree = async (): Promise<Readonly<{
+  playlists: readonly RekordboxPlaylist[];
+  folders: readonly PlaylistFolder[];
+}>> => {
+  const [playlists, folders, order] = await Promise.all([
+    window.djLibrary.listPlaylists(),
+    window.djLibrary.listFolders(),
+    window.djLibrary.playlistOrder(),
+  ]);
+  const positions = new Map(order.map((path, index) => [JSON.stringify(path), index]));
+  return {
+    playlists: playlists.map((playlist) => ({ ...playlist,
+      order: positions.get(JSON.stringify([...playlist.folderPath, playlist.name])) ?? order.length + playlist.order,
+    })),
+    folders: folders.map((folder) => ({ ...folder,
+      order: positions.get(JSON.stringify(folder.folderPath)) ?? order.length + folder.order,
+    })),
+  };
+};
+
 export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWindowContext }>): JSX.Element => {
   const [editor, setEditor] = useState<(PlaylistWindowContext & { id: number; initialName?: string; smartDefinition?: SmartPlaylistDefinition }) | null>(playlistWindow ? { ...playlistWindow, id: 0 } : null);
   const editorSequence = useRef(0);
@@ -192,18 +212,17 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           return;
         }
 
-        const [page, loadedPlaylists, loadedFolders] = await Promise.all([
+        const [page, tree] = await Promise.all([
           window.djLibrary.listSongs({
             offset: 0,
             limit: SONG_PAGE_SIZE,
           }),
-          window.djLibrary.listPlaylists(),
-          window.djLibrary.listFolders(),
+          loadPlaylistTree(),
         ]);
         if (active) {
           setView({ library: status.library, page });
-          setPlaylists(loadedPlaylists);
-          setFolders(loadedFolders);
+          setPlaylists(tree.playlists);
+          setFolders(tree.folders);
         }
       } catch {
         if (active) {
@@ -348,15 +367,14 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const refreshLibrary = async (library: LibrarySummary): Promise<void> => {
     searchSequence.current += 1;
     setSearching(false);
-    const [page, loadedPlaylists, loadedFolders] = await Promise.all([
+    const [page, tree] = await Promise.all([
       window.djLibrary.listSongs({ offset: 0, limit: SONG_PAGE_SIZE }),
-      window.djLibrary.listPlaylists(),
-      window.djLibrary.listFolders(),
+      loadPlaylistTree(),
     ]);
     stopPlayback();
     setView({ library, page });
-    setPlaylists(loadedPlaylists);
-    setFolders(loadedFolders);
+    setPlaylists(tree.playlists);
+    setFolders(tree.folders);
     setSelectedPlaylistId(null);
     setQuery('');
     setViewQuery('');
@@ -384,6 +402,11 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       try {
         if (result.status.kind === 'ready') {
           if (result.status.library.revision !== view?.library.revision) await refreshLibrary(result.status.library);
+          else {
+            const tree = await loadPlaylistTree();
+            setPlaylists(tree.playlists);
+            setFolders(tree.folders);
+          }
         } else {
           stopPlayback();
           setView(null);
@@ -478,20 +501,19 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         Math.floor(Math.max(0, result.library.songCount - 1) / SONG_PAGE_SIZE) *
           SONG_PAGE_SIZE,
       );
-      const [page, loadedPlaylists, loadedFolders, scan] = await Promise.all([
+      const [page, tree, scan] = await Promise.all([
         window.djLibrary.searchSongs({
           offset: Math.min(view.page.offset, maxOffset),
           limit: SONG_PAGE_SIZE,
           query,
           filters,
         }),
-        window.djLibrary.listPlaylists(),
-        window.djLibrary.listFolders(),
+        loadPlaylistTree(),
         window.djLibrary.findDuplicates(duplicateMode),
       ]);
       setView({ library: result.library, page });
-      setPlaylists(loadedPlaylists);
-      setFolders(loadedFolders);
+      setPlaylists(tree.playlists);
+      setFolders(tree.folders);
       setViewQuery(query);
       setViewFilters(filters);
       setDuplicateState({

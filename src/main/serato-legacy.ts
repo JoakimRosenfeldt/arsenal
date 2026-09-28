@@ -164,6 +164,17 @@ const readNativeLibrary = async (directory: string, allowMissing: boolean) => {
   }
   const subcrates = join(directory, 'Subcrates');
   const names = await crateNames(subcrates);
+  const orderFile = await readOptional(join(directory, 'neworder.pref')) ?? await readOptional(join(directory, 'Neworder.pref'));
+  if (orderFile !== null) {
+    const order = new Map(new TextDecoder('utf-16be').decode(orderFile).split(/\r?\n/)
+      .filter((line) => line.startsWith('[crate]'))
+      .map((line, index) => [line.slice('[crate]'.length), index]));
+    names.sort((left, right) => {
+      const leftOrder = order.get(left.slice(0, -'.crate'.length)) ?? Infinity;
+      const rightOrder = order.get(right.slice(0, -'.crate'.length)) ?? Infinity;
+      return leftOrder === rightOrder ? 0 : leftOrder - rightOrder;
+    });
+  }
   const crates: NativeCrate[] = [];
   for (const name of names) {
     const file = await readNativeFile(join(subcrates, name), CRATE_VERSION, false);

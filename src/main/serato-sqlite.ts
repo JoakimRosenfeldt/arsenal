@@ -132,6 +132,27 @@ const readLibrary = (db: DatabaseSync, rootPath: string): SyncLibrary => {
   });
   const rows = db.prepare('SELECT id, parent_id, name, type FROM container WHERE space_id = ? ORDER BY list_order, id').all(spaceId);
   const containers = new Map(rows.map((row) => [id(row.id), row]));
+  const children = new Map<number, Row[]>();
+  for (const row of rows) {
+    if (id(row.id) === rootId) continue;
+    const parentId = id(row.parent_id);
+    const siblings = children.get(parentId) ?? [];
+    siblings.push(row);
+    children.set(parentId, siblings);
+  }
+  const orderedRows: Row[] = [];
+  const seen = new Set<number>();
+  const appendChildren = (parentId: number): void => {
+    for (const row of children.get(parentId) ?? []) {
+      const rowId = id(row.id);
+      if (seen.has(rowId)) throw new Error('Invalid Serato crate hierarchy.');
+      seen.add(rowId);
+      orderedRows.push(row);
+      appendChildren(rowId);
+    }
+  };
+  appendChildren(rootId);
+  if (orderedRows.length !== rows.length - 1) throw new Error('Invalid Serato crate hierarchy.');
   const paths = new Map<number, readonly string[]>([[rootId, []]]);
   const getPath = (containerId: number, visiting = new Set<number>()): readonly string[] => {
     const cached = paths.get(containerId);
@@ -157,7 +178,7 @@ const readLibrary = (db: DatabaseSync, rootPath: string): SyncLibrary => {
   }
   return {
     tracks,
-    playlists: rows.filter((row) => id(row.id) !== rootId && (row.type === 1 || row.type === 2)).map((row): SyncPlaylist => {
+    playlists: orderedRows.filter((row) => row.type === 1 || row.type === 2).map((row): SyncPlaylist => {
       const rules = smartRules.get(id(row.id));
       return {
         path: getPath(id(row.id)),

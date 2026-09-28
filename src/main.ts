@@ -505,6 +505,11 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     return library.listFolders();
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.playlistOrder, (event) => {
+    assertTrustedSender(event, owner);
+    return library.playlistOrder();
+  });
+
   ipc.handle(DJ_LIBRARY_CHANNELS.previewSmartPlaylist, (event, request: unknown) => {
     assertTrustedSender(event, owner);
     if (!isRecord(request) || typeof request.revision !== 'string') throw new Error('Invalid preview');

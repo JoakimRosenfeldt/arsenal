@@ -126,12 +126,16 @@ export const rekordboxSyncLibrary = (parsed: ParsedRekordboxLibrary): SyncLibrar
   }
   const cratesWithTracks = new Set(parsed.playlists.filter((playlist) => playlist.seratoCrateTracks && playlist.folderPath.length > 0)
     .map((playlist) => JSON.stringify(playlist.folderPath)));
+  const nodes: (ParsedRekordboxLibrary['folders'][number] | ParsedRekordboxLibrary['playlists'][number])[] = [
+    ...parsed.folders.filter((folder) => !cratesWithTracks.has(JSON.stringify(folder.folderPath))),
+    ...parsed.playlists,
+  ];
   return {
     tracks,
-    playlists: [
-      ...parsed.folders.filter((folder) => !cratesWithTracks.has(JSON.stringify(folder.folderPath)))
-        .map((folder): SyncPlaylist => ({ path: folder.folderPath, trackPaths: [], kind: 'folder' })),
-      ...parsed.playlists.map((playlist): SyncPlaylist => ({
+    playlists: nodes.sort((left, right) => left.order - right.order).map((node): SyncPlaylist => {
+      if (!('keys' in node)) return { path: node.folderPath, trackPaths: [], kind: 'folder' };
+      const playlist = node;
+      return {
         path: playlist.seratoCrateTracks && playlist.folderPath.length > 0 ? playlist.folderPath : [...playlist.folderPath, playlist.name],
         kind: playlist.kind === 'smart' ? 'smart' : 'playlist',
         ...(playlist.kind === 'smart' ? { smart: playlist.seratoSmartRules ?? (playlist.smartDefinition
@@ -141,8 +145,8 @@ export const rekordboxSyncLibrary = (parsed: ParsedRekordboxLibrary): SyncLibrar
           const path = playlist.referenceKind === 'track-id' ? byId.get(key) : byLocation.get(key);
           return path === undefined ? [] : [path];
         }),
-      })),
-    ],
+      };
+    }),
   };
 };
 

@@ -36,6 +36,7 @@ const api: DjLibraryApi = Object.freeze({
   listPlaylists: () =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listPlaylists),
   listFolders: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listFolders),
+  playlistOrder: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.playlistOrder),
   playlistMenu: (playlistId) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.playlistMenu, playlistId),
   copyTracklist: (text) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.copyTracklist, text),
   openPlaylistWindow: (request) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.openPlaylistWindow, request),

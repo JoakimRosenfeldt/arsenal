@@ -17,6 +17,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   findDuplicates: 'dj-library:find-duplicates',
   listPlaylists: 'dj-library:list-playlists',
   listFolders: 'dj-library:list-folders',
+  playlistOrder: 'dj-library:playlist-order',
   playlistMenu: 'dj-library:playlist-menu',
   copyTracklist: 'dj-library:copy-tracklist',
   openPlaylistWindow: 'dj-library:open-playlist-window',
@@ -462,6 +463,7 @@ export type DjLibraryApi = Readonly<{
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;
   listFolders(): Promise<readonly PlaylistFolder[]>;
+  playlistOrder(): Promise<readonly (readonly string[])[]>;
   playlistMenu(playlistId: string | null): Promise<PlaylistMenuAction | null>;
   copyTracklist(text: string): Promise<void>;
   openPlaylistWindow(request: PlaylistWindowRequest): Promise<LibraryMutationResult | null>;
