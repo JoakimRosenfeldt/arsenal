@@ -6,6 +6,17 @@ import type { PlaylistFolder, RekordboxPlaylist } from './shared/dj-library';
 const MIN_SIDEBAR_WIDTH = 170;
 const MAX_SIDEBAR_WIDTH = 480;
 const SIDEBAR_WIDTH_KEY = 'arsenal.sidebarWidth';
+const COLLAPSED_FOLDERS_KEY = 'arsenal.collapsedPlaylistFolders';
+
+const savedCollapsedFolders = (libraryId: string | null): ReadonlySet<string> => {
+  if (libraryId === null) return new Set();
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(`${COLLAPSED_FOLDERS_KEY}.${libraryId}`) ?? '[]');
+    return new Set(Array.isArray(saved) ? saved.filter((path): path is string => typeof path === 'string') : []);
+  } catch {
+    return new Set();
+  }
+};
 
 export type PageId =
   | 'library'
@@ -87,7 +98,9 @@ const playlistMenuEvents = (onMenu: () => void) => ({
 
 const PlaylistBranch = ({
   activePage,
+  collapsedFolderPaths,
   onSelect,
+  onFolderToggle,
   parentFolderId,
   folders,
   onMenu,
@@ -95,7 +108,9 @@ const PlaylistBranch = ({
   selectedPlaylistId,
 }: Readonly<{
   activePage: PageId;
+  collapsedFolderPaths: ReadonlySet<string>;
   onSelect: (playlistId: string) => void;
+  onFolderToggle: (folderPath: string, open: boolean) => void;
   parentFolderId: string | null;
   folders: readonly PlaylistFolder[];
   onMenu: (parentFolderId: string | null, playlistId: string | null) => void;
@@ -125,8 +140,10 @@ const PlaylistBranch = ({
           );
         }
         const folder = node;
+        const folderPath = JSON.stringify(folder.folderPath);
         return (
-          <details className="sidebar-playlist-folder" open key={folder.id}>
+          <details className="sidebar-playlist-folder" open={!collapsedFolderPaths.has(folderPath)}
+            onToggle={(event) => onFolderToggle(folderPath, event.currentTarget.open)} key={folder.id}>
             <summary {...playlistMenuEvents(() => onMenu(folder.id, null))}>
               <UiIcon name="folder" size={16} />
               <span>{folder.name}</span>
@@ -134,7 +151,9 @@ const PlaylistBranch = ({
             </summary>
             <PlaylistBranch
               activePage={activePage}
+              collapsedFolderPaths={collapsedFolderPaths}
               onSelect={onSelect}
+              onFolderToggle={onFolderToggle}
               parentFolderId={folder.id}
               folders={folders}
               onMenu={onMenu}
@@ -153,6 +172,7 @@ export const CueboxSidebar = ({
   busy,
   duplicateCount,
   hasLibrary,
+  libraryId,
   folders,
   onMenu,
   onNavigate,
@@ -164,6 +184,7 @@ export const CueboxSidebar = ({
   busy: boolean;
   duplicateCount: number | null;
   hasLibrary: boolean;
+  libraryId: string | null;
   folders: readonly PlaylistFolder[];
   onMenu: (parentFolderId: string | null, playlistId: string | null) => void;
   onNavigate: (page: PageId) => void;
@@ -180,6 +201,7 @@ export const CueboxSidebar = ({
       return null;
     }
   });
+  const [collapsedFolderPaths, setCollapsedFolderPaths] = useState(() => savedCollapsedFolders(libraryId));
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const dragStart = useRef<{ x: number; width: number } | null>(null);
   const maxWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, windowWidth - 480));
@@ -200,6 +222,24 @@ export const CueboxSidebar = ({
       // Resizing still works when storage is unavailable.
     }
   }, [preferredWidth]);
+
+  useEffect(() => {
+    if (libraryId === null) return;
+    try {
+      localStorage.setItem(`${COLLAPSED_FOLDERS_KEY}.${libraryId}`, JSON.stringify([...collapsedFolderPaths]));
+    } catch {
+      // Folder toggles still work when storage is unavailable.
+    }
+  }, [collapsedFolderPaths, libraryId]);
+
+  const toggleFolder = (folderPath: string, open: boolean): void => {
+    setCollapsedFolderPaths((current) => {
+      if (current.has(folderPath) === !open) return current;
+      const next = new Set(current);
+      if (open) next.delete(folderPath); else next.add(folderPath);
+      return next;
+    });
+  };
 
   const resize = (nextWidth: number): void => {
     setPreferredWidth(Math.max(MIN_SIDEBAR_WIDTH, Math.min(maxWidth, Math.round(nextWidth))));
@@ -252,7 +292,9 @@ export const CueboxSidebar = ({
             {playlists !== null && (
               <PlaylistBranch
                 activePage={activePage}
+                collapsedFolderPaths={collapsedFolderPaths}
                 onSelect={onPlaylistSelect}
+                onFolderToggle={toggleFolder}
                 parentFolderId={null}
                 folders={folders}
                 onMenu={onMenu}

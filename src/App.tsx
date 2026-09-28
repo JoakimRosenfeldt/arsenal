@@ -818,12 +818,14 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   return (
     <div className={playlistWindow ? 'playlist-action-window' : 'cuebox-app'}>
       {playlistWindow === undefined && <CueboxSidebar
+        key={connections?.activeConnectionId ?? 'unconnected'}
         activePage={activePage}
         busy={busy}
         duplicateCount={duplicateCount}
         folders={folders}
         onMenu={(parentFolderId, playlistId) => void openPlaylistMenu(parentFolderId, playlistId)}
         hasLibrary={view !== null}
+        libraryId={connections?.activeConnectionId ?? null}
         onNavigate={navigate}
         onPlaylistSelect={selectPlaylist}
         playlists={playlists}
