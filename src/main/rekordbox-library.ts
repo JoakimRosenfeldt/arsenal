@@ -811,11 +811,17 @@ export class RekordboxLibrary {
     return this.syncPreferences();
   }
 
-  syncLibraries(_owner: BrowserWindow, request: SyncRequest): Promise<SyncResult> {
+  syncLibraries(_owner: BrowserWindow, requested: SyncRequest): Promise<SyncResult> {
     return this.enqueue(async () => {
       let result: SyncResult | null = null;
       try {
-        const preferences = await this.rememberSyncPreferences({ ...this.syncPreferences(), request: readSyncRequest(request) });
+        const validated = readSyncRequest(requested);
+        const primary = this.connectedLibraries.find((connection) => connection.id === this.sourceOfTruthId);
+        const conflictSource = validated.direction === 'both' ? primary?.kind
+          : validated.direction === 'rekordbox-to-serato' ? 'rekordbox' : 'serato';
+        if (conflictSource === undefined) throw new Error('Choose a primary library on Connections before syncing both ways.');
+        const request = { ...validated, conflictSource };
+        const preferences = await this.rememberSyncPreferences({ ...this.syncPreferences(), request });
         if (preferences.rekordboxPath === null || preferences.seratoPath === null) {
           throw new Error('Open Connections to connect and choose a Rekordbox and Serato library before syncing.');
         }
@@ -828,6 +834,9 @@ export class RekordboxLibrary {
           !availability.connections.find((connection) => connection.id === selectedRekordbox.id)?.available ||
           !availability.connections.find((connection) => connection.id === selectedSerato.id)?.available) {
           throw new Error('A selected sync library is unavailable or disconnected. Open Connections to connect a replacement.');
+        }
+        if (request.direction === 'both' && primary?.id !== selectedRekordbox.id && primary?.id !== selectedSerato.id) {
+          throw new Error('Two-way sync must include the primary library. Select it for sync or change Primary on Connections.');
         }
         if (this.missingSyncContext !== null) {
           await this.refreshMissingSyncReport(this.missingSyncContext);

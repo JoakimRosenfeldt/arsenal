@@ -36,7 +36,6 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const [pending, setPending] = useState(false);
   const [direction, setDirection] = useState<SyncDirection>('both');
   const [mode, setMode] = useState<NonNullable<SyncRequest['mode']>>('merge');
-  const [conflictSource, setConflictSource] = useState<SyncRequest['conflictSource']>('rekordbox');
   const [fields, setFields] = useState<SyncFields>({
     tracks: true, metadata: true, playlists: true, hotCues: true, loops: true, beatgrids: true,
   });
@@ -45,6 +44,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const [removePath, setRemovePath] = useState<string | null>(null);
   const [timingOffset, setTimingOffset] = useState('0');
   const sourceKind = direction === 'both' ? null : direction === 'rekordbox-to-serato' ? 'rekordbox' : 'serato';
+  const primary = connections?.connections.find((connection) => connection.id === connections.sourceOfTruthId);
+  const conflictSource = sourceKind ?? primary?.kind ?? 'rekordbox';
   const destinationName = direction === 'rekordbox-to-serato' ? 'Serato' : 'Rekordbox XML';
   const loadingPreferences = preferencesFor !== connections;
   const working = busy || pending || loadingPreferences;
@@ -76,7 +77,6 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
       if (saved.request !== null && (requestKey !== savedRequestKey.current || primaryId !== savedPrimaryId.current)) {
         setDirection(saved.request.direction);
         setMode(saved.request.mode ?? 'merge');
-        setConflictSource(saved.request.conflictSource);
         setFields(saved.request.fields);
         setTimingOffset(String(saved.request.timingOffsetMs));
       }
@@ -108,7 +108,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     setRepairError(null);
     setRemovePath(null);
     try {
-      let next = await onSync({ direction, mode, conflictSource: sourceKind ?? conflictSource, fields, timingOffsetMs });
+      let next = await onSync({ direction, mode, conflictSource, fields, timingOffsetMs });
       try {
         const saved = await window.djLibrary.syncPreferences();
         setPreferences(saved);
@@ -341,17 +341,6 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
             </div>
           </fieldset>
 
-          {direction === 'both' && (
-            <fieldset className="tracklist-export-options" disabled={working || preferences === null}>
-              <legend>If track data differs, use</legend>
-              <div>
-                <label><input type="radio" name="conflict-source" checked={conflictSource === 'rekordbox'}
-                  onChange={() => setConflictSource('rekordbox')} /> Rekordbox</label>
-                <label><input type="radio" name="conflict-source" checked={conflictSource === 'serato'}
-                  onChange={() => setConflictSource('serato')} /> Serato</label>
-              </div>
-            </fieldset>
-          )}
         </div>
 
         {hasPerformance && (
