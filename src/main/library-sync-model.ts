@@ -8,10 +8,11 @@ export type SyncLoop = SyncCue & Readonly<{ end: number; locked: boolean; hotCue
 export type SyncBeatgrid = Readonly<{ start: number; bpm: number; beat: number; meter?: string }>;
 export type SyncPerformance = Readonly<{
   hotCues: readonly SyncCue[];
+  memoryCues?: readonly SyncCue[];
   loops: readonly SyncLoop[];
   beatgrids: readonly SyncBeatgrid[];
 }>;
-export type SyncTrack = Readonly<{ path: string; song: SongRow; performance?: SyncPerformance }>;
+export type SyncTrack = Readonly<{ path: string; location?: string; song: SongRow; performance?: SyncPerformance }>;
 export type SyncSmartRules =
   | Readonly<{ kind: 'arsenal'; definition: SmartPlaylistDefinition }>
   | Readonly<{ kind: 'rekordbox'; rules: SmartPlaylistRules }>

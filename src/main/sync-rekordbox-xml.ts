@@ -68,7 +68,7 @@ export const pathFromLocation = (location: string | null): string | null => {
     if (/^\/[a-z]:\//i.test(path)) path = path.slice(1);
     if (url.hostname && url.hostname !== 'localhost') path = `//${url.hostname}${path}`;
     // Streaming references can be wrapped in a file://localhost URL by Rekordbox.
-    if (/^\/?(?:tidal|beatport|beatsource|soundcloud|spotify|applemusic):/i.test(path)) return null;
+    if (/^\/?(?:tidal|beatport|beatsource|soundcloud|spotify|applemusic|apple-music|streaming|https?):/i.test(path)) return null;
     return path;
   } catch {
     return null;
@@ -113,14 +113,31 @@ export const repairRekordboxMissingFile = async (
   return saveRepairedLibraryFiles([{ path: xmlPath, before, after }], () => assertMissingFileRepair(missingPath, replacementPath));
 };
 
-export const rekordboxSyncLibrary = (parsed: ParsedRekordboxLibrary): SyncLibrary => {
+export const rekordboxSyncLibrary = (
+  parsed: ParsedRekordboxLibrary,
+  options: Readonly<{ includeNonLocal?: boolean }> = {},
+): SyncLibrary => {
   const byId = new Map<string, string>();
   const byLocation = new Map<string, string>();
   const tracks: SyncTrack[] = [];
-  for (const track of parsed.tracks) {
-    const path = pathFromLocation(track.rawLocation);
-    if (path === null) continue;
-    tracks.push({ path, song: track.song, performance: track.performance });
+  const locations = parsed.tracks.map((track) => pathFromLocation(track.rawLocation) ?? (options.includeNonLocal
+      ? track.rawLocation ?? `missing:rekordbox/${encodeURIComponent(track.rekordboxId ?? track.song.id)}`
+      : null));
+  const counts = new Map<string, number>();
+  for (const location of locations) {
+    if (location !== null) counts.set(normalizePath(location), (counts.get(normalizePath(location)) ?? 0) + 1);
+  }
+  const usedPaths = new Set(counts.keys());
+  for (const [index, track] of parsed.tracks.entries()) {
+    const location = locations[index];
+    if (location === null || location === undefined) continue;
+    let path = location;
+    if (options.includeNonLocal && (counts.get(normalizePath(location)) ?? 0) > 1) {
+      path = `library-track:${encodeURIComponent(track.song.id)}`;
+      for (let suffix = 2; usedPaths.has(normalizePath(path)); suffix++) path = `library-track:${encodeURIComponent(track.song.id)}:${suffix}`;
+      usedPaths.add(normalizePath(path));
+    }
+    tracks.push({ path, ...(path !== location ? { location } : {}), song: track.song, performance: track.performance });
     if (track.rekordboxId !== null) byId.set(track.rekordboxId, path);
     if (track.rawLocation !== null) byLocation.set(track.rawLocation, path);
   }
@@ -180,7 +197,8 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
   const duplicateIds = new Map<string, XmlNode>();
   const duplicateLocations = new Map<string, XmlNode>();
   for (const node of tracks) {
-    const path = pathFromLocation(node.attributes.Location ?? null);
+    const location = node.attributes.Location;
+    const path = pathFromLocation(location ?? null) ?? (location && desiredPaths.has(pathKey(location)) ? location : null);
     if (replaceTracks && (path === null || !desiredPaths.has(pathKey(path)))) {
       removedTracks.add(node);
       continue;
@@ -204,7 +222,9 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
     let node = byPath.get(key);
     if (!node) {
       if (fields?.tracks === false) continue;
-      node = { name: 'TRACK', attributes: { Location: locationFor(track.path) }, parts: [] };
+      const location = track.location ?? track.path;
+      node = { name: 'TRACK', attributes: { Location: track.song.source === 'local' || location.startsWith('//')
+        ? locationFor(location) : location }, parts: [] };
       collection.parts.push('\n', node);
       byPath.set(key, node);
     }
@@ -223,14 +243,17 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
       node.parts = node.parts.filter((part) => typeof part === 'string' ||
         (!(part.name === 'TEMPO' && fields?.beatgrids !== false) && (part.name !== 'POSITION_MARK' ||
           !(part.attributes.Type === '4' && fields?.loops !== false) &&
-          !(part.attributes.Type === '0' && Number(part.attributes.Num) >= 0 && fields?.hotCues !== false))));
-      for (const cue of fields?.hotCues === false ? [] : track.performance.hotCues) node.parts.push({ name: 'POSITION_MARK', parts: [], attributes: {
+          !(part.attributes.Type === '0' && fields?.hotCues !== false &&
+            (Number(part.attributes.Num) >= 0 || Number(part.attributes.Num) === -1 && track.performance?.memoryCues !== undefined)))));
+      for (const cue of fields?.hotCues === false ? [] : [...track.performance.hotCues, ...track.performance.memoryCues ?? []]) node.parts.push({ name: 'POSITION_MARK', parts: [], attributes: {
         Name: cue.name, Type: '0', Num: String(cue.index), Start: String(cue.start),
         Red: String(cue.color[0]), Green: String(cue.color[1]), Blue: String(cue.color[2]),
       } });
       for (const loop of fields?.loops === false ? [] : track.performance.loops) node.parts.push({ name: 'POSITION_MARK', parts: [], attributes: {
         Name: loop.name, Type: '4', Num: String(loop.hotCue ? loop.index : -1), Start: String(loop.start), End: String(loop.end),
         Red: String(loop.color[0]), Green: String(loop.color[1]), Blue: String(loop.color[2]),
+        ...(loop.locked ? { ArsenalLocked: '1' } : {}),
+        ...(!loop.hotCue && loop.index >= 0 ? { ArsenalLoopIndex: String(loop.index) } : {}),
       } });
       for (const grid of fields?.beatgrids === false ? [] : track.performance.beatgrids) node.parts.push({ name: 'TEMPO', parts: [], attributes: {
         Inizio: String(grid.start), Bpm: String(grid.bpm), Metro: grid.meter ?? '4/4', Battito: String(grid.beat),

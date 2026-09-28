@@ -363,6 +363,41 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     return library.connections();
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.backupStatus, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    return library.backupStatus();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.configureBackup, async (event, includeMusic: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    if (typeof includeMusic !== 'boolean') throw new Error('Choose whether to include music');
+    libraryActions += 1;
+    try { return await library.configureBackup(owner, includeMusic); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.backupNow, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    libraryActions += 1;
+    try { return await library.backupNow(); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.stopBackup, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    libraryActions += 1;
+    try { return await library.stopBackup(); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.importBackup, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Import backups from the library window');
+    libraryActions += 1;
+    try { return await library.importBackup(owner); } finally { libraryActions -= 1; }
+  });
+
   ipc.handle(DJ_LIBRARY_CHANNELS.connectLibrary, async (event, kind: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Connect libraries from the library window');
@@ -964,4 +999,7 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => library.cancelSuggestions());
+app.on('before-quit', () => {
+  library.cancelSuggestions();
+  library.disposeBackups();
+});

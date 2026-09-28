@@ -787,6 +787,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     switch (activePage) {
       case 'connections':
         return <LibraryConnectionsPage busy={busy} state={connections}
+          onImportBackup={() => manageConnection(() => window.djLibrary.importBackup())}
           onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind))}
           onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open')}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}

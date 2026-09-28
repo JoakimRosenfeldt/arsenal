@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 
 import { UiIcon } from './UiIcon';
 import { SyncLibrarySettings } from './SyncLibrarySettings';
+import { LibraryBackupSettings } from './LibraryBackupSettings';
 import type { LibraryConnection, LibraryConnectionAction, LibraryConnectionResult, LibraryConnections, LibrarySourceKind, SyncMissingFileAction, SyncRequest, SyncResult } from './shared/dj-library';
 
 const libraryKinds = [
@@ -9,13 +10,14 @@ const libraryKinds = [
   { kind: 'serato', label: 'Serato library' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string }[];
 
-export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSync, onResolveMissing }: Readonly<{
+export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSync, onResolveMissing, onImportBackup }: Readonly<{
   busy: boolean;
   state: LibraryConnections | null;
   onConnect: (kind: LibrarySourceKind) => Promise<LibraryConnectionResult>;
   onManage: (action: LibraryConnectionAction) => Promise<LibraryConnectionResult>;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
+  onImportBackup: () => Promise<LibraryConnectionResult>;
 }>): JSX.Element => {
   const [pending, setPending] = useState<string | null>(null);
   const [removing, setRemoving] = useState<LibraryConnection | null>(null);
@@ -67,16 +69,17 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
               const primary = connection.id === state.sourceOfTruthId;
               return (
                 <section key={connection.id} className={`library-connection-card${primary ? ' is-primary' : ''}`}
-                  aria-label={`${label}: ${connection.name}`}>
+                  aria-label={`${connection.origin === 'portable' ? 'Imported library' : label}: ${connection.name}`}>
                   <div className="library-connection-heading">
                     <h2><button type="button" disabled={working} title="Open library"
                       aria-label={`Open ${connection.name}`}
-                      onClick={() => void run(() => onManage({ kind: 'open', id: connection.id }), 'Opening library…')}>{label}</button></h2>
+                      onClick={() => void run(() => onManage({ kind: 'open', id: connection.id }), 'Opening library…')}>{connection.origin === 'portable' ? connection.name : label}</button></h2>
                     <span className={`library-connection-status${connection.available ? ' is-connected' : ' is-unavailable'}`}>
                       {connection.available && <UiIcon name="check" size={14} />}
                       {connection.available ? 'Connected' : 'Unavailable'}
                     </span>
                   </div>
+                  {connection.origin === 'portable' && <p className="library-connection-empty-status">Imported library</p>}
                   <p className="library-connection-path">{connection.path}</p>
                   <div className="library-connection-actions">
                     <button className={`quiet-button${primary ? ' is-primary' : ''}`} type="button" disabled={working || primary}
@@ -104,6 +107,9 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
           </section>
         )}
 
+        <LibraryBackupSettings busy={working} connectionId={state?.activeConnectionId ?? null}
+          connectionName={connections.find((connection) => connection.id === state?.activeConnectionId)?.name ?? null}
+          onBusy={setPending} onImport={() => run(onImportBackup, 'Importing backup…')} />
         <SyncLibrarySettings busy={working} connections={state} onSync={onSync} onResolveMissing={onResolveMissing} />
       </div>
 

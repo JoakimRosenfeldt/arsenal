@@ -1,9 +1,15 @@
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
 import type { SmartPlaylistDefinition } from './smart-playlists';
+import type { BackupStatus } from './library-backup';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   connections: 'dj-library:connections',
+  backupStatus: 'dj-library:backup-status',
+  configureBackup: 'dj-library:configure-backup',
+  backupNow: 'dj-library:backup-now',
+  stopBackup: 'dj-library:stop-backup',
+  importBackup: 'dj-library:import-backup',
   connectLibrary: 'dj-library:connect-library',
   manageLibraryConnection: 'dj-library:manage-library-connection',
   selectSyncLibrary: 'dj-library:select-sync-library',
@@ -202,6 +208,7 @@ export type LibraryConnection = Readonly<{
   name: string;
   path: string;
   available: boolean;
+  origin?: 'portable';
 }>;
 
 export type LibraryConnections = Readonly<{
@@ -466,6 +473,11 @@ export type LibraryMutationResult =
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   connections(): Promise<LibraryConnections>;
+  backupStatus(): Promise<BackupStatus>;
+  configureBackup(includeMusic: boolean): Promise<BackupStatus | null>;
+  backupNow(): Promise<BackupStatus>;
+  stopBackup(): Promise<BackupStatus>;
+  importBackup(): Promise<LibraryConnectionResult>;
   connectLibrary(kind: LibrarySourceKind): Promise<LibraryConnectionResult>;
   manageLibraryConnection(action: LibraryConnectionAction): Promise<LibraryConnectionResult>;
   selectSyncLibrary(id: string): Promise<SyncPreferences>;
