@@ -1059,12 +1059,6 @@ input:disabled {
   max-width: 1000px;
 }
 
-.library-connect-section + .library-connect-section,
-.library-connections-feedback + .library-connect-section,
-.library-connection-progress + .library-connect-section {
-  margin-top: 30px;
-}
-
 .library-connect-section h2 {
   margin: 0 0 12px;
   color: var(--text);
@@ -1074,6 +1068,57 @@ input:disabled {
 
 .library-connect-section p {
   margin: 10px 0;
+}
+
+.library-connection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.library-connection-slot {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.library-connect-button,
+.library-connection-card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel-raised);
+}
+
+.library-connect-button {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  min-height: 185px;
+  color: var(--text-soft);
+  font: inherit;
+  cursor: pointer;
+}
+
+.library-connect-button > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.library-connection-empty-status {
+  color: var(--muted);
+}
+
+.library-connect-button:hover:not(:disabled),
+.library-connection-card.is-primary {
+  border-color: var(--accent);
 }
 
 .library-connection-actions {
@@ -1087,55 +1132,61 @@ input:disabled {
   gap: 6px;
 }
 
-.library-connection-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.library-connection-row {
-  padding: 20px 0;
-  border-top: 1px solid var(--line);
-}
-
-.library-connection-row:last-child {
-  border-bottom: 1px solid var(--line);
+.library-connection-actions .is-primary:disabled {
+  color: var(--accent);
+  opacity: 1;
 }
 
 .library-connection-heading,
-.library-connection-badges {
+.library-connection-status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
+.library-connection-heading {
+  justify-content: space-between;
+}
+
 .library-connection-heading h3 {
-  margin: 0 8px 0 0;
+  margin: 0;
   color: var(--text);
   font-size: 14px;
   font-weight: 600;
   overflow-wrap: anywhere;
 }
 
-.library-connection-badges span {
-  padding: 2px 7px;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  font-size: 10px;
+.library-connection-heading h3 button {
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.library-connection-badges .is-active {
+.library-connection-heading h3 button:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.library-connection-status {
+  gap: 4px;
+  font-size: 11px;
+}
+
+.library-connection-status.is-connected {
   color: var(--success);
 }
 
-.library-connection-badges .is-preferred {
-  color: var(--text);
+.library-connection-status.is-unavailable {
+  color: var(--warning);
 }
 
-.library-connection-badges .is-unavailable,
-.library-connection-unavailable {
-  color: var(--warning);
+.library-connection-name {
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .library-connection-path {
@@ -1145,13 +1196,24 @@ input:disabled {
   user-select: text;
 }
 
-.library-connection-help {
-  padding-top: 24px;
-  border-top: 1px solid var(--line);
+.library-connection-remove-dialog > p {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-.library-connection-help p {
-  max-width: 760px;
+.library-connection-remove-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+@media (max-width: 850px) {
+  .library-connection-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .library-connections-feedback {

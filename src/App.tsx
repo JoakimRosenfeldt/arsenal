@@ -77,7 +77,7 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
   'stale-library':
     'The library changed before this action ran. Try the action again.',
   'source-changed':
-    'The library file changed. Refresh its connection on the Libraries page before editing.',
+    'The library file changed. Open its connection on the Connections page before editing.',
   'song-not-found':
     'That track is no longer in the library.',
   'duplicate-not-found':
@@ -396,7 +396,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         }
       } catch {
         setActivePage('connections');
-        return { ...result, warnings: [...result.warnings, 'Connection saved, but Arsenal could not refresh the collection view. Refresh the connection again.'] };
+        return { ...result, warnings: [...result.warnings, 'Connection saved, but Arsenal could not refresh the collection view. Open the connection again.'] };
       }
       setActivePage(openView && result.status.kind === 'ready' && result.warnings.length === 0 ? 'library' : 'connections');
       return result;

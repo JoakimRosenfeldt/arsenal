@@ -45,7 +45,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
   const working = busy || pending;
   const needsLibraries = !connections?.connections.some((entry) => entry.kind === 'rekordbox' && entry.available && entry.path === preferences?.rekordboxPath) ||
     !connections?.connections.some((entry) => entry.kind === 'serato' && entry.available && entry.path === preferences?.seratoPath);
-  const sourceOfTruth = connections?.connections.find((entry) => entry.id === connections.sourceOfTruthId);
+  const primary = connections?.connections.find((entry) => entry.id === connections.sourceOfTruthId);
   const hasFields = Object.values(fields).some(Boolean);
   const hasPerformance = fields.hotCues || fields.loops || fields.beatgrids;
   const parsedTimingOffset = Number(timingOffset);
@@ -327,7 +327,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
                     <select aria-label={label} value={selected?.id ?? ''} onChange={(event) => void chooseLibrary(event.currentTarget.value)}>
                       <option value="" disabled>Choose a connected library</option>
                       {options.map((entry) => <option key={entry.id} value={entry.id} disabled={!entry.available}>
-                        {entry.name}{entry.id === connections?.sourceOfTruthId ? ' — Source of truth' : ''}{entry.available ? '' : ' — Unavailable'}
+                        {entry.name}{entry.id === connections?.sourceOfTruthId ? ' · Primary' : ''}{entry.available ? '' : ' · Unavailable'}
                       </option>)}
                     </select>
                     <span>{path ?? 'No library selected'}</span>
@@ -335,8 +335,8 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
                 </div>
               );
             })}
-            <button className="quiet-button" type="button" onClick={onManageLibraries}>Manage libraries</button>
-            {sourceOfTruth && <p>Source of truth: {sourceOfTruth.name}. Its values win conflicts by default.</p>}
+            <button className="quiet-button" type="button" onClick={onManageLibraries}>Manage connections</button>
+            {primary && <p>Primary library: {primary.name}. Its values win conflicts by default.</p>}
           </div>
         </fieldset>
 
@@ -388,7 +388,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
         </div>
 
         {!hasFields && <p className="tracklist-export-note">Choose at least one category to sync.</p>}
-        {needsLibraries && <p className="tracklist-export-note">Connect an available Rekordbox XML and Serato library on the Libraries page, then choose them above.</p>}
+        {needsLibraries && <p className="tracklist-export-note">Connect an available Rekordbox XML and Serato library on the Connections page, then choose them above.</p>}
         {!validTiming && <p className="tracklist-export-note">Enter a whole number between -1000 and 1000 milliseconds.</p>}
         <div className="library-sync-actions">
           <button className="quiet-button" type="button" disabled={working} onClick={() => dialogRef.current?.close()}>{result === null ? 'Cancel' : 'Close'}</button>

@@ -156,7 +156,7 @@ const NoLibrary = ({
     </div>
     <h1 id="empty-page-title">Connect your libraries</h1>
     <p className="library-connect-description">Connect a Rekordbox XML file or a Serato library to start working with your tracks.</p>
-    <button className="accent-button" type="button" onClick={onManageLibraries} disabled={busy}>Manage libraries</button>
+    <button className="accent-button" type="button" onClick={onManageLibraries} disabled={busy}>Connections</button>
     <button className="quiet-button library-empty-sync" type="button" onClick={onSync} disabled={busy}>
       <UiIcon name="refresh" size={16} /> Sync libraries
     </button>
@@ -304,7 +304,7 @@ export const LibraryPage = ({
             <UiIcon name="refresh" size={16} /> Sync libraries
           </button>
           <button className="accent-button" type="button" onClick={onManageLibraries} disabled={busy}>
-            <UiIcon name="folder" size={16} /> Libraries
+            <UiIcon name="folder" size={16} /> Connections
           </button>
         </div>
       </header>

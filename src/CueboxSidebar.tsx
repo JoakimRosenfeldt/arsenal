@@ -15,12 +15,17 @@ export type PageId =
   | 'preferences';
 
 type NavigationItem = Readonly<{
-  page: Exclude<PageId, 'playlists' | 'preferences' | 'connections'>;
+  page: Exclude<PageId, 'playlists' | 'preferences'>;
   label: string;
   badge: string;
 }>;
 
 const collectionItems: readonly NavigationItem[] = [
+  {
+    page: 'connections',
+    label: 'Connections',
+    badge: '',
+  },
   {
     page: 'library',
     label: 'Library',
@@ -206,7 +211,7 @@ export const CueboxSidebar = ({
   };
 
   const collection = collectionItems.map((item) => {
-    if (item.page === 'library') {
+    if (item.page !== 'duplicates') {
       return item;
     }
 
@@ -259,11 +264,6 @@ export const CueboxSidebar = ({
         </div>
       </nav>
       <div className="sidebar-utilities">
-        <button className={activePage === 'connections' ? 'sidebar-preferences is-active' : 'sidebar-preferences'}
-          type="button" aria-current={activePage === 'connections' ? 'page' : undefined}
-          onClick={() => onNavigate('connections')}>
-          <UiIcon name="folder" size={16} /><span>Libraries</span>
-        </button>
         <button className={activePage === 'preferences' ? 'sidebar-preferences is-active' : 'sidebar-preferences'}
           type="button" aria-current={activePage === 'preferences' ? 'page' : undefined}
           onClick={() => onNavigate('preferences')}>

@@ -210,7 +210,7 @@ export type LibraryConnections = Readonly<{
 }>;
 
 export type LibraryConnectionAction = Readonly<{
-  kind: 'open' | 'refresh' | 'disconnect' | 'source-of-truth' | 'locate';
+  kind: 'open' | 'refresh' | 'disconnect' | 'source-of-truth' | 'locate' | 'replace';
   id: string;
 }>;
 
