@@ -22,6 +22,7 @@ const api: DjLibraryApi = Object.freeze({
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importSerato),
   syncLibraries: (request) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.syncLibraries, request),
+  resolveSyncMissingFile: (action) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.resolveSyncMissingFile, action),
   syncPreferences: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.syncPreferences),
   chooseSyncLibrary: (kind, direction) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.chooseSyncLibrary, kind, direction),
   listSongs: (page) =>

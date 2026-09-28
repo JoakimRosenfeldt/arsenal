@@ -8,11 +8,13 @@ import { mergeRekordboxXml, rekordboxSyncLibrary } from './sync-rekordbox-xml';
 import { assertSeratoClosed, readSeratoLibrary, writeSeratoLibrary, type SeratoSource } from './serato-library';
 import { readSeratoPerformance, writeSeratoPerformance } from './serato-performance';
 import { resolveSeratoLibraryPaths, seratoMediaPathKey } from './serato-paths';
+import { automaticSyncSearchRoots, findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
 
 export const readSeratoWithPerformance = async (source: SeratoSource, includePerformance = true) => {
   const library = await readSeratoLibrary(source);
   const warnings: string[] = [];
   const tracks: SyncTrack[] = [];
+  let missingFiles = false;
   for (const track of library.tracks) {
     if (!includePerformance || track.song.source !== 'local') {
       tracks.push(track);
@@ -21,11 +23,12 @@ export const readSeratoWithPerformance = async (source: SeratoSource, includePer
     try {
       tracks.push({ ...track, performance: await readSeratoPerformance(track.path) });
     } catch (error) {
+      if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) missingFiles = true;
       tracks.push(track);
       warnings.push(`${basename(track.path)}: ${error instanceof Error ? error.message : 'Could not read performance data.'}`);
     }
   }
-  return { library: { ...library, tracks }, warnings };
+  return { library: { ...library, tracks }, warnings, missingFiles };
 };
 
 export const saveLibraryXml = async (path: string, xml: string, expected: string | null, backup = true): Promise<string | null> => {
@@ -100,6 +103,8 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
   const backupPaths: string[] = [];
   const warnings: string[] = [];
   let wroteLibrary = false;
+  let checkMissingFiles: (() => Promise<Extract<SyncResult, { kind: 'missing-files' }> | null>) | null = null;
+  let missingDuringSync = false;
   try {
     if (request.mode === 'replace' && request.direction === 'both') throw new Error('Overwrite is only available for one-way sync.');
     await assertSeratoClosed();
@@ -109,9 +114,36 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
     }
     const parsed = xml === null ? null : await parseRekordboxXml(rekordboxPath);
     const originalRekordbox = parsed === null ? { tracks: [], playlists: [] } : rekordboxSyncLibrary(parsed);
+    const nativeLibrary = await readSeratoLibrary(serato);
+    const missingReport = async (rekordboxLibrary: SyncLibrary, seratoLibrary: SyncLibrary): Promise<Extract<SyncResult, { kind: 'missing-files' }> | null> => {
+      const missing = await findMissingSyncFiles([
+        { kind: 'rekordbox', library: rekordboxLibrary }, { kind: 'serato', library: seratoLibrary },
+        ...(workspace === null ? [] : [{ kind: 'serato' as const, library: workspace }]),
+      ]);
+      if (!missing.length) return null;
+      const found = await searchSyncMissingFiles(missing, automaticSyncSearchRoots(
+        [rekordboxLibrary, seratoLibrary, ...(workspace === null ? [] : [workspace])], [rekordboxPath, serato.path],
+      ));
+      return { kind: 'missing-files', files: found.files, warnings: [...warnings, ...found.warnings], backupPaths,
+        message: `Locate or remove ${missing.length} missing audio ${missing.length === 1 ? 'file' : 'files'}, then retry sync. ${wroteLibrary ? 'Some files were already updated.' : 'No library changes were made.'}` };
+    };
+    checkMissingFiles = async () => {
+      let currentRekordbox = originalRekordbox;
+      try { currentRekordbox = rekordboxSyncLibrary(await parseRekordboxXml(rekordboxPath)); } catch (error) {
+        if (!(xml === null && error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      return missingReport(currentRekordbox, await readSeratoLibrary(serato));
+    };
+    const missing = await missingReport(originalRekordbox, nativeLibrary);
+    if (missing !== null) return missing;
     const hasPerformance = request.fields.hotCues || request.fields.loops || request.fields.beatgrids;
-    const read = await readSeratoWithPerformance(serato, hasPerformance && request.direction !== 'rekordbox-to-serato');
+    const read = hasPerformance && request.direction !== 'rekordbox-to-serato'
+      ? await readSeratoWithPerformance(serato) : { library: nativeLibrary, warnings: [], missingFiles: false };
     warnings.push(...read.warnings);
+    if (read.missingFiles) {
+      const missing = await checkMissingFiles();
+      if (missing !== null) return missing;
+    }
     if (workspace !== null) workspace = await resolveSeratoLibraryPaths(workspace, read.library);
     const native = workspace === null ? read.library : mergeLibraries(
       { ...read.library, playlists: workspace.playlists }, { ...workspace, playlists: read.library.playlists },
@@ -151,6 +183,7 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
               }, request.fields.metadata ? track.song : undefined);
             if (backup !== null) { backupPaths.push(backup); wroteLibrary = true; }
           } catch (error) {
+            if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) missingDuringSync = true;
             warnings.push(`${basename(track.path)}: ${error instanceof Error ? error.message : 'Could not write audio tags.'}`);
           }
         }
@@ -160,6 +193,10 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
       const backup = await saveLibraryXml(rekordboxPath, nextXml, xml);
       if (backup !== null) backupPaths.push(backup);
       wroteLibrary = true;
+    }
+    if (missingDuringSync) {
+      const missing = await checkMissingFiles();
+      if (missing !== null) return missing;
     }
     const sourceCount = source.tracks.length;
     const selectedCount = request.direction === 'serato-to-rekordbox' ? toRekordbox.tracks.length : toSerato.tracks.length;
@@ -183,6 +220,11 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
     }
     return { kind: 'synced', trackCount: selectedCount, playlistCount, skippedTrackCount, backupPaths, warnings, message: `${message} Report and backup locations: ${reportPath}` };
   } catch (error) {
+    try {
+      const missing = await checkMissingFiles?.();
+      if (missing) return { ...missing, warnings: [...missing.warnings,
+        error instanceof Error ? error.message : 'Could not sync the libraries.'] };
+    } catch { /* Keep the original error if the libraries cannot be reread. */ }
     return { kind: 'rejected', warnings, backupPaths,
       message: `${error instanceof Error ? error.message : 'Could not sync the libraries.'}${wroteLibrary ? ' Some files were already updated.' : ''}` };
   }

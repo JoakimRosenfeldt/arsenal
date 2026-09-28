@@ -6,6 +6,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   importExport: 'dj-library:import-export',
   importSerato: 'dj-library:import-serato',
   syncLibraries: 'dj-library:sync-libraries',
+  resolveSyncMissingFile: 'dj-library:resolve-sync-missing-file',
   syncPreferences: 'dj-library:sync-preferences',
   chooseSyncLibrary: 'dj-library:choose-sync-library',
   listSongs: 'dj-library:list-songs',
@@ -254,8 +255,27 @@ export const readSyncRequest = (request: unknown): SyncRequest => {
       hotCues: fields.hotCues, loops: fields.loops, beatgrids: fields.beatgrids } };
 };
 
+export type SyncMissingFile = Readonly<{
+  path: string;
+  title: string;
+  artist: SongRow['artist'];
+  libraries: readonly LibrarySourceKind[];
+  candidates: readonly string[];
+}>;
+
+export type SyncMissingFileAction =
+  | Readonly<{ kind: 'search' | 'locate' | 'remove'; path: string }>
+  | Readonly<{ kind: 'relink'; path: string; replacementPath: string }>;
+
 export type SyncResult =
   | Readonly<{ kind: 'cancelled' }>
+  | Readonly<{
+      kind: 'missing-files';
+      files: readonly SyncMissingFile[];
+      message: string;
+      warnings: readonly string[];
+      backupPaths: readonly string[];
+    }>
   | Readonly<{
       kind: 'synced';
       trackCount: number;
@@ -391,6 +411,7 @@ export type DjLibraryApi = Readonly<{
   importRekordboxExport(): Promise<ImportResult>;
   importSeratoLibrary(): Promise<ImportResult>;
   syncLibraries(request: SyncRequest): Promise<SyncResult>;
+  resolveSyncMissingFile(action: SyncMissingFileAction): Promise<SyncResult>;
   syncPreferences(): Promise<SyncPreferences>;
   chooseSyncLibrary(kind: LibrarySourceKind, direction: SyncDirection): Promise<SyncPreferences | null>;
   listSongs(page: PageRequest): Promise<SongPage>;

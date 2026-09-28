@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -42,6 +42,7 @@ import {
   type PlaylistWindowContext,
   type PlaylistWindowRequest,
   type LibraryMutationResult,
+  type SyncMissingFileAction,
 } from './shared/dj-library';
 import { readSmartDefinition } from './shared/smart-playlists';
 
@@ -389,6 +390,32 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     libraryActions += 1;
     try {
       return await library.syncLibraries(owner, validated);
+    } finally {
+      libraryActions -= 1;
+    }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.resolveSyncMissingFile, async (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Resolve missing files from the library window');
+    if (!isRecord(value) || typeof value.path !== 'string' ||
+      !(isAbsolute(value.path) || win32.isAbsolute(value.path)) || value.path.includes('\0')) {
+      throw new Error('Invalid missing file selection');
+    }
+    let action: SyncMissingFileAction;
+    if (value.kind === 'relink') {
+      if (typeof value.replacementPath !== 'string' || !isAbsolute(value.replacementPath) || value.replacementPath.includes('\0')) {
+        throw new Error('Choose a valid replacement audio file');
+      }
+      action = { kind: value.kind, path: value.path, replacementPath: value.replacementPath };
+    } else if (value.kind === 'search' || value.kind === 'locate' || value.kind === 'remove') {
+      action = { kind: value.kind, path: value.path };
+    } else {
+      throw new Error('Invalid missing file action');
+    }
+    libraryActions += 1;
+    try {
+      return await library.resolveSyncMissingFile(owner, action);
     } finally {
       libraryActions -= 1;
     }

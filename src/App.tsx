@@ -32,7 +32,6 @@ import {
   type PlaylistFolder,
   type SongRow,
   type SongFilters,
-  type SyncRequest,
   type SyncResult,
 } from './shared/dj-library';
 
@@ -394,7 +393,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     }
   };
 
-  const syncLibraries = async (request: SyncRequest): Promise<SyncResult> => {
+  const runSync = async (operation: () => Promise<SyncResult>): Promise<SyncResult> => {
     if (busy) return { kind: 'cancelled' };
     setBusy(true);
     searchSequence.current += 1;
@@ -402,13 +401,15 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setError(null);
     setFeedback(null);
     try {
-      const result = await window.djLibrary.syncLibraries(request);
-      if (result.kind !== 'synced') return result;
+      const result = await operation();
+      if (result.kind === 'cancelled') return result;
       try {
         const status = await window.djLibrary.status();
-        if (status.kind === 'ready') await refreshLibrary(status.library);
+        if (status.kind === 'ready' && (result.kind === 'synced' || status.library.revision !== view?.library.revision)) {
+          await refreshLibrary(status.library);
+        }
       } catch {
-        return { ...result, warnings: [...result.warnings, 'Sync finished, but Arsenal could not refresh the library view. Reopen the library to see the changes.'] };
+        return { ...result, warnings: [...result.warnings, 'Arsenal could not refresh the library view. Reopen the library to see the changes.'] };
       }
       return result;
     } catch (error) {
@@ -822,7 +823,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onClose={() => setExportPlaylistId(null)} />
       )}
       {playlistWindow === undefined && syncOpen && (
-        <SyncLibraryDialog busy={busy} library={view?.library ?? null} onClose={() => setSyncOpen(false)} onSync={syncLibraries} />
+        <SyncLibraryDialog busy={busy} library={view?.library ?? null} onClose={() => setSyncOpen(false)}
+          onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
+          onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />
       )}
     </div>
   );

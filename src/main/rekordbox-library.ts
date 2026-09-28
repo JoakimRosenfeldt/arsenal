@@ -29,6 +29,7 @@ import type {
   SyncDirection,
   SyncPreferences,
   SyncResult,
+  SyncMissingFileAction,
 } from '../shared/dj-library';
 import {
   editRekordboxXml,
@@ -51,11 +52,12 @@ import {
   type ArtworkAsset,
   isSupportedAudioPath,
 } from './track-artwork';
-import { findSeratoSource } from './serato-library';
-import { mergeRekordboxXml, rekordboxSyncLibrary } from './sync-rekordbox-xml';
+import { findSeratoSource, readSeratoLibrary, repairSeratoMissingFile, type SeratoSource } from './serato-library';
+import { mergeRekordboxXml, rekordboxSyncLibrary, repairRekordboxMissingFile } from './sync-rekordbox-xml';
 import { readSeratoWithPerformance, saveLibraryXml, syncLibraryFiles } from './sync-libraries';
 import { mergeLibraries, normalizePath } from './library-sync-model';
 import { resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
+import { findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
 
 type CatalogTrack = ParsedTrack;
 
@@ -87,6 +89,13 @@ type RememberedLibrary = Readonly<{
 type ReloadResult =
   | Readonly<{ kind: 'ready'; catalog: CurrentCatalog }>
   | Readonly<{ kind: 'rejected'; reason: MutationFailure }>;
+
+type MissingSyncContext = {
+  rekordboxPath: string;
+  serato: SeratoSource;
+  workspacePath: string | null;
+  result: Extract<SyncResult, { kind: 'missing-files' }>;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -301,6 +310,8 @@ export class RekordboxLibrary {
   private rememberedSeratoPath: string | null = null;
 
   private savedSyncPreferences: SyncPreferences = { request: null, rekordboxPath: null, seratoPath: null };
+
+  private missingSyncContext: MissingSyncContext | null = null;
 
   private minimumSongLengthSeconds = DEFAULT_MINIMUM_SONG_LENGTH_SECONDS;
 
@@ -534,7 +545,9 @@ export class RekordboxLibrary {
     return this.enqueue(async () => {
       const path = await this.chooseSyncPath(owner, kind, direction);
       if (path === null) return null;
-      return this.rememberSyncPreferences({ ...this.syncPreferences(), [kind === 'rekordbox' ? 'rekordboxPath' : 'seratoPath']: path });
+      const preferences = await this.rememberSyncPreferences({ ...this.syncPreferences(), [kind === 'rekordbox' ? 'rekordboxPath' : 'seratoPath']: path });
+      this.missingSyncContext = null;
+      return preferences;
     });
   }
 
@@ -588,6 +601,7 @@ export class RekordboxLibrary {
 
   syncLibraries(owner: BrowserWindow, request: SyncRequest): Promise<SyncResult> {
     return this.enqueue(async () => {
+      this.missingSyncContext = null;
       let result: SyncResult | null = null;
       try {
         const preferences = await this.rememberSyncPreferences({ ...this.syncPreferences(), request: readSyncRequest(request) });
@@ -629,6 +643,10 @@ export class RekordboxLibrary {
         const workspace = this.catalog?.sourceKind === 'serato' && matchesOpenSerato
           ? rekordboxSyncLibrary(await parseRekordboxXml(this.catalog.sourcePath)) : null;
         result = await syncLibraryFiles({ rekordboxPath, serato, request, workspace });
+        if (result.kind === 'missing-files') {
+          this.missingSyncContext = { rekordboxPath, serato,
+            workspacePath: workspace === null ? null : this.catalog?.sourcePath ?? null, result };
+        }
         if (result.kind === 'synced' && this.catalog !== null && (matchesOpenSerato || matchesOpenRekordbox)) {
           if (this.catalog.sourceKind === 'serato') {
             const { library } = await readSeratoWithPerformance(serato);
@@ -656,6 +674,90 @@ export class RekordboxLibrary {
           return { ...result, warnings: [...result.warnings, `The libraries were synced, but Arsenal could not refresh its library: ${message}`] };
         }
         return { kind: 'rejected', message, warnings: [], backupPaths: [] };
+      }
+    });
+  }
+
+  private async missingSyncLibraries(context: MissingSyncContext) {
+    let rekordbox;
+    try { rekordbox = rekordboxSyncLibrary(await parseRekordboxXml(context.rekordboxPath)); } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      rekordbox = { tracks: [], playlists: [] };
+    }
+    return {
+      rekordbox,
+      serato: await readSeratoLibrary(context.serato),
+      workspace: context.workspacePath === null ? null : rekordboxSyncLibrary(await parseRekordboxXml(context.workspacePath)),
+    };
+  }
+
+  private async refreshMissingSyncReport(context: MissingSyncContext, message?: string) {
+    const libraries = await this.missingSyncLibraries(context);
+    const files = await findMissingSyncFiles([
+      { kind: 'rekordbox', library: libraries.rekordbox }, { kind: 'serato', library: libraries.serato },
+      ...(libraries.workspace === null ? [] : [{ kind: 'serato' as const, library: libraries.workspace }]),
+    ]);
+    const previous = new Map(context.result.files.map((file) => [normalizePath(file.path), file.candidates]));
+    context.result = { ...context.result, files: files.map((file) => ({ ...file, candidates: previous.get(normalizePath(file.path)) ?? [] })),
+      message: message ?? (files.length ? `Resolve ${files.length} missing audio ${files.length === 1 ? 'file' : 'files'}, then retry sync.`
+        : 'All missing files are resolved. Retry sync to continue.') };
+    return libraries;
+  }
+
+  resolveSyncMissingFile(owner: BrowserWindow, action: SyncMissingFileAction): Promise<SyncResult> {
+    return this.enqueue(async () => {
+      const context = this.missingSyncContext;
+      if (context === null) return { kind: 'rejected', warnings: [], backupPaths: [], message: 'Run sync again to check the current libraries for missing files.' };
+      try {
+        if (!context.result.files.some((file) => file.path === action.path)) throw new Error('This file is not in the current missing-file report. Retry sync.');
+        const libraries = await this.refreshMissingSyncReport(context);
+        const missing = context.result.files.find((file) => normalizePath(file.path) === normalizePath(action.path));
+        if (!missing) return context.result;
+        if (action.kind === 'search') {
+          const picked = await dialog.showOpenDialog(owner, { title: 'Search folder for missing audio', properties: ['openDirectory'] });
+          const directory = picked.filePaths[0];
+          if (picked.canceled || !directory) return context.result;
+          const found = await searchSyncMissingFiles([missing], [directory]);
+          context.result = { ...context.result, files: context.result.files.map((file) => file.path === missing.path ? found.files[0] ?? file : file),
+            warnings: [...context.result.warnings, ...found.warnings] };
+          return context.result;
+        }
+        let replacementPath: string | null = action.kind === 'relink' ? action.replacementPath : null;
+        if (action.kind === 'locate') {
+          const picked = await dialog.showOpenDialog(owner, { title: `Locate ${basename(missing.path)}`, defaultPath: dirname(missing.path),
+            properties: ['openFile'], filters: [{ name: 'Audio files', extensions: ['aac', 'aif', 'aifc', 'aiff', 'flac', 'm4a', 'mp2', 'mp3', 'mp4', 'oga', 'ogg', 'opus', 'wav', 'wma', 'wv'] }] });
+          replacementPath = picked.filePaths[0] ?? null;
+          if (picked.canceled || replacementPath === null) return context.result;
+        }
+        if (replacementPath !== null && !isSupportedAudioPath(replacementPath)) throw new Error('Choose a supported audio file.');
+        const chosenPath = replacementPath;
+        if (chosenPath !== null) context.result = { ...context.result, files: context.result.files.map((file) => file.path === missing.path
+          ? { ...file, candidates: [...new Set([chosenPath, ...file.candidates])] } : file) };
+        const contains = (library: typeof libraries.serato): boolean => library.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path));
+        const workspacePath = context.workspacePath;
+        const repairs = [
+          ...(contains(libraries.serato) ? [() => repairSeratoMissingFile(context.serato, missing.path, replacementPath)] : []),
+          ...(contains(libraries.rekordbox) ? [() => repairRekordboxMissingFile(context.rekordboxPath, missing.path, replacementPath)] : []),
+          ...(libraries.workspace !== null && workspacePath !== null && contains(libraries.workspace)
+            ? [() => repairRekordboxMissingFile(workspacePath, missing.path, replacementPath)] : []),
+        ];
+        for (const repair of repairs) {
+          const result = await repair();
+          context.result = { ...context.result, backupPaths: [...context.result.backupPaths, ...result.backupPaths],
+            warnings: [...context.result.warnings, ...result.warnings] };
+        }
+        await this.refreshMissingSyncReport(context);
+        if (this.catalog !== null && (await seratoMediaPathKey(this.catalog.sourcePath) === await seratoMediaPathKey(context.rekordboxPath) ||
+          context.workspacePath !== null && await seratoMediaPathKey(this.catalog.sourcePath) === await seratoMediaPathKey(context.workspacePath))) {
+          this.catalog = await this.catalogFor(this.catalog.sourcePath, this.catalog.seratoPath);
+          this.cancelSuggestions();
+        }
+        return context.result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not resolve the missing file.';
+        try { await this.refreshMissingSyncReport(context); } catch { /* Preserve the last report when a library cannot be read. */ }
+        context.result = { ...context.result, warnings: [...context.result.warnings, message] };
+        return context.result;
       }
     });
   }

@@ -4,8 +4,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import type { SyncLibrary } from './library-sync-model';
-import { readSeratoLegacy, writeSeratoLegacy } from './serato-legacy';
-import { readSeratoSqlite, writeSeratoSqlite } from './serato-sqlite';
+import { readSeratoLegacy, repairSeratoLegacyMissingFile, writeSeratoLegacy } from './serato-legacy';
+import { readSeratoSqlite, repairSeratoSqliteMissingFile, writeSeratoSqlite } from './serato-sqlite';
 
 export type SeratoSource = Readonly<{ kind: 'legacy' | 'sqlite'; path: string }>;
 
@@ -45,6 +45,10 @@ export const assertSeratoClosed = async (): Promise<void> => {
 
 export const readSeratoLibrary = (source: SeratoSource): Promise<SyncLibrary> =>
   source.kind === 'sqlite' ? readSeratoSqlite(source.path) : readSeratoLegacy(source.path);
+
+export const repairSeratoMissingFile = (source: SeratoSource, missingPath: string, replacementPath: string | null) =>
+  source.kind === 'sqlite' ? repairSeratoSqliteMissingFile(source.path, missingPath, replacementPath)
+    : repairSeratoLegacyMissingFile(source.path, missingPath, replacementPath, assertSeratoClosed);
 
 export const writeSeratoLibrary = async (source: SeratoSource, incoming: SyncLibrary, options: Readonly<{
   metadata: boolean; replaceTracks?: boolean; replacePlaylists?: boolean;

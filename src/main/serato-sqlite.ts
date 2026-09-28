@@ -9,7 +9,8 @@ import { promisify } from 'node:util';
 import type { SongRow } from '../shared/dj-library';
 import type { SyncLibrary, SyncPlaylist, SyncTrack } from './library-sync-model';
 import { seratoSmartRules } from './serato-smart-crates';
-import { assertSeratoMediaFile, resolveSeratoLibraryPaths, seratoMediaPathKey } from './serato-paths';
+import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
+import { assertMissingFileRepair, type LibraryFileRepairResult } from './repair-library-files';
 
 // Serato 4.0.9 schema 202: root.sqlite is authoritative; master.sqlite is rebuilt by Serato.
 // https://github.com/Venut-Technologies/serato-dj-mcp/blob/main/tests/fixtures/schema/root-202.sql
@@ -219,6 +220,88 @@ const metadata = ({ path, song }: SyncTrack): Record<string, SQLInputValue> => {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== null && value !== ''));
 };
 
+const backupSeratoDatabases = async (rootPath: string): Promise<string[]> => {
+  const backupPaths: string[] = [];
+  const directory = join(dirname(rootPath), 'arsenal-backups', `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
+  await mkdir(directory, { recursive: true });
+  for (const path of [rootPath, join(dirname(rootPath), 'master.sqlite')]) {
+    if (path !== rootPath) {
+      try { await stat(path); } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+        throw error;
+      }
+    }
+    const source = new DatabaseSync(path, { readOnly: true, timeout: 3000 });
+    try {
+      const destination = join(directory, basename(path));
+      await backup(source, destination);
+      backupPaths.push(destination);
+    } finally { source.close(); }
+  }
+  return backupPaths;
+};
+
+export const repairSeratoSqliteMissingFile = async (
+  rootPath: string,
+  missingPath: string,
+  replacementPath: string | null,
+): Promise<LibraryFileRepairResult> => {
+  await assertSeratoClosed();
+  await assertMissingFileRepair(missingPath, replacementPath);
+  const replacement = replacementPath === null ? null : await resolveSeratoMediaPath(replacementPath);
+  const portableId = replacement === null ? null : portablePath(rootPath, replacement);
+  const missingKey = await seratoMediaPathKey(missingPath);
+  const replacementKey = replacement === null ? null : await seratoMediaPathKey(replacement);
+  if (!(await stat(rootPath)).isFile()) throw new Error('Choose an existing Serato library.');
+  const db = new DatabaseSync(rootPath, { timeout: 3000 });
+  try {
+    const { spaceId } = anchors(db);
+    db.exec('BEGIN IMMEDIATE');
+    const targets: number[] = [];
+    for (const row of db.prepare('SELECT id, portable_id, third_party_type FROM asset').all()) {
+      const key = await seratoMediaPathKey(assetPath(rootPath, row));
+      if (key === missingKey && db.prepare('SELECT id FROM space_asset WHERE asset_id = ? AND space_id = ?').get(id(row.id), spaceId)) targets.push(id(row.id));
+      else if (key === replacementKey) throw new Error('The selected audio file already has an entry in this Serato library. Remove the missing entry or choose another audio file.');
+    }
+    if (targets.length === 0) throw new Error('The missing track is no longer in this Serato collection. Scan the library again.');
+    if (targets.length > 1 && portableId !== null) throw new Error('This missing location has duplicate Serato entries. Remove the missing entries before importing the relocated file.');
+    await assertSeratoClosed();
+    await assertMissingFileRepair(missingPath, replacement);
+    const backupPaths = await backupSeratoDatabases(rootPath);
+    const foreignKeysBefore = db.prepare('PRAGMA foreign_key_check').all().length;
+    const revision = id(db.prepare('SELECT revision FROM serato').get()?.revision) + 1;
+    if (!Number.isSafeInteger(revision)) throw new Error('Invalid Serato revision.');
+    db.prepare('UPDATE serato SET revision = ?').run(revision);
+    for (const assetId of targets) {
+      const spaces = portableId === null ? [spaceId] : db.prepare('SELECT space_id FROM space_asset WHERE asset_id = ?').all(assetId).map((row) => id(row.space_id));
+      for (const affectedSpace of spaces) {
+        db.prepare(`UPDATE container SET revision = ? WHERE id IN (SELECT ca.container_id FROM container_asset ca
+          JOIN space_asset sa ON sa.id = ca.space_asset_id WHERE sa.asset_id = ? AND sa.space_id = ?)`)
+          .run(revision, assetId, affectedSpace);
+        db.prepare('UPDATE space SET revision = ? WHERE id = ?').run(revision, affectedSpace);
+        db.prepare('UPDATE smart_crate_rules SET revision = ?, needs_refresh = 1 WHERE container_id IN (SELECT id FROM container WHERE space_id = ?)').run(revision, affectedSpace);
+      }
+      if (portableId === null) {
+        db.prepare('DELETE FROM space_asset WHERE asset_id = ? AND space_id = ?').run(assetId, spaceId);
+        db.prepare('DELETE FROM asset WHERE id = ? AND NOT EXISTS (SELECT 1 FROM space_asset WHERE asset_id = ?)').run(assetId, assetId);
+      } else {
+        db.prepare('UPDATE asset SET portable_id = ?, file_name = ?, is_missing = 0, revision = ?, time_modified = ? WHERE id = ?')
+          .run(portableId, basename(portableId), revision, Math.floor(Date.now() / 1000), assetId);
+      }
+    }
+    if (db.prepare('PRAGMA foreign_key_check').all().length > foreignKeysBefore || db.prepare('PRAGMA quick_check').get()?.quick_check !== 'ok') {
+      throw new Error('Serato library verification failed. No changes were saved.');
+    }
+    await assertSeratoClosed();
+    await assertMissingFileRepair(missingPath, replacement);
+    db.exec('COMMIT');
+    return { backupPaths, warnings: [] };
+  } catch (error) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw error;
+  } finally { db.close(); }
+};
+
 export const writeSeratoSqlite = async (
   rootPath: string,
   incoming: SyncLibrary,
@@ -244,24 +327,7 @@ export const writeSeratoSqlite = async (
     }
     db.exec('BEGIN IMMEDIATE');
     await assertSeratoClosed();
-    const backupDirectory = join(dirname(rootPath), 'arsenal-backups', `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
-    await mkdir(backupDirectory, { recursive: true });
-    for (const path of [rootPath, join(dirname(rootPath), 'master.sqlite')]) {
-      if (path !== rootPath) {
-        try { await stat(path); } catch (error) {
-          if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
-          throw error;
-        }
-      }
-      const source = new DatabaseSync(path, { readOnly: true, timeout: 3000 });
-      try {
-        const destination = join(backupDirectory, basename(path));
-        await backup(source, destination);
-        backupPaths.push(destination);
-      } finally {
-        source.close();
-      }
-    }
+    backupPaths.push(...await backupSeratoDatabases(rootPath));
     const foreignKeysBefore = db.prepare('PRAGMA foreign_key_check').all().length;
     const revision = id(db.prepare('SELECT revision FROM serato').get()?.revision) + 1;
     if (!Number.isSafeInteger(revision)) throw new Error('Invalid Serato revision.');

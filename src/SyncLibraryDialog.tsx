@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
-import type { LibrarySourceKind, LibrarySummary, SyncDirection, SyncFields, SyncPreferences, SyncRequest, SyncResult } from './shared/dj-library';
+import type { LibrarySourceKind, LibrarySummary, SyncDirection, SyncFields, SyncMissingFileAction, SyncPreferences, SyncRequest, SyncResult } from './shared/dj-library';
 
 const directions = [
   { value: 'both', label: 'Both ways' },
@@ -17,11 +17,12 @@ const fieldOptions = [
   { value: 'beatgrids', label: 'Beatgrids' },
 ] satisfies readonly { value: keyof SyncFields; label: string }[];
 
-export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
+export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMissing }: Readonly<{
   busy: boolean;
   library: LibrarySummary | null;
   onClose: () => void;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
+  onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
 }>): JSX.Element => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const resultRef = useRef<HTMLElement>(null);
@@ -34,6 +35,8 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
     tracks: true, metadata: true, playlists: true, hotCues: true, loops: true, beatgrids: true,
   });
   const [result, setResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
+  const [repairError, setRepairError] = useState<string | null>(null);
+  const [removePath, setRemovePath] = useState<string | null>(null);
   const [timingOffset, setTimingOffset] = useState('0');
   const sourceKind = direction === 'both' ? null : direction === 'rekordbox-to-serato' ? 'rekordbox' : 'serato';
   const destinationName = direction === 'rekordbox-to-serato' ? 'Serato' : 'Rekordbox XML';
@@ -45,7 +48,10 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
   const validOffset = timingOffset.trim() !== '' && Number.isSafeInteger(parsedTimingOffset) && Math.abs(parsedTimingOffset) <= 1000;
   const timingOffsetMs = validOffset ? parsedTimingOffset : 0;
   const validTiming = !hasPerformance || validOffset;
-  const hasIssues = result !== null && (result.kind === 'rejected' || result.warnings.length > 0 || result.skippedTrackCount > 0);
+  const missingFiles = result?.kind === 'missing-files' ? result.files : null;
+  const hasMissingFiles = missingFiles !== null && missingFiles.length > 0;
+  const hasIssues = result !== null && (result.kind === 'rejected' || hasMissingFiles || result.warnings.length > 0 ||
+    result.kind === 'synced' && result.skippedTrackCount > 0);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -84,6 +90,8 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
     if (working || preferences === null || !hasFields || !validTiming) return;
     setPending(true);
     setResult(null);
+    setRepairError(null);
+    setRemovePath(null);
     try {
       let next = await onSync({ direction, mode, conflictSource: sourceKind ?? conflictSource, fields, timingOffsetMs });
       try {
@@ -94,7 +102,12 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
         next = next.kind === 'cancelled' ? { kind: 'rejected', message, warnings: [], backupPaths: [] }
           : { ...next, warnings: [...next.warnings, message] };
       }
-      setResult(next.kind === 'cancelled' ? result : next);
+      setResult(next.kind === 'cancelled' ? result : result?.kind === 'missing-files'
+        ? { ...next, backupPaths: [...new Set([...result.backupPaths, ...next.backupPaths])] } : next);
+    } catch (error: unknown) {
+      setResult({ kind: 'rejected', warnings: result?.warnings ?? [], backupPaths: result?.backupPaths ?? [],
+        message: error instanceof Error ? error.message : 'Could not sync the libraries. Try again.',
+      });
     } finally {
       setPending(false);
     }
@@ -104,11 +117,43 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
     setPending(true);
     try {
       const selected = await window.djLibrary.chooseSyncLibrary(kind, direction);
-      if (selected !== null) setPreferences(selected);
+      if (selected !== null) {
+        setPreferences(selected);
+        setResult(null);
+        setRepairError(null);
+        setRemovePath(null);
+      }
     } catch (error) {
-      setResult({ kind: 'rejected', warnings: [], backupPaths: [],
-        message: error instanceof Error ? error.message : 'Could not choose the library. Try again.',
-      });
+      const message = error instanceof Error ? error.message : 'Could not choose the library. Try again.';
+      if (missingFiles !== null) setRepairError(message);
+      else setResult({ kind: 'rejected', warnings: [], backupPaths: [], message });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const resolveMissing = async (action: SyncMissingFileAction): Promise<void> => {
+    if (working) return;
+    setPending(true);
+    setRepairError(null);
+    try {
+      const next = await onResolveMissing(action);
+      if (next.kind === 'cancelled') return;
+      if (next.kind === 'rejected') {
+        setRepairError(next.message);
+        setResult((current) => current?.kind === 'missing-files'
+          ? { ...current, warnings: [...new Set([...current.warnings, ...next.warnings])],
+            backupPaths: [...new Set([...current.backupPaths, ...next.backupPaths])] }
+          : next);
+      } else {
+        setResult((current) => ({ ...next,
+          warnings: [...new Set([...(current?.warnings ?? []), ...next.warnings])],
+          backupPaths: [...new Set([...(current?.backupPaths ?? []), ...next.backupPaths])],
+        }));
+        setRemovePath(null);
+      }
+    } catch (error: unknown) {
+      setRepairError(error instanceof Error ? error.message : 'Could not update the missing file. Try again.');
     } finally {
       setPending(false);
     }
@@ -138,9 +183,74 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
         {result !== null && (
           <section className={`library-sync-result${hasIssues ? ' library-sync-result-warning' : ''}`} ref={resultRef}
             tabIndex={-1} role={hasIssues ? 'alert' : 'status'} aria-labelledby="library-sync-result-title">
-            <h3 id="library-sync-result-title">{result.kind === 'rejected' ? 'Sync stopped'
+            <h3 id="library-sync-result-title">{result.kind === 'missing-files'
+              ? hasMissingFiles ? 'Missing audio files' : 'Missing files resolved'
+              : result.kind === 'rejected' ? 'Sync stopped'
               : hasIssues ? 'Sync completed with issues' : 'Sync completed'}</h3>
             <p>{result.message}</p>
+            {missingFiles !== null && (
+              <div className="library-sync-recovery" aria-busy={working}>
+                {repairError !== null && <p className="library-sync-recovery-error" role="alert">{repairError}</p>}
+                {hasMissingFiles ? (
+                  <>
+                    <p>Relink each file or remove its library entry. Possible matches require your choice. After reconnecting a drive, use Check files again.</p>
+                    <ul className="library-sync-missing-list" aria-label="Missing audio files">
+                      {missingFiles.map((file) => {
+                        const collections = file.libraries.map((kind) => kind === 'rekordbox' ? 'Rekordbox XML' : 'Serato').join(' and ');
+                        return (
+                          <li key={file.path} className="library-sync-missing-file">
+                            <strong>{file.title || 'Untitled track'}{file.artist ? ` · ${file.artist}` : ''}</strong>
+                            <p className="library-sync-file-path">{file.path}</p>
+                            <p>In {collections}</p>
+                            {file.candidates.length > 0 ? (
+                              <>
+                                <p>Possible matches</p>
+                                <ul className="library-sync-candidates" aria-label={`Possible matches for ${file.path}`}>
+                                  {file.candidates.slice(0, 3).map((path) => (
+                                    <li key={path}>
+                                      <span className="library-sync-file-path">{path}</span>
+                                      <button className="quiet-button" type="button" disabled={working}
+                                        aria-label={`Use ${path} for ${file.path}`}
+                                        onClick={() => void resolveMissing({ kind: 'relink', path: file.path, replacementPath: path })}>Use this file</button>
+                                    </li>
+                                  ))}
+                                </ul>
+                                {file.candidates.length > 3 && <p>Showing 3 of {file.candidates.length} matches. Use Choose file to select another.</p>}
+                              </>
+                            ) : <p>No matching file found. Search a folder or choose its new location.</p>}
+                            <div className="library-sync-file-actions">
+                              <button className="quiet-button" type="button" disabled={working}
+                                onClick={() => void resolveMissing({ kind: 'search', path: file.path })}>Search folder…</button>
+                              <button className="quiet-button" type="button" disabled={working}
+                                onClick={() => void resolveMissing({ kind: 'locate', path: file.path })}>Choose file…</button>
+                              <button className="quiet-button" type="button" disabled={working}
+                                onClick={() => setRemovePath(file.path)}>Remove entry…</button>
+                            </div>
+                            {removePath === file.path && (
+                              <div className="library-sync-remove-confirmation">
+                                <p>Remove this entry from the {collections} collections?</p>
+                                <p className="library-sync-file-path">{file.path}</p>
+                                <p>This removes the track and its playlist memberships from those collections. It never deletes audio files.</p>
+                                <div className="library-sync-file-actions">
+                                  <button className="quiet-button" type="button" disabled={working} onClick={() => setRemovePath(null)}>Keep entry</button>
+                                  <button className="quiet-button" type="button" disabled={working}
+                                    onClick={() => void resolveMissing({ kind: 'remove', path: file.path })}>Remove from collections</button>
+                                </div>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </>
+                ) : (
+                  <div className="library-sync-file-actions">
+                    <button className="accent-button" type="submit" disabled={working || preferences === null || !hasFields || !validTiming}>Retry sync</button>
+                  </div>
+                )}
+                {working && <p role="status">Updating libraries…</p>}
+              </div>
+            )}
             {result.warnings.length > 0 && (
               <>
                 <h4>Warnings ({result.warnings.length})</h4>
@@ -256,7 +366,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync }: Readonly<{
         <div className="library-sync-actions">
           <button className="quiet-button" type="button" disabled={working} onClick={() => dialogRef.current?.close()}>{result === null ? 'Cancel' : 'Close'}</button>
           <button className="accent-button" type="submit" disabled={working || preferences === null || !hasFields || !validTiming}>
-            {busy ? 'Syncing…' : mode === 'replace'
+            {busy ? 'Syncing…' : hasMissingFiles ? 'Check files again' : missingFiles !== null ? 'Retry sync' : mode === 'replace'
               ? needsLibraries ? 'Choose libraries and overwrite' : 'Overwrite library'
               : needsLibraries ? 'Choose libraries and sync' : 'Sync libraries'}
           </button>

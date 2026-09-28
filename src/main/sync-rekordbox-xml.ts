@@ -1,8 +1,12 @@
+import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { isSmartPlaylistNode, type ParsedRekordboxLibrary } from './parse-rekordbox-xml';
 import { normalizePath, type SyncLibrary, type SyncPlaylist, type SyncTrack } from './library-sync-model';
+import { repairRekordboxXmlLocations } from './edit-rekordbox-xml';
+import { assertMissingFileRepair, saveRepairedLibraryFiles, type LibraryFileRepairResult } from './repair-library-files';
+import { seratoMediaPathKey } from './serato-paths';
 
 type XmlNode = {
   name: string;
@@ -81,6 +85,32 @@ const locationFor = (path: string): string => {
     return `file://${host}/${parts.map(encodeURIComponent).join('/')}`;
   }
   return pathToFileURL(path).href.replace('file:///', 'file://localhost/');
+};
+
+export const repairRekordboxMissingFile = async (
+  xmlPath: string,
+  missingPath: string,
+  replacementPath: string | null,
+): Promise<LibraryFileRepairResult> => {
+  await assertMissingFileRepair(missingPath, replacementPath);
+  const before = await readFile(xmlPath);
+  const source = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(before);
+  const document = parseXml(source);
+  const collection = children(document.root, 'COLLECTION')[0];
+  if (!collection) throw new Error('Expected a Rekordbox XML collection.');
+  const missingKey = await seratoMediaPathKey(missingPath);
+  const replacementKey = replacementPath === null ? null : await seratoMediaPathKey(replacementPath);
+  const locations = new Set<string>();
+  for (const track of children(collection, 'TRACK')) {
+    const location = track.attributes.Location;
+    const path = pathFromLocation(location ?? null);
+    if (path === null || location === undefined) continue;
+    const key = await seratoMediaPathKey(path);
+    if (key === missingKey) locations.add(location);
+    else if (key === replacementKey) throw new Error('The selected audio file already has an entry in this Rekordbox collection. Remove the missing entry or choose another audio file.');
+  }
+  const after = Buffer.from(repairRekordboxXmlLocations(source, locations, replacementPath === null ? null : locationFor(replacementPath)), 'utf8');
+  return saveRepairedLibraryFiles([{ path: xmlPath, before, after }], () => assertMissingFileRepair(missingPath, replacementPath));
 };
 
 export const rekordboxSyncLibrary = (parsed: ParsedRekordboxLibrary): SyncLibrary => {

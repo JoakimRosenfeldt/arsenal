@@ -2700,6 +2700,63 @@ button.sidebar-search {
   margin-top: 8px;
 }
 
+.library-sync-missing-list,
+.library-sync-candidates {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.library-sync-missing-list {
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.library-sync-missing-file {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+
+.library-sync-missing-file > strong {
+  color: var(--text);
+}
+
+.library-sync-file-path {
+  overflow-wrap: anywhere;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 11px;
+}
+
+.library-sync-candidates > li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+
+.library-sync-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.library-sync-remove-confirmation {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--warning);
+  border-radius: 4px;
+}
+
+.library-sync-recovery-error {
+  color: var(--warning);
+}
+
 .library-sync-timing {
   color: var(--text-soft);
   font-size: 12px;
