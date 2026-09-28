@@ -33,7 +33,7 @@ If an imported library or Serato workspace also has unsynced local edits, Arsena
 
 ## Ongoing sync and app edits
 
-Connections offers **Ongoing** and **One time** sync. Ongoing sync runs immediately, then checks for source changes every 30 seconds while Arsenal is open. It also checks after app edits. The selected direction and categories apply to each run. One-time sync runs once and stops any ongoing sync. **Stop ongoing sync** stops future runs. Arsenal remembers this choice across launches and still asks before importing changes found at startup.
+Connections offers **Ongoing** and **One time** sync. Ongoing sync runs when you start it and after library edits made in Arsenal. The selected direction and categories apply to each run. One-time sync runs once and stops any ongoing sync. **Stop ongoing sync** stops future runs. Arsenal remembers this choice across launches and still asks before importing changes found at startup.
 
 Library edits made in Arsenal always update the primary library, including when another library is open or ongoing sync is off. Edits update the affected tracks and playlists without replacing unrelated primary entries. If the primary cannot be written, Arsenal rejects the edit and explains why. Serato must be closed before Arsenal can write its native library.
 

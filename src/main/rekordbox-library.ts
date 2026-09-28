@@ -544,9 +544,9 @@ export class RekordboxLibrary {
     this.disposeBackups();
     this.backgroundStopped = false;
     this.backupTimer = setInterval(() => {
-      if ((!this.backups.length && this.savedSyncPreferences.request?.cadence !== 'ongoing') || this.backupPollQueued) return;
+      if (!this.backups.length || this.backupPollQueued) return;
       this.backupPollQueued = true;
-      void this.enqueue(() => this.checkOngoingSync()).catch(() => undefined).finally(() => { this.backupPollQueued = false; });
+      void this.enqueue(async () => undefined).catch(() => undefined).finally(() => { this.backupPollQueued = false; });
     }, 30_000);
     this.backupTimer.unref();
   }
@@ -554,7 +554,6 @@ export class RekordboxLibrary {
   checkStartupChanges(owner: BrowserWindow): Promise<LibraryStartupResult> {
     this.startupCheck ??= this.importStartupChanges(owner).then((result) => {
       this.startupComplete = true;
-      this.requestOngoingSync();
       return result;
     });
     return this.startupCheck;

@@ -259,7 +259,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
 
         {activity !== null && (
           <div className="library-sync-activity">
-            <p role="status">{activity.state === 'watching' ? 'Ongoing sync is on. Watching for library changes.'
+            <p role="status">{activity.state === 'watching' ? 'Ongoing sync is on. App edits sync automatically.'
               : activity.state === 'syncing' ? 'Ongoing sync is updating your libraries…'
               : activity.state === 'attention' ? 'Ongoing sync needs attention. Resolve the issue below, then start it again.'
               : 'Ongoing sync is off.'}
@@ -492,7 +492,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
         )}
 
         <div className="library-sync-description">
-          <p>{cadence === 'ongoing' ? 'Ongoing sync checks for changes while Arsenal is open and applies the selected direction and categories.'
+          <p>{cadence === 'ongoing' ? 'Ongoing sync applies the selected direction and categories after library edits made in Arsenal.'
             : 'One time sync applies these settings once and stops any ongoing sync.'}</p>
           <p>Changes you make in Arsenal always save to your primary library.</p>
           {mode === 'replace' && <p>Overwrite replaces checked categories in {destinationName}. Absent tracks and playlists are removed when checked. Audio files stay on disk.</p>}
