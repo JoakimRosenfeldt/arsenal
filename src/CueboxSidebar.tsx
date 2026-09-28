@@ -10,11 +10,12 @@ const SIDEBAR_WIDTH_KEY = 'arsenal.sidebarWidth';
 export type PageId =
   | 'library'
   | 'duplicates'
+  | 'connections'
   | 'playlists'
   | 'preferences';
 
 type NavigationItem = Readonly<{
-  page: Exclude<PageId, 'playlists' | 'preferences'>;
+  page: Exclude<PageId, 'playlists' | 'preferences' | 'connections'>;
   label: string;
   badge: string;
 }>;
@@ -258,6 +259,11 @@ export const CueboxSidebar = ({
         </div>
       </nav>
       <div className="sidebar-utilities">
+        <button className={activePage === 'connections' ? 'sidebar-preferences is-active' : 'sidebar-preferences'}
+          type="button" aria-current={activePage === 'connections' ? 'page' : undefined}
+          onClick={() => onNavigate('connections')}>
+          <UiIcon name="folder" size={16} /><span>Libraries</span>
+        </button>
         <button className={activePage === 'preferences' ? 'sidebar-preferences is-active' : 'sidebar-preferences'}
           type="button" aria-current={activePage === 'preferences' ? 'page' : undefined}
           onClick={() => onNavigate('preferences')}>

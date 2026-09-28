@@ -43,7 +43,7 @@ export const saveLibraryXml = async (path: string, xml: string, expected: string
     try { current = await readFile(path, 'utf8'); } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
     }
-    if (current !== expected) throw new Error('The Rekordbox XML changed during sync. Import it again and retry.');
+    if (current !== expected) throw new Error('The Rekordbox XML changed during sync. Refresh its connection in Libraries and retry.');
     if (backup && expected !== null) {
       const directory = join(dirname(path), 'arsenal-backups', `${Date.now()}-${randomUUID()}`);
       await mkdir(directory, { recursive: true });

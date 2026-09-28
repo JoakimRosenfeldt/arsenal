@@ -16,6 +16,10 @@ import {
 
 const api: DjLibraryApi = Object.freeze({
   status: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.status),
+  connections: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.connections),
+  connectLibrary: (kind) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.connectLibrary, kind),
+  manageLibraryConnection: (action) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.manageLibraryConnection, action),
+  selectSyncLibrary: (id) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.selectSyncLibrary, id),
   importRekordboxExport: () =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importExport),
   importSeratoLibrary: () =>

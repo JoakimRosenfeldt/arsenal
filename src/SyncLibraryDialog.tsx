@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
-import type { LibrarySourceKind, LibrarySummary, SyncDirection, SyncFields, SyncMissingFileAction, SyncPreferences, SyncRequest, SyncResult } from './shared/dj-library';
+import type { LibraryConnections, LibrarySummary, SyncDirection, SyncFields, SyncMissingFileAction, SyncPreferences, SyncRequest, SyncResult } from './shared/dj-library';
 
 const directions = [
   { value: 'both', label: 'Both ways' },
@@ -17,16 +17,18 @@ const fieldOptions = [
   { value: 'beatgrids', label: 'Beatgrids' },
 ] satisfies readonly { value: keyof SyncFields; label: string }[];
 
-export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMissing }: Readonly<{
+export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMissing, onManageLibraries }: Readonly<{
   busy: boolean;
   library: LibrarySummary | null;
   onClose: () => void;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
+  onManageLibraries: () => void;
 }>): JSX.Element => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const resultRef = useRef<HTMLElement>(null);
   const [preferences, setPreferences] = useState<SyncPreferences | null>(null);
+  const [connections, setConnections] = useState<LibraryConnections | null>(null);
   const [pending, setPending] = useState(true);
   const [direction, setDirection] = useState<SyncDirection>('both');
   const [mode, setMode] = useState<NonNullable<SyncRequest['mode']>>('merge');
@@ -41,7 +43,9 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
   const sourceKind = direction === 'both' ? null : direction === 'rekordbox-to-serato' ? 'rekordbox' : 'serato';
   const destinationName = direction === 'rekordbox-to-serato' ? 'Serato' : 'Rekordbox XML';
   const working = busy || pending;
-  const needsLibraries = preferences?.rekordboxPath === null || preferences?.seratoPath === null;
+  const needsLibraries = !connections?.connections.some((entry) => entry.kind === 'rekordbox' && entry.available && entry.path === preferences?.rekordboxPath) ||
+    !connections?.connections.some((entry) => entry.kind === 'serato' && entry.available && entry.path === preferences?.seratoPath);
+  const sourceOfTruth = connections?.connections.find((entry) => entry.id === connections.sourceOfTruthId);
   const hasFields = Object.values(fields).some(Boolean);
   const hasPerformance = fields.hotCues || fields.loops || fields.beatgrids;
   const parsedTimingOffset = Number(timingOffset);
@@ -60,9 +64,10 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
 
   useEffect(() => {
     let active = true;
-    void window.djLibrary.syncPreferences().then((saved) => {
+    void Promise.all([window.djLibrary.syncPreferences(), window.djLibrary.connections()]).then(([saved, connected]) => {
       if (!active) return;
       setPreferences(saved);
+      setConnections(connected);
       if (saved.request !== null) {
         setDirection(saved.request.direction);
         setMode(saved.request.mode ?? 'merge');
@@ -87,7 +92,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
 
   const submit = async (event: FormEvent): Promise<void> => {
     event.preventDefault();
-    if (working || preferences === null || !hasFields || !validTiming) return;
+    if (working || preferences === null || needsLibraries || !hasFields || !validTiming) return;
     setPending(true);
     setResult(null);
     setRepairError(null);
@@ -113,16 +118,14 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
     }
   };
 
-  const chooseLibrary = async (kind: LibrarySourceKind): Promise<void> => {
+  const chooseLibrary = async (id: string): Promise<void> => {
+    if (!id || working) return;
     setPending(true);
     try {
-      const selected = await window.djLibrary.chooseSyncLibrary(kind, direction);
-      if (selected !== null) {
-        setPreferences(selected);
-        setResult(null);
-        setRepairError(null);
-        setRemovePath(null);
-      }
+      setPreferences(await window.djLibrary.selectSyncLibrary(id));
+      setResult((current) => current?.kind === 'missing-files' ? current : null);
+      setRepairError(null);
+      setRemovePath(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not choose the library. Try again.';
       if (missingFiles !== null) setRepairError(message);
@@ -193,7 +196,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
                 {repairError !== null && <p className="library-sync-recovery-error" role="alert">{repairError}</p>}
                 {hasMissingFiles ? (
                   <>
-                    <p>Relink each file or remove its library entry. Possible matches require your choice. After reconnecting a drive, use Check files again.</p>
+                    <p>Choosing a replacement updates its location in every connected library that references it, regardless of sync direction. Possible matches require your choice. After reconnecting a drive, use Check files again.</p>
                     <ul className="library-sync-missing-list" aria-label="Missing audio files">
                       {missingFiles.map((file) => {
                         const collections = file.libraries.map((kind) => kind === 'rekordbox' ? 'Rekordbox XML' : 'Serato').join(' and ');
@@ -202,6 +205,14 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
                             <strong>{file.title || 'Untitled track'}{file.artist ? ` · ${file.artist}` : ''}</strong>
                             <p className="library-sync-file-path">{file.path}</p>
                             <p>In {collections}</p>
+                            {file.libraryPaths !== undefined && file.libraryPaths.length > 0 && (
+                              <details>
+                                <summary>Connected library files ({file.libraryPaths.length})</summary>
+                                <ul className="library-sync-result-list" aria-label={`Connected libraries for ${file.path}`}>
+                                  {file.libraryPaths.map((path) => <li key={path}>{path}</li>)}
+                                </ul>
+                              </details>
+                            )}
                             {file.candidates.length > 0 ? (
                               <>
                                 <p>Possible matches</p>
@@ -228,8 +239,13 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
                             </div>
                             {removePath === file.path && (
                               <div className="library-sync-remove-confirmation">
-                                <p>Remove this entry from the {collections} collections?</p>
+                                <p>Remove this entry from the connected {collections} collections?</p>
                                 <p className="library-sync-file-path">{file.path}</p>
+                                {file.libraryPaths !== undefined && file.libraryPaths.length > 0 && (
+                                  <ul className="library-sync-result-list" aria-label="Collections to remove from">
+                                    {file.libraryPaths.map((path) => <li key={path}>{path}</li>)}
+                                  </ul>
+                                )}
                                 <p>This removes the track and its playlist memberships from those collections. It never deletes audio files.</p>
                                 <div className="library-sync-file-actions">
                                   <button className="quiet-button" type="button" disabled={working} onClick={() => setRemovePath(null)}>Keep entry</button>
@@ -245,7 +261,7 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
                   </>
                 ) : (
                   <div className="library-sync-file-actions">
-                    <button className="accent-button" type="submit" disabled={working || preferences === null || !hasFields || !validTiming}>Retry sync</button>
+                    <button className="accent-button" type="submit" disabled={working || preferences === null || needsLibraries || !hasFields || !validTiming}>Retry sync</button>
                   </div>
                 )}
                 {working && <p role="status">Updating libraries…</p>}
@@ -303,14 +319,24 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
             {(['rekordbox', 'serato'] as const).map((kind) => {
               const label = kind === 'rekordbox' ? 'Rekordbox XML' : 'Serato library';
               const path = preferences?.[kind === 'rekordbox' ? 'rekordboxPath' : 'seratoPath'];
+              const options = connections?.connections.filter((entry) => entry.kind === kind) ?? [];
+              const selected = options.find((entry) => entry.path === path);
               return (
                 <div className="library-sync-location" key={kind}>
-                  <div><strong>{label}</strong><span>{path ?? 'No library selected'}</span></div>
-                  <button className="quiet-button" type="button" onClick={() => void chooseLibrary(kind)}
-                    aria-label={`${path ? 'Change' : 'Choose'} ${label}`}>{path ? 'Change' : 'Choose…'}</button>
+                  <label><strong>{label}</strong>
+                    <select aria-label={label} value={selected?.id ?? ''} onChange={(event) => void chooseLibrary(event.currentTarget.value)}>
+                      <option value="" disabled>Choose a connected library</option>
+                      {options.map((entry) => <option key={entry.id} value={entry.id} disabled={!entry.available}>
+                        {entry.name}{entry.id === connections?.sourceOfTruthId ? ' — Source of truth' : ''}{entry.available ? '' : ' — Unavailable'}
+                      </option>)}
+                    </select>
+                    <span>{path ?? 'No library selected'}</span>
+                  </label>
                 </div>
               );
             })}
+            <button className="quiet-button" type="button" onClick={onManageLibraries}>Manage libraries</button>
+            {sourceOfTruth && <p>Source of truth: {sourceOfTruth.name}. Its values win conflicts by default.</p>}
           </div>
         </fieldset>
 
@@ -356,19 +382,19 @@ export const SyncLibraryDialog = ({ busy, library, onClose, onSync, onResolveMis
             : 'Tracks and playlist memberships are merged without deletions.'} {direction === 'both'
             ? `${conflictSource === 'rekordbox' ? 'Rekordbox' : 'Serato'} values win for matching tracks.`
             : 'Source values win for matching tracks.'}</p>
-          <p>Your last used settings and library locations are saved for the next sync. Choose or change the libraries above.</p>
+          <p>Your sync settings and connected libraries are saved for the next sync.</p>
           <p>Supports Serato 4 Library folders and older _Serato_ libraries. Hot cues, loops and beatgrids use audio tags in MP3, AIFF, WAV, FLAC and M4A/MP4 files. Unsupported files are listed in the sync report.</p>
           <p>Close Serato before syncing. Backups are saved beside changed files. Import the updated XML into Rekordbox to apply its changes.</p>
         </div>
 
         {!hasFields && <p className="tracklist-export-note">Choose at least one category to sync.</p>}
+        {needsLibraries && <p className="tracklist-export-note">Connect an available Rekordbox XML and Serato library on the Libraries page, then choose them above.</p>}
         {!validTiming && <p className="tracklist-export-note">Enter a whole number between -1000 and 1000 milliseconds.</p>}
         <div className="library-sync-actions">
           <button className="quiet-button" type="button" disabled={working} onClick={() => dialogRef.current?.close()}>{result === null ? 'Cancel' : 'Close'}</button>
-          <button className="accent-button" type="submit" disabled={working || preferences === null || !hasFields || !validTiming}>
+          <button className="accent-button" type="submit" disabled={working || preferences === null || needsLibraries || !hasFields || !validTiming}>
             {busy ? 'Syncing…' : hasMissingFiles ? 'Check files again' : missingFiles !== null ? 'Retry sync' : mode === 'replace'
-              ? needsLibraries ? 'Choose libraries and overwrite' : 'Overwrite library'
-              : needsLibraries ? 'Choose libraries and sync' : 'Sync libraries'}
+              ? 'Overwrite library' : 'Sync libraries'}
           </button>
         </div>
       </form>

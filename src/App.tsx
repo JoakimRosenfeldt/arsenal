@@ -21,7 +21,8 @@ import {
   type DuplicateMatchMode,
   type DuplicateScan,
   type ImportFailure,
-  type LibrarySourceKind,
+  type LibraryConnections,
+  type LibraryConnectionResult,
   type LibrarySummary,
   type LibraryMutation,
   type LibraryMutationResult,
@@ -38,6 +39,7 @@ import {
 import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
 import { TracklistExportDialog } from './TracklistExportDialog';
 import { SyncLibraryDialog } from './SyncLibraryDialog';
+import { LibraryConnectionsPage } from './LibraryConnectionsPage';
 import { Preferences } from './Preferences';
 import type { SmartPlaylistDefinition } from './shared/smart-playlists';
 
@@ -69,13 +71,13 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
   'not-serato-library':
     'Choose a Serato Library folder containing root.sqlite or location.sqlite, or an _Serato_ folder containing database V2.',
   'cannot-save-library':
-    'Could not save the imported library in Arsenal. Check the available disk space and permissions.',
+    'Could not save the library connection. Check the available disk space and permissions.',
   'malformed-xml':
     'This file is damaged. Export the collection again, then choose the new file.',
   'stale-library':
     'The library changed before this action ran. Try the action again.',
   'source-changed':
-    'The library file changed. Import it again before editing.',
+    'The library file changed. Refresh its connection on the Libraries page before editing.',
   'song-not-found':
     'That track is no longer in the library.',
   'duplicate-not-found':
@@ -126,6 +128,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [minimumSongLengthSeconds, setMinimumSongLengthSeconds] = useState(DEFAULT_MINIMUM_SONG_LENGTH_SECONDS);
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<LibraryView | null>(null);
+  const [connections, setConnections] = useState<LibraryConnections | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
   const [folders, setFolders] = useState<readonly PlaylistFolder[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -175,14 +178,21 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
 
     const loadInitialState = async (): Promise<void> => {
       try {
-        const [status, settings] = await Promise.all([window.djLibrary.status(), window.preferences.library()]);
+        const [status, settings, connected] = await Promise.all([
+          window.djLibrary.status(), window.preferences.library(),
+          playlistWindow ? Promise.resolve(null) : window.djLibrary.connections(),
+        ]);
         if (!active) return;
+        setConnections(connected);
         setMinimumSongLengthSeconds(settings.minimumSongLengthSeconds);
         if (playlistWindow && (status.kind === 'empty' || status.library.revision !== playlistWindow.request.revision)) {
           setError('stale-library');
           return;
         }
-        if (status.kind === 'empty') return;
+        if (status.kind === 'empty') {
+          if (!playlistWindow) setActivePage('connections');
+          return;
+        }
 
         const [page, loadedPlaylists, loadedFolders] = await Promise.all([
           window.djLibrary.listSongs({
@@ -350,18 +360,17 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setPlaylists(loadedPlaylists);
     setFolders(loadedFolders);
     setSelectedPlaylistId(null);
-    setActivePage('library');
     setQuery('');
     setViewQuery('');
     setFilters(DEFAULT_SONG_FILTERS);
     setViewFilters(DEFAULT_SONG_FILTERS);
   };
 
-  const importLibrary = async (source: LibrarySourceKind): Promise<void> => {
-    if (busy) {
-      return;
-    }
-
+  const manageConnection = async (
+    operation: () => Promise<LibraryConnectionResult>,
+    openView = false,
+  ): Promise<LibraryConnectionResult> => {
+    if (busy) return { kind: 'cancelled' };
     setBusy(true);
     searchSequence.current += 1;
     setSearching(false);
@@ -371,23 +380,28 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setFeedback(null);
 
     try {
-      const result = await (source === 'serato'
-        ? window.djLibrary.importSeratoLibrary()
-        : window.djLibrary.importRekordboxExport());
-      if (result.kind === 'cancelled') {
-        return;
+      const result = await operation();
+      if (result.kind !== 'updated') return result;
+      setConnections(result.connections);
+      try {
+        if (result.status.kind === 'ready') {
+          if (result.status.library.revision !== view?.library.revision) await refreshLibrary(result.status.library);
+        } else {
+          stopPlayback();
+          setView(null);
+          setPlaylists(null);
+          setFolders([]);
+          setSelectedPlaylistId(null);
+          setDuplicateState({ kind: 'empty' });
+        }
+      } catch {
+        setActivePage('connections');
+        return { ...result, warnings: [...result.warnings, 'Connection saved, but Arsenal could not refresh the collection view. Refresh the connection again.'] };
       }
-      if (result.kind === 'rejected') {
-        setError(result.reason);
-        return;
-      }
-
-      await refreshLibrary(result.library);
-      if (result.warnings && result.warnings.length > 0) {
-        setFeedback({ tone: 'warning', message: `Imported the library with ${result.warnings.length} ${result.warnings.length === 1 ? 'warning' : 'warnings'}. ${result.warnings.slice(0, 3).join(' ')}${result.warnings.length > 3 ? ` ${result.warnings.length - 3} more files had unreadable performance data.` : ''}` });
-      }
-    } catch {
-      setError('unexpected');
+      setActivePage(openView && result.status.kind === 'ready' && result.warnings.length === 0 ? 'library' : 'connections');
+      return result;
+    } catch (error) {
+      return { kind: 'rejected', message: error instanceof Error ? error.message : 'Could not update the library connection.' };
     } finally {
       setBusy(false);
     }
@@ -608,11 +622,16 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   };
 
   const navigate = (nextPage: PageId): void => {
+    if (busy) return;
     setEditor(null);
     setActivePage(nextPage);
+    if (nextPage === 'connections') {
+      void window.djLibrary.connections().then(setConnections).catch(() => setError('unexpected'));
+    }
   };
 
   const selectPlaylist = (playlistId: string): void => {
+    if (busy) return;
     setEditor(null);
     setSelectedPlaylistId(playlistId);
     setActivePage('playlists');
@@ -652,6 +671,11 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
 
   const page = (() => {
     switch (activePage) {
+      case 'connections':
+        return <LibraryConnectionsPage busy={busy} state={connections}
+          onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind))}
+          onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open')}
+          onSync={() => setSyncOpen(true)} />;
       case 'preferences':
         return <Preferences onCancel={() => setActivePage('library')} onSaved={() => setFeedback({ tone: 'success', message: 'Preferences saved.' })} />;
       case 'library':
@@ -668,7 +692,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             onCreate={(songIds) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds })}
             onAdd={addToPlaylist}
             onRemove={removeSongs}
-            onImport={(source) => void importLibrary(source)}
+            onManageLibraries={() => navigate('connections')}
             onSync={() => setSyncOpen(true)}
             onPage={(offset) => void changePage(offset)}
             playback={playback}
@@ -690,7 +714,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               mode: duplicateMode,
               groupKey,
             }))}
-            onImport={(source) => void importLibrary(source)}
+            onManageLibraries={() => navigate('connections')}
             onSync={() => setSyncOpen(true)}
             onModeChange={setDuplicateMode}
             onRescan={rescanDuplicates}
@@ -746,7 +770,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             onEditSmart={(playlist) => openPlaylistEditor({ kind: 'edit-smart-playlist', playlistId: playlist.id, parentFolderId: playlist.parentFolderId, revision: libraryVersion })}
             onExport={(playlist) => setExportPlaylistId(playlist.id)}
             onCreate={createPlaylist}
-            onImport={(source) => void importLibrary(source)}
+            onManageLibraries={() => navigate('connections')}
             onSync={() => setSyncOpen(true)}
             playback={playback}
             playlists={playlists}
@@ -824,6 +848,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       )}
       {playlistWindow === undefined && syncOpen && (
         <SyncLibraryDialog busy={busy} library={view?.library ?? null} onClose={() => setSyncOpen(false)}
+          onManageLibraries={() => { setSyncOpen(false); navigate('connections'); }}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
           onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />
       )}

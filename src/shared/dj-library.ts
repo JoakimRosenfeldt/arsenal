@@ -3,6 +3,10 @@ import type { SmartPlaylistDefinition } from './smart-playlists';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
+  connections: 'dj-library:connections',
+  connectLibrary: 'dj-library:connect-library',
+  manageLibraryConnection: 'dj-library:manage-library-connection',
+  selectSyncLibrary: 'dj-library:select-sync-library',
   importExport: 'dj-library:import-export',
   importSerato: 'dj-library:import-serato',
   syncLibraries: 'dj-library:sync-libraries',
@@ -191,6 +195,30 @@ export type LibraryStatus =
   | Readonly<{ kind: 'empty' }>
   | Readonly<{ kind: 'ready'; library: LibrarySummary }>;
 
+export type LibraryConnection = Readonly<{
+  id: string;
+  kind: LibrarySourceKind;
+  name: string;
+  path: string;
+  available: boolean;
+}>;
+
+export type LibraryConnections = Readonly<{
+  connections: readonly LibraryConnection[];
+  activeConnectionId: string | null;
+  sourceOfTruthId: string | null;
+}>;
+
+export type LibraryConnectionAction = Readonly<{
+  kind: 'open' | 'refresh' | 'disconnect' | 'source-of-truth' | 'locate';
+  id: string;
+}>;
+
+export type LibraryConnectionResult =
+  | Readonly<{ kind: 'cancelled' }>
+  | Readonly<{ kind: 'rejected'; message: string }>
+  | Readonly<{ kind: 'updated'; connections: LibraryConnections; status: LibraryStatus; warnings: readonly string[] }>;
+
 export type ImportFailure =
   | 'cannot-read'
   | 'not-rekordbox-xml'
@@ -260,6 +288,7 @@ export type SyncMissingFile = Readonly<{
   title: string;
   artist: SongRow['artist'];
   libraries: readonly LibrarySourceKind[];
+  libraryPaths?: readonly string[];
   candidates: readonly string[];
 }>;
 
@@ -408,6 +437,10 @@ export type LibraryMutationResult =
 
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
+  connections(): Promise<LibraryConnections>;
+  connectLibrary(kind: LibrarySourceKind): Promise<LibraryConnectionResult>;
+  manageLibraryConnection(action: LibraryConnectionAction): Promise<LibraryConnectionResult>;
+  selectSyncLibrary(id: string): Promise<SyncPreferences>;
   importRekordboxExport(): Promise<ImportResult>;
   importSeratoLibrary(): Promise<ImportResult>;
   syncLibraries(request: SyncRequest): Promise<SyncResult>;
