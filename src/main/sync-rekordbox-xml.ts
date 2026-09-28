@@ -126,12 +126,16 @@ export const rekordboxSyncLibrary = (parsed: ParsedRekordboxLibrary): SyncLibrar
   }
   const cratesWithTracks = new Set(parsed.playlists.filter((playlist) => playlist.seratoCrateTracks && playlist.folderPath.length > 0)
     .map((playlist) => JSON.stringify(playlist.folderPath)));
+  const nodes: (ParsedRekordboxLibrary['folders'][number] | ParsedRekordboxLibrary['playlists'][number])[] = [
+    ...parsed.folders.filter((folder) => !cratesWithTracks.has(JSON.stringify(folder.folderPath))),
+    ...parsed.playlists,
+  ];
   return {
     tracks,
-    playlists: [
-      ...parsed.folders.filter((folder) => !cratesWithTracks.has(JSON.stringify(folder.folderPath)))
-        .map((folder): SyncPlaylist => ({ path: folder.folderPath, trackPaths: [], kind: 'folder' })),
-      ...parsed.playlists.map((playlist): SyncPlaylist => ({
+    playlists: nodes.sort((left, right) => left.order - right.order).map((node): SyncPlaylist => {
+      if (!('keys' in node)) return { path: node.folderPath, trackPaths: [], kind: 'folder' };
+      const playlist = node;
+      return {
         path: playlist.seratoCrateTracks && playlist.folderPath.length > 0 ? playlist.folderPath : [...playlist.folderPath, playlist.name],
         kind: playlist.kind === 'smart' ? 'smart' : 'playlist',
         ...(playlist.kind === 'smart' ? { smart: playlist.seratoSmartRules ?? (playlist.smartDefinition
@@ -141,8 +145,8 @@ export const rekordboxSyncLibrary = (parsed: ParsedRekordboxLibrary): SyncLibrar
           const path = playlist.referenceKind === 'track-id' ? byId.get(key) : byLocation.get(key);
           return path === undefined ? [] : [path];
         }),
-      })),
-    ],
+      };
+    }),
   };
 };
 
@@ -380,6 +384,24 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
     if (node.attributes.Type === '0') node.attributes.Count = String(children(node, 'NODE').length);
     children(node, 'NODE').forEach(updateCounts);
   };
+  if (fields?.playlists !== false && incomingPlaylists.length > 0) {
+    const order = new Map<string, number>();
+    for (const playlist of incomingPlaylists) {
+      for (let depth = 1; depth <= playlist.path.length; depth += 1) {
+        const key = JSON.stringify(playlist.path.slice(0, depth));
+        if (!order.has(key)) order.set(key, order.size);
+      }
+    }
+    const reorder = (parent: XmlNode, path: readonly string[]): void => {
+      const slots = parent.parts.flatMap((part, index) => typeof part !== 'string' && part.name === 'NODE' ? [index] : []);
+      const sorted = slots.map((slot) => parent.parts[slot] as XmlNode).sort((left, right) =>
+        (order.get(JSON.stringify([...path, left.attributes.Name])) ?? Infinity) -
+        (order.get(JSON.stringify([...path, right.attributes.Name])) ?? Infinity));
+      for (const [index, slot] of slots.entries()) parent.parts[slot] = sorted[index]!;
+      for (const node of sorted) reorder(node, [...path, node.attributes.Name ?? '']);
+    };
+    reorder(playlistRoot, []);
+  }
   updateCounts(playlistRoot);
   return document.prefix + render(document.root) + document.suffix;
 };

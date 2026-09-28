@@ -246,6 +246,23 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
     }
     return { kind: 'set-playlist-tracks', revision: value.revision, playlistId: value.playlistId, songIds: value.songIds };
   }
+  if (value.kind === 'remove-playlist') {
+    if (typeof value.revision !== 'string' || value.revision.length === 0 ||
+      typeof value.playlistId !== 'string' || value.playlistId.length === 0) {
+      throw new Error('Invalid playlist removal');
+    }
+    return { kind: 'remove-playlist', revision: value.revision, playlistId: value.playlistId };
+  }
+  if (value.kind === 'move-playlist-node') {
+    const validPath = (path: unknown): path is string[] => Array.isArray(path) && path.length <= 32 &&
+      path.every((part) => typeof part === 'string' && part.length > 0 && part.length <= 100);
+    if (typeof value.revision !== 'string' || !validPath(value.sourcePath) || value.sourcePath.length === 0 ||
+      !validPath(value.parentPath) || (value.beforePath !== null && !validPath(value.beforePath))) {
+      throw new Error('Invalid playlist move');
+    }
+    return { kind: 'move-playlist-node', revision: value.revision, sourcePath: value.sourcePath,
+      parentPath: value.parentPath, beforePath: value.beforePath };
+  }
   throw new Error('Invalid library mutation');
 };
 
@@ -498,6 +515,11 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     return library.listFolders();
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.playlistOrder, (event) => {
+    assertTrustedSender(event, owner);
+    return library.playlistOrder();
+  });
+
   ipc.handle(DJ_LIBRARY_CHANNELS.previewSmartPlaylist, (event, request: unknown) => {
     assertTrustedSender(event, owner);
     if (!isRecord(request) || typeof request.revision !== 'string') throw new Error('Invalid preview');
@@ -516,6 +538,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
       Menu.buildFromTemplate([
         ...(playlistId === null ? [] : [
           { label: 'Export tracklist…', click: () => resolve('export-tracklist' as const) },
+          { label: 'Remove playlist…', click: () => resolve('remove-playlist' as const) },
           { type: 'separator' as const },
         ]),
         { label: 'New playlist…', click: () => resolve('playlist') },

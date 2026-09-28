@@ -27,6 +27,12 @@ export type SyncLibrary = Readonly<{
   playlists: readonly SyncPlaylist[];
 }>;
 
+export type PlaylistNodeMove = Readonly<{
+  sourcePath: readonly string[];
+  parentPath: readonly string[];
+  beforePath: readonly string[] | null;
+}>;
+
 export const normalizePath = (path: string): string => {
   const slashes = path.replaceAll('\\', '/');
   const normalized = posix.normalize(slashes);
@@ -41,14 +47,14 @@ export const mergeLibraries = (preferred: SyncLibrary, other: SyncLibrary): Sync
     const song = existing ? { ...existing.song, ...Object.fromEntries(Object.entries(track.song).filter(([, value]) => value !== null && value !== '')) } : track.song;
     tracks.set(normalizePath(track.path), { ...track, song });
   }
-  const playlists = new Map(other.playlists.map((playlist) => [JSON.stringify(playlist.path), playlist]));
-  for (const playlist of preferred.playlists) {
+  const playlists = new Map(preferred.playlists.map((playlist) => [JSON.stringify(playlist.path), playlist]));
+  for (const playlist of other.playlists) {
     const existing = playlists.get(JSON.stringify(playlist.path));
     const paths = new Map<string, string>();
-    for (const path of [...playlist.trackPaths, ...existing?.trackPaths ?? []]) {
+    for (const path of [...existing?.trackPaths ?? [], ...playlist.trackPaths]) {
       if (!paths.has(normalizePath(path))) paths.set(normalizePath(path), path);
     }
-    playlists.set(JSON.stringify(playlist.path), { ...playlist, trackPaths: [...paths.values()] });
+    playlists.set(JSON.stringify(playlist.path), { ...playlist, ...existing, trackPaths: [...paths.values()] });
   }
   return { tracks: [...tracks.values()], playlists: [...playlists.values()] };
 };

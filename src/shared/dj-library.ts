@@ -17,6 +17,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   findDuplicates: 'dj-library:find-duplicates',
   listPlaylists: 'dj-library:list-playlists',
   listFolders: 'dj-library:list-folders',
+  playlistOrder: 'dj-library:playlist-order',
   playlistMenu: 'dj-library:playlist-menu',
   copyTracklist: 'dj-library:copy-tracklist',
   openPlaylistWindow: 'dj-library:open-playlist-window',
@@ -173,7 +174,7 @@ export type PlaylistFolder = Readonly<{
 }>;
 
 export type PlaylistCreationKind = 'playlist' | 'folder' | 'smart-playlist';
-export type PlaylistMenuAction = PlaylistCreationKind | 'export-tracklist';
+export type PlaylistMenuAction = PlaylistCreationKind | 'export-tracklist' | 'remove-playlist';
 export type PlaylistWindowRequest = Readonly<{ revision: string; parentFolderId: string | null }> & (
   | Readonly<{ kind: 'playlist'; songIds: readonly string[] }>
   | Readonly<{ kind: 'folder' | 'smart-playlist' }>
@@ -374,6 +375,18 @@ export type LibraryMutation =
       songIds: readonly string[];
     }>
   | Readonly<{
+      kind: 'remove-playlist';
+      revision: string;
+      playlistId: string;
+    }>
+  | Readonly<{
+      kind: 'move-playlist-node';
+      revision: string;
+      sourcePath: readonly string[];
+      parentPath: readonly string[];
+      beforePath: readonly string[] | null;
+    }>
+  | Readonly<{
       kind: 'save-smart-playlist';
       revision: string;
       name: string;
@@ -399,6 +412,8 @@ export type MutationFailure =
   | 'invalid-playlist'
   | 'name-conflict'
   | 'folder-not-found'
+  | 'playlist-sync-needed'
+  | 'serato-open'
   | 'cannot-write';
 
 export type LibraryMutationResult =
@@ -422,6 +437,17 @@ export type LibraryMutationResult =
       kind: 'playlist-updated';
       library: LibrarySummary;
       playlistId: string;
+    }>
+  | Readonly<{
+      kind: 'playlist-removed';
+      library: LibrarySummary;
+    }>
+  | Readonly<{
+      kind: 'playlist-node-moved';
+      library: LibrarySummary;
+      sourcePath: readonly string[];
+      destinationPath: readonly string[];
+      warning?: string;
     }>
   | Readonly<{
       kind: 'folder-created';
@@ -453,6 +479,7 @@ export type DjLibraryApi = Readonly<{
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;
   listFolders(): Promise<readonly PlaylistFolder[]>;
+  playlistOrder(): Promise<readonly (readonly string[])[]>;
   playlistMenu(playlistId: string | null): Promise<PlaylistMenuAction | null>;
   copyTracklist(text: string): Promise<void>;
   openPlaylistWindow(request: PlaylistWindowRequest): Promise<LibraryMutationResult | null>;
