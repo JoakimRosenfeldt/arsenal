@@ -38,7 +38,6 @@ import {
 
 import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
 import { TracklistExportDialog } from './TracklistExportDialog';
-import { SyncLibraryDialog } from './SyncLibraryDialog';
 import { LibraryConnectionsPage } from './LibraryConnectionsPage';
 import { Preferences } from './Preferences';
 import type { SmartPlaylistDefinition } from './shared/smart-playlists';
@@ -133,7 +132,6 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [folders, setFolders] = useState<readonly PlaylistFolder[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
   const [exportPlaylistId, setExportPlaylistId] = useState<string | null>(null);
-  const [syncOpen, setSyncOpen] = useState(false);
   const [error, setError] = useState<DisplayError | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
@@ -675,7 +673,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         return <LibraryConnectionsPage busy={busy} state={connections}
           onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind))}
           onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open')}
-          onSync={() => setSyncOpen(true)} />;
+          onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
+          onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />;
       case 'preferences':
         return <Preferences onCancel={() => setActivePage('library')} onSaved={() => setFeedback({ tone: 'success', message: 'Preferences saved.' })} />;
       case 'library':
@@ -693,7 +692,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             onAdd={addToPlaylist}
             onRemove={removeSongs}
             onManageLibraries={() => navigate('connections')}
-            onSync={() => setSyncOpen(true)}
+            onSync={() => navigate('connections')}
             onPage={(offset) => void changePage(offset)}
             playback={playback}
             playlists={playlists ?? []}
@@ -715,7 +714,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               groupKey,
             }))}
             onManageLibraries={() => navigate('connections')}
-            onSync={() => setSyncOpen(true)}
+            onSync={() => navigate('connections')}
             onModeChange={setDuplicateMode}
             onRescan={rescanDuplicates}
             onRemove={removeSongs}
@@ -771,7 +770,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             onExport={(playlist) => setExportPlaylistId(playlist.id)}
             onCreate={createPlaylist}
             onManageLibraries={() => navigate('connections')}
-            onSync={() => setSyncOpen(true)}
+            onSync={() => navigate('connections')}
             playback={playback}
             playlists={playlists}
             selectedPlaylistId={selectedPlaylistId}
@@ -845,12 +844,6 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         onVolume={(value) => { setVolume(value); setMuted(false); if (audioRef.current) audioRef.current.volume = value; }} /> }
       {playlistWindow === undefined && exportPlaylist !== null && (
         <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onClose={() => setExportPlaylistId(null)} />
-      )}
-      {playlistWindow === undefined && syncOpen && (
-        <SyncLibraryDialog busy={busy} library={view?.library ?? null} onClose={() => setSyncOpen(false)}
-          onManageLibraries={() => { setSyncOpen(false); navigate('connections'); }}
-          onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
-          onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />
       )}
     </div>
   );

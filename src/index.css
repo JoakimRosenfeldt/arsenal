@@ -1055,38 +1055,16 @@ input:disabled {
   line-height: 1.6;
 }
 
-.library-connect-section {
-  max-width: 1000px;
-}
-
-.library-connect-section h2 {
-  margin: 0 0 12px;
-  color: var(--text);
-  font-size: 16px;
-  font-weight: 600;
-}
-
-.library-connect-section p {
-  margin: 10px 0;
-}
-
 .library-connection-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr));
   gap: 16px;
-  margin-top: 24px;
-}
-
-.library-connection-slot {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
 }
 
 .library-connect-button,
 .library-connection-card {
   min-width: 0;
+  min-height: 160px;
   padding: 20px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -1098,7 +1076,6 @@ input:disabled {
   align-content: center;
   justify-items: center;
   gap: 10px;
-  min-height: 185px;
   color: var(--text-soft);
   font: inherit;
   cursor: pointer;
@@ -1110,6 +1087,16 @@ input:disabled {
   gap: 8px;
   font-size: 14px;
   font-weight: 600;
+}
+
+.library-connection-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.library-connection-card > .library-connection-actions {
+  margin-top: auto;
+  padding-top: 16px;
 }
 
 .library-connection-empty-status {
@@ -1149,7 +1136,7 @@ input:disabled {
   justify-content: space-between;
 }
 
-.library-connection-heading h3 {
+.library-connection-heading h2 {
   margin: 0;
   color: var(--text);
   font-size: 14px;
@@ -1157,7 +1144,7 @@ input:disabled {
   overflow-wrap: anywhere;
 }
 
-.library-connection-heading h3 button {
+.library-connection-heading h2 button {
   padding: 0;
   border: 0;
   color: inherit;
@@ -1167,7 +1154,7 @@ input:disabled {
   cursor: pointer;
 }
 
-.library-connection-heading h3 button:hover:not(:disabled) {
+.library-connection-heading h2 button:hover:not(:disabled) {
   text-decoration: underline;
 }
 
@@ -1182,11 +1169,6 @@ input:disabled {
 
 .library-connection-status.is-unavailable {
   color: var(--warning);
-}
-
-.library-connection-name {
-  color: var(--text);
-  overflow-wrap: anywhere;
 }
 
 .library-connection-path {
@@ -1208,12 +1190,6 @@ input:disabled {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 24px;
-}
-
-@media (max-width: 850px) {
-  .library-connection-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
 }
 
 .library-connections-feedback {
@@ -2792,6 +2768,32 @@ button.sidebar-search {
 
 .tracklist-export-actions .accent-button {
   flex: none;
+}
+
+.library-sync-settings {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.library-sync-settings h2 {
+  margin: 0;
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.library-sync-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  align-items: start;
+  gap: 24px;
+  margin: 24px 0;
+}
+
+.library-sync-settings-grid > fieldset {
+  min-width: 0;
+  margin: 0;
 }
 
 .library-sync-directions > div {
