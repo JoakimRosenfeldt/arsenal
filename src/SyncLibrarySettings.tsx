@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
-import type { LibraryConnections, LibrarySourceKind, SyncDirection, SyncFields, SyncMissingFileAction, SyncPreferences, SyncRequest, SyncResult } from './shared/dj-library';
+import type { LibraryConnections, LibrarySourceKind, SyncActivity, SyncDirection, SyncFields, SyncMissingFileAction, SyncPreferences, SyncRequest, SyncResult } from './shared/dj-library';
 
 const directions = [
   { value: 'both', label: 'Both ways' },
@@ -33,9 +33,15 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const removalRef = useRef<HTMLDivElement>(null);
   const savedRequestKey = useRef<string | null>(null);
   const savedPrimaryId = useRef<string | null | undefined>(undefined);
+  const draftChanged = useRef(false);
+  const activityResultKey = useRef<string | null>(null);
+  const backgroundResult = useRef<SyncActivity['result']>(null);
   const [preferences, setPreferences] = useState<SyncPreferences | null>(null);
   const [preferencesFor, setPreferencesFor] = useState<LibraryConnections | null | undefined>(undefined);
   const [pending, setPending] = useState(false);
+  const [activity, setActivity] = useState<SyncActivity | null>(null);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [cadence, setCadence] = useState<NonNullable<SyncRequest['cadence']>>('ongoing');
   const [direction, setDirection] = useState<SyncDirection>('both');
   const [mode, setMode] = useState<NonNullable<SyncRequest['mode']>>('merge');
   const [fields, setFields] = useState<SyncFields>({
@@ -51,7 +57,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const conflictSource = sourceKind ?? primary?.kind ?? 'rekordbox';
   const destinationName = direction === 'rekordbox-to-serato' ? 'Serato' : 'Rekordbox XML';
   const loadingPreferences = preferencesFor !== connections;
-  const working = busy || pending || loadingPreferences;
+  const working = busy || pending || loadingPreferences || activity?.state === 'syncing';
+  const ongoing = activity !== null && activity.state !== 'off';
   const needsLibraries = !connections?.connections.some((entry) => entry.kind === 'rekordbox' && entry.available && entry.path === preferences?.rekordboxPath) ||
     !connections?.connections.some((entry) => entry.kind === 'serato' && entry.available && entry.path === preferences?.seratoPath);
   const libraryChoices = libraryKinds.flatMap(({ kind, label, key }) => {
@@ -84,7 +91,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
       setPreferences(saved);
       const requestKey = JSON.stringify(saved.request);
       const primaryId = connections?.sourceOfTruthId ?? null;
-      if (saved.request !== null && (requestKey !== savedRequestKey.current || primaryId !== savedPrimaryId.current)) {
+      if (!draftChanged.current && saved.request !== null && (requestKey !== savedRequestKey.current || primaryId !== savedPrimaryId.current)) {
+        setCadence(saved.request.cadence ?? 'once');
         setDirection(saved.request.direction);
         setMode(saved.request.mode ?? 'merge');
         setFields(saved.request.fields);
@@ -104,7 +112,41 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   }, [connections]);
 
   useEffect(() => {
-    if (result !== null) {
+    let active = true;
+    let receivedUpdate = false;
+    const updateActivity = (next: SyncActivity): void => {
+      if (!active) return;
+      setActivity(next);
+      setActivityError(null);
+      const resultKey = JSON.stringify(next.result);
+      if (resultKey === activityResultKey.current) return;
+      activityResultKey.current = resultKey;
+      if (next.result === null) return;
+      backgroundResult.current = next.result;
+      setResult(next.result);
+      setRepairError(null);
+      const remainingPaths = new Set(next.result.kind === 'missing-files' ? next.result.files.map((file) => file.path) : []);
+      setSelectedPaths((current) => current.filter((path) => remainingPaths.has(path)));
+      setRemovePaths([]);
+    };
+    const unsubscribe = window.djLibrary.onSyncActivity((next) => {
+      receivedUpdate = true;
+      updateActivity(next);
+    });
+    void window.djLibrary.syncActivity().then((next) => {
+      if (!receivedUpdate) updateActivity(next);
+    }).catch((error: unknown) => {
+      if (!active || receivedUpdate) return;
+      setActivityError(error instanceof Error ? error.message : 'Could not load ongoing sync status. Reopen Connections to try again.');
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (result !== null && result !== backgroundResult.current) {
       resultRef.current?.focus({ preventScroll: true });
       resultRef.current?.scrollIntoView({ block: 'start' });
     }
@@ -126,11 +168,12 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     setSelectedPaths([]);
     setRemovePaths([]);
     try {
-      let next = await onSync({ direction, mode, conflictSource, fields, timingOffsetMs });
+      let next = await onSync({ cadence, direction, mode, conflictSource, fields, timingOffsetMs });
       try {
         const saved = await window.djLibrary.syncPreferences();
         setPreferences(saved);
         savedRequestKey.current = JSON.stringify(saved.request);
+        draftChanged.current = false;
       } catch {
         const message = 'Could not load library locations. Reopen Connections before syncing again.';
         setPreferences(null);
@@ -143,6 +186,21 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
       setResult({ kind: 'rejected', warnings: result?.warnings ?? [], backupPaths: result?.backupPaths ?? [],
         message: error instanceof Error ? error.message : 'Could not sync the libraries. Try again.',
       });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const stopOngoingSync = async (): Promise<void> => {
+    if (busy || pending) return;
+    setPending(true);
+    try {
+      setActivity(await window.djLibrary.stopOngoingSync());
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Could not stop ongoing sync. Try again.';
+      setRepairError(message);
+      setResult((current) => current?.kind === 'missing-files' ? current
+        : { kind: 'rejected', message, warnings: [], backupPaths: [] });
     } finally {
       setPending(false);
     }
@@ -198,6 +256,20 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     <section className="library-sync-settings" aria-labelledby="library-sync-title">
       <form onSubmit={(event) => void submit(event)}>
         <h2 id="library-sync-title">Sync settings</h2>
+
+        {activity !== null && (
+          <div className="library-sync-activity">
+            <p role="status">{activity.state === 'watching' ? 'Ongoing sync is on. Watching for library changes.'
+              : activity.state === 'syncing' ? 'Ongoing sync is updating your libraries…'
+              : activity.state === 'attention' ? 'Ongoing sync needs attention. Resolve the issue below, then start it again.'
+              : 'Ongoing sync is off.'}
+              {activity.lastSyncedAt !== null && <> Last synced <time dateTime={activity.lastSyncedAt}>{new Date(activity.lastSyncedAt).toLocaleString()}</time>.</>}
+            </p>
+            {ongoing && <button className="quiet-button" type="button" disabled={busy || pending}
+              onClick={() => void stopOngoingSync()}>Stop ongoing sync</button>}
+          </div>
+        )}
+        {activityError !== null && <p className="library-sync-recovery-error" role="alert">{activityError}</p>}
 
         {result !== null && (
           <section className={`library-sync-result${hasIssues ? ' library-sync-result-warning' : ''}`} ref={resultRef}
@@ -340,12 +412,22 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
 
         <div className="library-sync-settings-grid">
           <fieldset className="tracklist-export-options library-sync-directions" disabled={working || preferences === null}>
+            <legend>Frequency</legend>
+            <div>
+              <label><input type="radio" name="sync-cadence" checked={cadence === 'ongoing'}
+                onChange={() => { draftChanged.current = true; setCadence('ongoing'); }} /> Ongoing</label>
+              <label><input type="radio" name="sync-cadence" checked={cadence === 'once'}
+                onChange={() => { draftChanged.current = true; setCadence('once'); }} /> One time</label>
+            </div>
+          </fieldset>
+
+          <fieldset className="tracklist-export-options library-sync-directions" disabled={working || preferences === null}>
             <legend>Direction</legend>
             <div>
               {directions.map((option) => (
                 <label key={option.value}>
                   <input type="radio" name="sync-direction" checked={direction === option.value}
-                    onChange={() => { setDirection(option.value); if (option.value === 'both') setMode('merge'); }} />
+                    onChange={() => { draftChanged.current = true; setDirection(option.value); if (option.value === 'both') setMode('merge'); }} />
                   <span>{option.label}</span>
                 </label>
               ))}
@@ -357,9 +439,9 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
               <legend>Update {destinationName}</legend>
               <div>
                 <label><input type="radio" name="sync-mode" checked={mode === 'merge'}
-                  onChange={() => setMode('merge')} /> Merge</label>
+                  onChange={() => { draftChanged.current = true; setMode('merge'); }} /> Merge</label>
                 <label><input type="radio" name="sync-mode" checked={mode === 'replace'}
-                  onChange={() => setMode('replace')} /> Overwrite</label>
+                  onChange={() => { draftChanged.current = true; setMode('replace'); }} /> Overwrite</label>
               </div>
             </fieldset>
           )}
@@ -388,7 +470,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
               {fieldOptions.map((option) => (
                 <label key={option.value}>
                   <input type="checkbox" checked={fields[option.value]}
-                    onChange={(event) => setFields({ ...fields, [option.value]: event.currentTarget.checked })} />
+                    onChange={(event) => { draftChanged.current = true; setFields({ ...fields, [option.value]: event.currentTarget.checked }); }} />
                   <span>{option.label}</span>
                 </label>
               ))}
@@ -402,15 +484,20 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
             <summary>Timing correction</summary>
             <label htmlFor="sync-timing-offset">Correction in milliseconds
               <input id="sync-timing-offset" type="number" min={-1000} max={1000} step={1} required
-                value={timingOffset} disabled={working || preferences === null} onChange={(event) => setTimingOffset(event.currentTarget.value)} />
+                value={timingOffset} disabled={working || preferences === null}
+                onChange={(event) => { draftChanged.current = true; setTimingOffset(event.currentTarget.value); }} />
             </label>
             <p>Added for Serato, subtracted for Rekordbox. Leave 0 to keep stored positions.</p>
           </details>
         )}
 
         <div className="library-sync-description">
+          <p>{cadence === 'ongoing' ? 'Ongoing sync checks for changes while Arsenal is open and applies the selected direction and categories.'
+            : 'One time sync applies these settings once and stops any ongoing sync.'}</p>
+          <p>Changes you make in Arsenal always save to your primary library.</p>
           {mode === 'replace' && <p>Overwrite replaces checked categories in {destinationName}. Absent tracks and playlists are removed when checked. Audio files stay on disk.</p>}
-          <p>Close Serato before syncing.</p>
+          <p>{cadence === 'ongoing' ? 'Keep Serato closed while ongoing sync is on.' : 'Close Serato before syncing.'}</p>
+          {ongoing && <p>Changed settings take effect when you sync.</p>}
         </div>
 
         {!hasFields && <p className="tracklist-export-note">Choose at least one category to sync.</p>}
@@ -418,8 +505,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
         {!validTiming && <p className="tracklist-export-note">Enter a whole number between -1000 and 1000 milliseconds.</p>}
         <div className="library-sync-actions">
           <button className="accent-button" type="submit" disabled={working || preferences === null || needsLibraries || !hasFields || !validTiming}>
-            {pending ? 'Working…' : hasMissingFiles ? 'Check files again' : missingFiles !== null ? 'Retry sync' : mode === 'replace'
-              ? 'Overwrite library' : 'Sync libraries'}
+            {pending ? 'Working…' : cadence === 'ongoing' ? activity?.state === 'attention' ? 'Resume ongoing sync'
+              : ongoing ? 'Update ongoing sync' : 'Start ongoing sync' : 'Sync once'}
           </button>
         </div>
       </form>

@@ -7,7 +7,7 @@ import { parseRekordboxXml } from './parse-rekordbox-xml';
 import { mergeRekordboxXml, rekordboxSyncLibrary } from './sync-rekordbox-xml';
 import { assertSeratoClosed, readSeratoLibrary, writeSeratoLibrary, type SeratoSource } from './serato-library';
 import { readSeratoPerformance, writeSeratoPerformance } from './serato-performance';
-import { resolveSeratoLibraryPaths, seratoMediaPathKey } from './serato-paths';
+import { resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { automaticSyncSearchRoots, findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
 
 export const readSeratoWithPerformance = async (source: SeratoSource, includePerformance = true) => {
@@ -94,11 +94,12 @@ const shiftPerformance = (library: SyncLibrary, seconds: number, fields: SyncFie
   } } : track) };
 };
 
-export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspace }: Readonly<{
+export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspace, protectedMediaRoots = [] }: Readonly<{
   rekordboxPath: string;
   serato: SeratoSource;
   request: SyncRequest;
   workspace: SyncLibrary | null;
+  protectedMediaRoots?: readonly string[];
 }>): Promise<SyncResult> => {
   const backupPaths: string[] = [];
   const warnings: string[] = [];
@@ -159,6 +160,15 @@ export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspa
       : request.direction === 'rekordbox-to-serato' ? rekordbox : localSerato;
     const toRekordbox = selectedSource(source, rekordbox, request.fields);
     const toSerato = shiftPerformance(selectedSource(source, localSerato, request.fields), (request.timingOffsetMs ?? 0) / 1000, request.fields);
+    if (protectedMediaRoots.length > 0 && request.direction !== 'serato-to-rekordbox' && (hasPerformance || request.fields.metadata)) {
+      const protectedRoots = await Promise.all(protectedMediaRoots.map(async (root) => normalizePath(await resolveSeratoMediaPath(root))));
+      for (const track of toSerato.tracks) {
+        const path = normalizePath(await resolveSeratoMediaPath(track.path));
+        if (protectedRoots.some((root) => path === root || path.startsWith(`${root}/`))) {
+          throw new Error('This library still uses music inside a backup folder. Import the backup again to create local working copies before syncing audio tags.');
+        }
+      }
+    }
     const nextXml = request.direction === 'rekordbox-to-serato' ? null : mergeRekordboxXml(toRekordbox, xml ?? undefined, request.fields, resolvedPaths, request.mode === 'replace');
     if (request.direction !== 'serato-to-rekordbox') {
       if (request.fields.tracks || request.fields.metadata || request.fields.playlists) {

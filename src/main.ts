@@ -333,7 +333,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   });
   ipc.handle(APP_UPDATE_CHANNELS.install, (event) => {
     assertTrustedSender(event, owner);
-    if (libraryActions > 0) {
+    if (libraryActions > 0 || library.syncActivity().state === 'syncing') {
       throw new Error('Wait for library actions to finish before restarting.');
     }
     updates.install();
@@ -462,6 +462,18 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Choose sync libraries from the library window');
     return library.syncPreferences();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.syncActivity, (event) => {
+    assertTrustedSender(event, owner);
+    return library.syncActivity();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.stopOngoingSync, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage ongoing sync from the library window');
+    libraryActions += 1;
+    try { return await library.stopOngoingSync(); } finally { libraryActions -= 1; }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.chooseSyncLibrary, async (event, kind: unknown, direction: unknown) => {
@@ -966,6 +978,12 @@ void app.whenReady().then(async () => {
   await library.initialize(
     join(app.getPath('userData'), 'last-library.json'),
   );
+  library.onSyncActivity = (activity) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(DJ_LIBRARY_CHANNELS.syncActivityChanged, activity);
+      if (activity.state !== 'syncing') window.webContents.send(DJ_LIBRARY_CHANNELS.libraryChanged, library.status());
+    }
+  };
   const appSession = session.fromPartition(APP_SESSION_PARTITION);
   configureSession(appSession);
   configureProtocols(appSession);
@@ -1006,7 +1024,11 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+let libraryReadyToQuit = false;
+app.on('before-quit', (event) => {
+  if (libraryReadyToQuit) return;
+  event.preventDefault();
   library.cancelSuggestions();
   library.disposeBackups();
+  void library.whenIdle().then(() => { libraryReadyToQuit = true; app.quit(); });
 });

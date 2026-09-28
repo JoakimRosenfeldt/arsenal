@@ -314,9 +314,11 @@ export const readPortableLibrary = async (manifestPath: string): Promise<Portabl
 
 export const resolvePortableLibrary = async (
   manifest: PortableLibraryManifest, manifestPath: string, searchRoots: readonly string[],
+  managedMediaDirectory?: string,
 ) => {
   const root = await realpath(dirname(manifestPath));
   const resolved = new Map<string, string>();
+  const bundled = new Map<string, Extract<PortableMedia, { kind: 'local' }>>();
   const warnings: string[] = [];
   const wanted = new Map<number, Map<string, PortableTrack[]>>();
   const matches = async (path: string, media: Extract<PortableMedia, { kind: 'local' }>): Promise<boolean> => {
@@ -339,7 +341,7 @@ export const resolvePortableLibrary = async (
       let contained = false;
       try { contained = within(root, await realpath(candidate)); } catch (error) { if (!missing(error)) throw error; }
       if (!contained) warnings.push(`${track.metadata.title}: bundled music is unavailable or points outside the backup folder.`);
-      else if (await matches(candidate, media)) { resolved.set(track.id, candidate); continue; }
+      else if (await matches(candidate, media)) { resolved.set(track.id, candidate); bundled.set(candidate, media); continue; }
       else warnings.push(`${track.metadata.title}: bundled music did not match its saved fingerprint.`);
     }
     if (isAbsolute(media.originalPath) && await matches(media.originalPath, media)) { resolved.set(track.id, media.originalPath); continue; }
@@ -380,6 +382,45 @@ export const resolvePortableLibrary = async (
     } catch { inaccessible += 1; }
   }
   if (inaccessible) warnings.push(`Could not read ${inaccessible} files or folders while looking for music.`);
+  if (managedMediaDirectory !== undefined && bundled.size > 0) {
+    const copiedPaths = new Map<string, string>();
+    const createdPaths: string[] = [];
+    try {
+      await mkdir(managedMediaDirectory, { recursive: true });
+      const directoryInfo = await lstat(managedMediaDirectory);
+      if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) throw new Error('The imported music folder must be a local directory, not a symbolic link.');
+      const directory = await realpath(managedMediaDirectory);
+      for (const [path, media] of bundled) {
+        const copiedPath = join(directory, basename(path));
+        let created = false;
+        try {
+          await copyFile(path, copiedPath, constants.COPYFILE_EXCL);
+          created = true;
+          createdPaths.push(copiedPath);
+        } catch (error) {
+          if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+        }
+        const info = await lstat(copiedPath);
+        if (!info.isFile() || info.isSymbolicLink()) throw new Error('An imported music path is not a regular local file.');
+        if (created) {
+          const copied = await fingerprint(copiedPath);
+          if (copied.sha256 !== media.sha256 || copied.sizeBytes !== media.sizeBytes) {
+            throw new Error('Bundled music changed while it was imported. Wait for the backup folder to finish syncing and retry.');
+          }
+          const file = await open(copiedPath, 'r');
+          try { await file.sync(); } finally { await file.close(); }
+        }
+        copiedPaths.set(path, copiedPath);
+      }
+      for (const [id, path] of resolved) {
+        const copiedPath = copiedPaths.get(path);
+        if (copiedPath !== undefined) resolved.set(id, copiedPath);
+      }
+    } catch (error) {
+      await Promise.all(createdPaths.map((path) => unlink(path).catch((error: unknown) => { if (!missing(error)) throw error; })));
+      throw error;
+    }
+  }
   const missingFiles = manifest.tracks.flatMap((track) => track.media.kind === 'local' && !resolved.has(track.id)
     ? [{ id: track.id, title: track.metadata.title, originalPath: track.media.originalPath }] : []);
   const byId = new Map(manifest.tracks.map((track) => [track.id, track]));

@@ -12,6 +12,8 @@ console.info(`${PLAYLIST_DEBUG_PREFIX} Response debugging enabled`);
 import {
   DJ_LIBRARY_CHANNELS,
   type DjLibraryApi,
+  type SyncActivity,
+  type LibraryStatus,
 } from './shared/dj-library';
 
 const api: DjLibraryApi = Object.freeze({
@@ -34,6 +36,18 @@ const api: DjLibraryApi = Object.freeze({
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.syncLibraries, request),
   resolveSyncMissingFile: (action) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.resolveSyncMissingFile, action),
   syncPreferences: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.syncPreferences),
+  syncActivity: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.syncActivity),
+  stopOngoingSync: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.stopOngoingSync),
+  onSyncActivity: (listener) => {
+    const handleChange = (_event: IpcRendererEvent, activity: SyncActivity): void => listener(activity);
+    ipcRenderer.on(DJ_LIBRARY_CHANNELS.syncActivityChanged, handleChange);
+    return () => { ipcRenderer.removeListener(DJ_LIBRARY_CHANNELS.syncActivityChanged, handleChange); };
+  },
+  onLibraryChanged: (listener) => {
+    const handleChange = (_event: IpcRendererEvent, status: LibraryStatus): void => listener(status);
+    ipcRenderer.on(DJ_LIBRARY_CHANNELS.libraryChanged, handleChange);
+    return () => { ipcRenderer.removeListener(DJ_LIBRARY_CHANNELS.libraryChanged, handleChange); };
+  },
   chooseSyncLibrary: (kind, direction) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.chooseSyncLibrary, kind, direction),
   listSongs: (page) =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.listSongs, page),

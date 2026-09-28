@@ -15,6 +15,8 @@ My library/
 
 Each snapshot references music relative to its own directory. Copying the entire backup directory preserves those references. Cloud services can synchronize the directory as ordinary files. JSON snapshots are published after their music copies finish. Previous snapshots and music files remain available.
 
+Importing bundled music creates local working copies so syncing audio tags cannot change the backup files. Each connected library reuses its working copies when importing newer snapshots. Existing copies keep their local tag edits. Libraries imported before this protection may need to be imported again before syncing music metadata or performance data.
+
 Arsenal remembers the backup folder and music option for each connection. It checks for changes after library operations and every 30 seconds while the app is open. Unchanged libraries reuse the previous snapshot. Each setup creates a separate output directory, so different computers do not overwrite one another's snapshots. Imports are explicit and create separate local libraries.
 
 Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Stopping automatic backup keeps the files already saved.
@@ -28,6 +30,14 @@ For imported backups, Arsenal remembers the source snapshot and music search fol
 Arsenal lists changed libraries and asks before importing them. Approval also runs the saved sync settings when a changed library belongs to the selected sync pair. Other changed libraries are imported without syncing. If no sync pair is configured, Arsenal only imports the changes. Choosing **Not now** leaves the changes pending for the next launch.
 
 If an imported library or Serato workspace also has unsynced local edits, Arsenal asks which version to keep. Importing the external version saves a backup of the local XML first. Keeping local edits, an unavailable source, or an import failure defers automatic sync. Missing music uses the existing import and sync recovery flow.
+
+## Ongoing sync and app edits
+
+Connections offers **Ongoing** and **One time** sync. Ongoing sync runs immediately, then checks for source changes every 30 seconds while Arsenal is open. It also checks after app edits. The selected direction and categories apply to each run. One-time sync runs once and stops any ongoing sync. **Stop ongoing sync** stops future runs. Arsenal remembers this choice across launches and still asks before importing changes found at startup.
+
+Library edits made in Arsenal always update the primary library, including when another library is open or ongoing sync is off. Edits update the affected tracks and playlists without replacing unrelated primary entries. If the primary cannot be written, Arsenal rejects the edit and explains why. Serato must be closed before Arsenal can write its native library.
+
+When ongoing sync is active, app edits also update the selected destination for the enabled categories. If that destination cannot be updated, the primary edit stays saved and ongoing sync pauses. Review the message on Connections before resuming. Merge combines the libraries and may retain entries missing from one side; overwrite applies the selected source to its destination.
 
 ## Document
 

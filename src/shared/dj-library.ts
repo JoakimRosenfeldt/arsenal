@@ -19,6 +19,10 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   syncLibraries: 'dj-library:sync-libraries',
   resolveSyncMissingFile: 'dj-library:resolve-sync-missing-file',
   syncPreferences: 'dj-library:sync-preferences',
+  syncActivity: 'dj-library:sync-activity',
+  syncActivityChanged: 'dj-library:sync-activity-changed',
+  stopOngoingSync: 'dj-library:stop-ongoing-sync',
+  libraryChanged: 'dj-library:library-changed',
   chooseSyncLibrary: 'dj-library:choose-sync-library',
   listSongs: 'dj-library:list-songs',
   findDuplicates: 'dj-library:find-duplicates',
@@ -261,6 +265,7 @@ export type SyncFields = Readonly<{
 
 export type SyncRequest = Readonly<{
   direction: SyncDirection;
+  cadence?: 'once' | 'ongoing';
   mode?: 'merge' | 'replace';
   conflictSource: LibrarySourceKind;
   fields: SyncFields;
@@ -281,6 +286,8 @@ export const readSyncRequest = (request: unknown): SyncRequest => {
     throw new Error('Invalid library sync request');
   }
   const mode = request.mode === undefined ? 'merge' : request.mode;
+  const cadence = request.cadence === undefined ? 'once' : request.cadence;
+  if (cadence !== 'once' && cadence !== 'ongoing') throw new Error('Choose one-time or ongoing sync');
   if (mode !== 'merge' && mode !== 'replace' || mode === 'replace' && request.direction === 'both') {
     throw new Error('Overwrite is available only when syncing in one direction');
   }
@@ -295,7 +302,7 @@ export const readSyncRequest = (request: unknown): SyncRequest => {
     request.timingOffsetMs < -1000 || request.timingOffsetMs > 1000) {
     throw new Error('Timing correction must be a whole number between -1000 and 1000 milliseconds');
   }
-  return { direction: request.direction, mode, conflictSource: request.conflictSource, timingOffsetMs: request.timingOffsetMs,
+  return { direction: request.direction, mode, cadence, conflictSource: request.conflictSource, timingOffsetMs: request.timingOffsetMs,
     fields: { tracks: fields.tracks, metadata: fields.metadata, playlists: fields.playlists,
       hotCues: fields.hotCues, loops: fields.loops, beatgrids: fields.beatgrids } };
 };
@@ -339,6 +346,12 @@ export type SyncResult =
       warnings: readonly string[];
       backupPaths: readonly string[];
     }>;
+
+export type SyncActivity = Readonly<{
+  state: 'off' | 'watching' | 'syncing' | 'attention';
+  lastSyncedAt: string | null;
+  result: Exclude<SyncResult, { kind: 'cancelled' }> | null;
+}>;
 
 export type PageRequest = Readonly<{
   offset: number;
@@ -432,7 +445,7 @@ export type MutationFailure =
   | 'serato-open'
   | 'cannot-write';
 
-export type LibraryMutationResult =
+export type LibraryMutationResult = (
   | Readonly<{
       kind: 'duplicate-ignored';
       library: LibrarySummary;
@@ -477,7 +490,8 @@ export type LibraryMutationResult =
   | Readonly<{
       kind: 'rejected';
       reason: MutationFailure;
-    }>;
+      message?: string;
+    }>) & Readonly<{ warning?: string }>;
 
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
@@ -496,6 +510,10 @@ export type DjLibraryApi = Readonly<{
   syncLibraries(request: SyncRequest): Promise<SyncResult>;
   resolveSyncMissingFile(action: SyncMissingFileAction): Promise<SyncResult>;
   syncPreferences(): Promise<SyncPreferences>;
+  syncActivity(): Promise<SyncActivity>;
+  stopOngoingSync(): Promise<SyncActivity>;
+  onSyncActivity(listener: (activity: SyncActivity) => void): () => void;
+  onLibraryChanged(listener: (status: LibraryStatus) => void): () => void;
   chooseSyncLibrary(kind: LibrarySourceKind, direction: SyncDirection): Promise<SyncPreferences | null>;
   listSongs(page: PageRequest): Promise<SongPage>;
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;

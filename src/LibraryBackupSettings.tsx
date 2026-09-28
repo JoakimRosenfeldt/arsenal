@@ -90,6 +90,7 @@ export const LibraryBackupSettings = ({ busy, connectionId, connectionName, onBu
       </div>
       {enabled && current?.includeMusic !== includeMusic && <p className="tracklist-export-note">Use Change backup settings to apply the music option.</p>}
       <p className="library-sync-description">Import creates a separate library. Your cloud app transfers the backup folder.
+        Bundled music is copied locally to keep the backup intact.
         When Arsenal opens, it checks for newer snapshots and asks before importing and syncing changes.</p>
     </section>
   );

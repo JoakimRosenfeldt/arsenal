@@ -24,6 +24,7 @@ import {
   type LibraryConnections,
   type LibraryConnectionResult,
   type LibrarySummary,
+  type LibraryStatus,
   type LibraryMutation,
   type LibraryMutationResult,
   type MutationFailure,
@@ -201,7 +202,11 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [activePage, setActivePage] = useState<PageId>(playlistWindow ? 'playlists' : 'library');
   const [loading, setLoading] = useState(true);
   const [minimumSongLengthSeconds, setMinimumSongLengthSeconds] = useState(DEFAULT_MINIMUM_SONG_LENGTH_SECONDS);
-  const [busy, setBusy] = useState(false);
+  const [operationBusy, setBusy] = useState(false);
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false);
+  const [backgroundLibrary, setBackgroundLibrary] = useState<LibraryStatus | null>(null);
+  const handledBackgroundLibrary = useRef<LibraryStatus | null>(null);
+  const busy = operationBusy || backgroundSyncing;
   const [view, setView] = useState<LibraryView | null>(null);
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
   const startupChecked = useRef(false);
@@ -391,6 +396,67 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setMinimumSongLengthSeconds(settings.minimumSongLengthSeconds);
   }), [minimumSongLengthSeconds, stopPlayback]);
 
+  useEffect(() => {
+    let active = true;
+    let receivedActivity = false;
+    const attentionMessage = 'Ongoing sync needs attention. Open Connections to review it. Edits still save to the primary library.';
+    const stopActivity = window.djLibrary.onSyncActivity((activity) => {
+      receivedActivity = true;
+      setBackgroundSyncing(activity.state === 'syncing');
+      if (activity.state === 'attention') setFeedback({ tone: 'warning', message: attentionMessage });
+      else setFeedback((current) => current?.message === attentionMessage ? null : current);
+    });
+    const stopChanges = window.djLibrary.onLibraryChanged((status) => {
+      setBackgroundLibrary(status);
+      if (playlistWindow && (status.kind === 'empty' || status.library.revision !== playlistWindow.request.revision)) {
+        setError('stale-library');
+      }
+    });
+    void window.djLibrary.syncActivity().then((activity) => {
+      if (active && !receivedActivity) setBackgroundSyncing(activity.state === 'syncing');
+    }).catch(() => undefined);
+    return () => { active = false; stopActivity(); stopChanges(); };
+  }, [playlistWindow]);
+
+  useEffect(() => {
+    if (playlistWindow || backgroundLibrary?.kind !== 'ready' || backgroundLibrary === handledBackgroundLibrary.current ||
+      operationBusy || backgroundSyncing || loading) return;
+    if (backgroundLibrary.library.revision === view?.library.revision) {
+      handledBackgroundLibrary.current = backgroundLibrary;
+      return;
+    }
+    let active = true;
+    const sequence = ++searchSequence.current;
+    void window.djLibrary.status().then(async (status) => {
+      if (!active || sequence !== searchSequence.current || status.kind !== 'ready') return;
+      const library = status.library;
+      if (library.revision === view?.library.revision) {
+        handledBackgroundLibrary.current = backgroundLibrary;
+        return;
+      }
+      const [page, tree] = await Promise.all([
+        window.djLibrary.searchSongs({ offset: Math.min(view?.page.offset ?? 0,
+          Math.max(0, Math.floor(Math.max(0, library.songCount - 1) / SONG_PAGE_SIZE) * SONG_PAGE_SIZE)),
+        limit: SONG_PAGE_SIZE, query, filters }),
+        loadPlaylistTree(),
+      ]);
+      if (!active || sequence !== searchSequence.current) return;
+      handledBackgroundLibrary.current = backgroundLibrary;
+      setSearching(false);
+      stopPlayback();
+      setView({ library, page });
+      setPlaylists(tree.playlists);
+      setFolders(tree.folders);
+      setSelectedPlaylistId((current) => tree.playlists.some((playlist) => playlist.id === current) ? current : null);
+      setViewQuery(query);
+      setViewFilters(filters);
+      setDuplicateRefresh((current) => current + 1);
+    }).catch(() => {
+      if (active) setFeedback({ tone: 'warning', message: 'Sync finished, but the library view could not refresh. Reopen the connection.' });
+    });
+    return () => { active = false; };
+  }, [backgroundLibrary, operationBusy, backgroundSyncing, loading, view?.library.revision, view?.page.offset, playlistWindow, query, filters, stopPlayback]);
+
   const playSong = (song: SongRow, preserveQueue = false): void => {
     const audio = audioRef.current;
     if (audio === null || song.audioUrl === null) {
@@ -550,7 +616,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       const result = await operation();
       if (result === null) return false;
       if (result.kind === 'rejected') {
-        setError(result.reason);
+        if (result.message) setFeedback({ tone: 'warning', message: result.message });
+        else setError(result.reason);
         return false;
       }
 
@@ -617,7 +684,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         libraryVersion: result.library.revision,
         scan,
       });
-      setFeedback(result.kind === 'songs-removed'
+      setFeedback(result.warning ? { tone: 'warning', message: result.warning } : result.kind === 'songs-removed'
           ? feedbackForRemoval(result)
           : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : result.kind === 'playlist-updated' ? 'Playlist saved.' : result.kind === 'playlist-removed' ? 'Playlist removed.' : 'Playlist created.' });
       if (result.kind === 'playlist-created' || result.kind === 'smart-playlist-saved' || result.kind === 'playlist-updated') {

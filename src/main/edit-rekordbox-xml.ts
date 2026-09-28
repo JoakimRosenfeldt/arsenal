@@ -680,7 +680,7 @@ const movePlaylistNode = (
   return applyReplacements(source, replacements);
 };
 
-const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
+export const editedRekordboxXml = (source: string, edit: RekordboxXmlEdit): string => {
   const index = scanXml(source);
   let edited: string;
   if (edit.kind === 'remove-tracks') {
@@ -703,6 +703,21 @@ const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
   }
   scanXml(edited);
   return edited;
+};
+
+export const removeRekordboxPlaylistReferences = (source: string, tracks: readonly Readonly<{
+  trackId: string | null; rawLocation: string | null;
+}>[]): string => {
+  const ids = new Set(tracks.flatMap((track) => track.trackId === null ? [] : [track.trackId]));
+  const locations = new Set(tracks.flatMap((track) => track.rawLocation === null ? [] : [track.rawLocation]));
+  const replacements: Replacement[] = [];
+  for (const playlist of scanXml(source).playlistNodes) {
+    const keys = playlist.keyType === '0' ? ids : playlist.keyType === '1' ? locations : null;
+    const removed = playlist.trackReferences.filter((reference) => keys?.has(reference.attributes.Key ?? ''));
+    if (removed.length) replacements.push(...removed.map((reference) => removalReplacement(source, reference)),
+      openingReplacement(source, playlist, 'Entries', String(playlist.trackReferences.length - removed.length)));
+  }
+  return applyReplacements(source, replacements);
 };
 
 export const repairRekordboxXmlLocations = (
@@ -768,7 +783,7 @@ export const editRekordboxXml = async ({
       fatal: true,
       ignoreBOM: true,
     }).decode(bytes);
-    const nextSource = editedXml(source, edit);
+    const nextSource = editedRekordboxXml(source, edit);
     const sourceStat = await stat(filePath);
     tempPath = join(
       dirname(filePath),

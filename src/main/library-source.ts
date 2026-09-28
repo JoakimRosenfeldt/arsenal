@@ -72,6 +72,11 @@ const nativeMediaState = async (library: SyncLibrary) => {
     ? [`${basename(file[0])}: the music file is missing or unavailable.`] : []) };
 };
 
+const syncFingerprint = (library: SyncLibrary, files: readonly (readonly string[])[]): string => createHash('sha256')
+  .update(JSON.stringify({ ...library, tracks: library.tracks.map((track) => ({ ...track,
+    song: { ...track.song, id: undefined, artworkUrl: undefined, audioUrl: undefined },
+  })) })).update(JSON.stringify(files.map(([path, state]) => [path, state === 'missing' || state === 'not-file' ? state : 'file']))).digest('hex');
+
 export const readLibrarySource = async ({ kind, path, portableSource, followLatest = true }: Readonly<{
   kind: LibrarySourceKind;
   path: string;
@@ -79,32 +84,40 @@ export const readLibrarySource = async ({ kind, path, portableSource, followLate
   followLatest?: boolean;
 }>): Promise<Readonly<{
   fingerprint: string;
+  syncFingerprint: string;
   library: SyncLibrary | null;
   warnings: readonly string[];
   portableManifestPath: string | null;
 }>> => {
   if (portableSource !== undefined) {
     const { manifest, manifestPath } = await newestPortableLibrary(portableSource, followLatest);
-    const paths = new Set([...manifest.tracks.flatMap((track) => track.media.kind !== 'local' ? [] : [
+    const sourcePaths = new Set(manifest.tracks.flatMap((track) => track.media.kind !== 'local' ? [] : [
       ...(track.media.relativePath === null ? [] : [join(dirname(manifestPath), track.media.relativePath)]),
       ...(isAbsolute(track.media.originalPath) ? [track.media.originalPath] : []),
-    ]), ...portableSource.resolvedPaths ?? []]);
+    ]));
+    const paths = new Set([...sourcePaths, ...portableSource.resolvedPaths ?? []]);
     const files: Awaited<ReturnType<typeof mediaFileState>>[] = [];
-    for (const path of paths) files.push(await mediaFileState(path));
+    for (const path of paths) {
+      const state = await mediaFileState(path);
+      files.push(sourcePaths.has(path) ? state : [path, state[1] === 'missing' || state[1] === 'not-file' ? state[1] : 'file']);
+    }
     const fingerprint = createHash('sha256').update(JSON.stringify({
       ...manifest, savedAt: undefined, files,
     })).digest('hex');
-    return { fingerprint, library: null, portableManifestPath: manifestPath, warnings: [] };
+    return { fingerprint, syncFingerprint: createHash('sha256').update(JSON.stringify({ ...manifest, savedAt: undefined,
+      files: files.map(([path, state]) => [path, state === 'missing' || state === 'not-file' ? state : 'file']),
+    })).digest('hex'), library: null, portableManifestPath: manifestPath, warnings: [] };
   }
   if (kind === 'rekordbox') {
     const parsed = await parseRekordboxXml(path);
     const library = rekordboxSyncLibrary(parsed, { includeNonLocal: true });
     const media = await nativeMediaState(library);
     return { fingerprint: createHash('sha256').update(parsed.fingerprint).update(JSON.stringify(media.files)).digest('hex'),
-      library, warnings: media.warnings, portableManifestPath: null };
+      syncFingerprint: syncFingerprint(library, media.files), library, warnings: media.warnings, portableManifestPath: null };
   }
   const read = await readSeratoWithPerformance(await findSeratoSource(path));
   const media = await nativeMediaState(read.library);
   return { fingerprint: createHash('sha256').update(JSON.stringify(read.library)).update(JSON.stringify(media.files)).digest('hex'),
+    syncFingerprint: syncFingerprint(read.library, media.files),
     library: read.library, warnings: [...new Set([...read.warnings, ...media.warnings])], portableManifestPath: null };
 };
