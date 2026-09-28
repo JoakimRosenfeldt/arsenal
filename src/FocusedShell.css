@@ -18,7 +18,7 @@
 .sidebar-playlist, .sidebar-playlist-folder summary { min-height: 38px; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 10px; padding: 0 10px; color: var(--text-soft); font-size: 14px; border-radius: 4px; }
 .sidebar-playlist > svg, .sidebar-playlist-folder summary > svg { color: var(--muted); }
 .sidebar-playlist.is-active { box-shadow: none; background: var(--selected); color: var(--text); }
-.sidebar-utilities { flex: none; height: 66px; padding: 12px 12px 16px; border-top: 1px solid var(--line); }
+.sidebar-utilities { flex: none; display: grid; gap: 4px; padding: 12px 12px 16px; border-top: 1px solid var(--line); }
 .sidebar-preferences { width: 100%; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: 4px; color: var(--text-soft); background: transparent; font-size: 14px; text-align: left; cursor: pointer; }
 .sidebar-preferences svg { color: var(--muted); }
 .sidebar-preferences:hover, .sidebar-preferences.is-active { background: var(--selected); color: var(--text); }

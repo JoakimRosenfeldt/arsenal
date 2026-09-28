@@ -7,12 +7,14 @@ import { SaxesParser } from 'saxes';
 import type { PlaylistFolder, SongRow, SongSource } from '../shared/dj-library';
 import { readSmartDefinition, type SmartPlaylistDefinition } from '../shared/smart-playlists';
 import type { SmartPlaylistRules } from './smart-playlists';
+import type { SyncPerformance, SyncSmartRules } from './library-sync-model';
 
 export type ParsedTrack = Readonly<{
   song: SongRow;
   mediaPath: string | null;
   rekordboxId: string | null;
   rawLocation: string | null;
+  performance: SyncPerformance;
 }>;
 
 export type PlaylistReferenceKind =
@@ -31,6 +33,8 @@ export type ParsedPlaylist = Readonly<{
   referenceKind: PlaylistReferenceKind;
   keys: readonly string[];
   rules: SmartPlaylistRules;
+  seratoCrateTracks?: boolean;
+  seratoSmartRules?: Extract<SyncSmartRules, { kind: 'serato' }>;
 }>;
 
 export type ParsedRekordboxLibrary = Readonly<{
@@ -109,6 +113,7 @@ const parseSongSource = (value: string | undefined): SongSource => {
     case 'beatsource':
     case 'soundcloud':
     case 'spotify':
+    case 'streaming':
       return scheme;
     case 'applemusic':
     case 'apple-music':
@@ -194,6 +199,7 @@ const makeSong = ({
     mediaPath: source === 'local' ? parseMediaPath(attributes.Location) : null,
     rekordboxId: cleanText(attributes.TrackID),
     rawLocation: cleanText(attributes.Location),
+    performance: { hotCues: [], loops: [], beatgrids: [] },
   };
 };
 
@@ -207,6 +213,8 @@ type MutablePlaylist = {
   smartDefinition: SmartPlaylistDefinition | null;
   referenceKind: PlaylistReferenceKind;
   keys: string[];
+  seratoCrateTracks: boolean;
+  seratoSmartRules?: Extract<SyncSmartRules, { kind: 'serato' }>;
   rules: {
     logicalOperator: string | null;
     conditions: Readonly<Record<string, string>>[];
@@ -348,12 +356,36 @@ export const parseRekordboxXml = async (
       ) {
         tracks[tracks.length - 1] = {
           ...track,
+          performance: {
+            ...track.performance,
+            ...(type === '0' && slot >= 0 ? { hotCues: [...track.performance.hotCues, {
+              index: slot, name: tag.attributes.Name ?? '', start,
+              color: [Number(tag.attributes.Red ?? 255), Number(tag.attributes.Green ?? 0), Number(tag.attributes.Blue ?? 0)] as const,
+            }] } : {}),
+            ...(type === '4' && end !== null ? { loops: [...track.performance.loops, {
+              index: slot, name: tag.attributes.Name ?? '', start, end, locked: false, hotCue: slot >= 0,
+              color: [Number(tag.attributes.Red ?? 39), Number(tag.attributes.Green ?? 170), Number(tag.attributes.Blue ?? 225)] as const,
+            }] } : {}),
+          },
           song: {
             ...track.song,
             cuePointCount: track.song.cuePointCount + 1,
             hotCueCount: track.song.hotCueCount + (slot >= 0 ? 1 : 0),
           },
         };
+      }
+    }
+
+    if (tag.name === 'TEMPO' && elementStack.length === 3 && elementStack[1] === 'COLLECTION' && elementStack[2] === 'TRACK') {
+      const track = tracks.at(-1);
+      const rawStart = tag.attributes.Inizio?.trim().replace(',', '.');
+      const start = rawStart && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(rawStart) && Number.isFinite(Number(rawStart)) ? Number(rawStart) : null;
+      const bpm = parseNumber({ value: tag.attributes.Bpm, allowZero: false });
+      const beat = parseNumber({ value: tag.attributes.Battito, allowZero: false });
+      if (track && start !== null && bpm !== null) {
+        tracks[tracks.length - 1] = { ...track, performance: { ...track.performance,
+          beatgrids: [...track.performance.beatgrids, { start, bpm, beat: beat ?? 1, meter: tag.attributes.Metro ?? '4/4' }],
+        } };
       }
     }
 
@@ -386,6 +418,7 @@ export const parseRekordboxXml = async (
           smartDefinition: null,
           referenceKind: referenceKindFor(tag.attributes.KeyType),
           keys: [],
+          seratoCrateTracks: tag.attributes.ArsenalSeratoCrateTracks === '1',
           rules: { logicalOperator: tag.attributes.LogicalOperator ?? null, conditions: [] },
         };
         playlists.push(playlist);
@@ -427,13 +460,17 @@ export const parseRekordboxXml = async (
   });
 
   parser.on('comment', (comment) => {
-    const prefix = 'arsenal-smart-playlist:';
     const node = playlistNodeStack.at(-1);
-    if (node?.kind !== 'playlist' || !comment.startsWith(prefix) || elementStack.at(-1) !== 'NODE') return;
+    const prefix = ['arsenal-smart-playlist:', 'arsenal-serato-smart-crate:'].find((value) => comment.startsWith(value));
+    if (node?.kind !== 'playlist' || !prefix || elementStack.at(-1) !== 'NODE') return;
     node.playlist.kind = 'smart';
     try {
       const raw: unknown = JSON.parse(Buffer.from(comment.slice(prefix.length), 'base64').toString('utf8'));
-      node.playlist.smartDefinition = readSmartDefinition(raw);
+      if (prefix === 'arsenal-smart-playlist:') node.playlist.smartDefinition = readSmartDefinition(raw);
+      else if (typeof raw === 'object' && raw !== null && 'version' in raw && 'rules' in raw &&
+        typeof raw.version === 'number' && Number.isSafeInteger(raw.version) && typeof raw.rules === 'string') {
+        node.playlist.seratoSmartRules = { kind: 'serato', version: raw.version, rules: raw.rules };
+      }
     } catch {
       // Keep the exported tracks if saved rules cannot be read.
     }

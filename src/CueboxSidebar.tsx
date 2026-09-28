@@ -10,6 +10,7 @@ const SIDEBAR_WIDTH_KEY = 'arsenal.sidebarWidth';
 export type PageId =
   | 'library'
   | 'duplicates'
+  | 'connections'
   | 'playlists'
   | 'preferences';
 
@@ -20,6 +21,11 @@ type NavigationItem = Readonly<{
 }>;
 
 const collectionItems: readonly NavigationItem[] = [
+  {
+    page: 'connections',
+    label: 'Connections',
+    badge: '',
+  },
   {
     page: 'library',
     label: 'Library',
@@ -205,7 +211,7 @@ export const CueboxSidebar = ({
   };
 
   const collection = collectionItems.map((item) => {
-    if (item.page === 'library') {
+    if (item.page !== 'duplicates') {
       return item;
     }
 

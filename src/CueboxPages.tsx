@@ -45,7 +45,8 @@ export type LibraryView = Readonly<{
 
 type CommonPageProps = Readonly<{
   busy: boolean;
-  onImport: () => void;
+  onManageLibraries: () => void;
+  onSync: () => void;
   playback: PlaybackController;
   view: LibraryView | null;
 }>;
@@ -140,10 +141,12 @@ const TrackNumber = ({ song, index, offset = 0, playback }: Readonly<{
 
 const NoLibrary = ({
   busy,
-  onImport,
+  onManageLibraries,
+  onSync,
 }: Readonly<{
   busy: boolean;
-  onImport: () => void;
+  onManageLibraries: () => void;
+  onSync: () => void;
 }>): JSX.Element => (
   <section className="page-empty" aria-labelledby="empty-page-title">
     <div className="page-empty-mark" aria-hidden>
@@ -151,10 +154,13 @@ const NoLibrary = ({
       <span />
       <span />
     </div>
-    <h1 id="empty-page-title">Import your library</h1>
-    <button className="accent-button" type="button" onClick={onImport} disabled={busy}>
-      {busy ? 'Importing…' : 'Choose Rekordbox XML'}
+    <h1 id="empty-page-title">Connect your libraries</h1>
+    <p className="library-connect-description">Connect a Rekordbox XML file or a Serato library to start working with your tracks.</p>
+    <button className="accent-button" type="button" onClick={onManageLibraries} disabled={busy}>Connections</button>
+    <button className="quiet-button library-empty-sync" type="button" onClick={onSync} disabled={busy}>
+      <UiIcon name="refresh" size={16} /> Sync libraries
     </button>
+    {busy && <p role="status">Opening library…</p>}
   </section>
 );
 
@@ -163,7 +169,8 @@ export const LibraryPage = ({
   filters,
   onCreate,
   onAdd,
-  onImport,
+  onManageLibraries,
+  onSync,
   onPage,
   onRemove,
   onSearch,
@@ -209,7 +216,8 @@ export const LibraryPage = ({
     return (
       <NoLibrary
         busy={busy}
-        onImport={onImport}
+        onManageLibraries={onManageLibraries}
+        onSync={onSync}
       />
     );
   }
@@ -292,11 +300,19 @@ export const LibraryPage = ({
           <p>{view.library.songCount.toLocaleString()} tracks{view.page.total === view.library.songCount && !view.page.hasNext && view.page.offset === 0 ? ` · ${totalTime(visibleSongs)}` : ''}</p>
         </div>
         <div className="header-actions">
-          <button className="accent-button" type="button" onClick={onImport} disabled={busy}>
-            <UiIcon name="upload" size={16} /> {busy ? 'Importing…' : 'Import XML'}
+          <button className="quiet-button" type="button" onClick={onSync} disabled={busy}>
+            <UiIcon name="refresh" size={16} /> Sync libraries
+          </button>
+          <button className="accent-button" type="button" onClick={onManageLibraries} disabled={busy}>
+            <UiIcon name="folder" size={16} /> Connections
           </button>
         </div>
       </header>
+
+      <p className="library-source-note">
+        {view.library.sourceKind === 'serato' ? 'Serato' : 'Rekordbox XML'} · {view.library.sourceName}
+        {view.library.sourceKind === 'serato' && <span> Edits stay in Arsenal until you sync.</span>}
+      </p>
 
       <div className="library-tools">
         <label className="library-search">
@@ -850,7 +866,8 @@ export const DuplicatesPage = ({
   busy,
   mode,
   onIgnore,
-  onImport,
+  onManageLibraries,
+  onSync,
   onModeChange,
   onRemove,
   onRescan,
@@ -890,7 +907,8 @@ export const DuplicatesPage = ({
     return (
       <NoLibrary
         busy={busy}
-        onImport={onImport}
+        onManageLibraries={onManageLibraries}
+        onSync={onSync}
       />
     );
   }
@@ -1119,7 +1137,7 @@ export const DuplicatesPage = ({
 
 export const PlaylistsPage = ({
   busy, minimumSongLengthSeconds, creating, initialParentFolderId, initialName = '', initialSongs,
-  folders, onAdd, onCancel, onCreateFromSelection, onEditSmart, onExport, onCreate, onImport, onRemove, onSmart, onUpdateTracks, onMenu,
+  folders, onAdd, onCancel, onCreateFromSelection, onEditSmart, onExport, onCreate, onManageLibraries, onSync, onRemove, onSmart, onUpdateTracks, onMenu,
   playback, playlists, selectedPlaylistId, view,
 }: CommonPageProps & Readonly<{
   minimumSongLengthSeconds: number;
@@ -1187,7 +1205,7 @@ export const PlaylistsPage = ({
     setLoadingSongs(picking);
   }), [picking, minimumSongLengthSeconds]);
 
-  if (view === null) return <NoLibrary busy={busy} onImport={onImport} />;
+  if (view === null) return <NoLibrary busy={busy} onManageLibraries={onManageLibraries} onSync={onSync} />;
 
   const selectedPlaylist = playlists?.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
   const existingIds = new Set(selectedPlaylist?.tracks.map((song) => song.id) ?? []);

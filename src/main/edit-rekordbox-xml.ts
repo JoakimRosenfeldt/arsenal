@@ -621,6 +621,46 @@ const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
   return edited;
 };
 
+export const repairRekordboxXmlLocations = (
+  source: string,
+  locations: ReadonlySet<string>,
+  replacementLocation: string | null,
+): string => {
+  const index = scanXml(source);
+  const targets = index.collectionTracks.filter((track) => locations.has(track.attributes.Location ?? ''));
+  if (targets.length === 0) throw new RekordboxWriteError('target-not-found', 'The missing track is no longer in this XML collection.');
+  if (replacementLocation === null) {
+    const targetSet = new Set(targets);
+    const remainingIds = new Set(index.collectionTracks.filter((track) => !targetSet.has(track)).map((track) => track.attributes.TrackID));
+    const ids = new Set(targets.flatMap((track) => track.attributes.TrackID && !remainingIds.has(track.attributes.TrackID) ? [track.attributes.TrackID] : []));
+    const replacements = [
+      ...targets.map((track) => removalReplacement(source, track)),
+      openingReplacement(source, index.collection, 'Entries', String(index.collectionTracks.length - targets.length)),
+    ];
+    for (const playlist of index.playlistNodes) {
+      const keys = playlist.keyType === '0' ? ids : playlist.keyType === '1' ? locations : null;
+      const references = playlist.trackReferences.filter((track) => keys?.has(track.attributes.Key ?? ''));
+      if (references.length === 0) continue;
+      replacements.push(...references.map((track) => removalReplacement(source, track)),
+        openingReplacement(source, playlist, 'Entries', String(playlist.trackReferences.length - references.length)));
+    }
+    const result = applyReplacements(source, replacements);
+    scanXml(result);
+    return result;
+  }
+  if (targets.length > 1) throw new Error('This missing location has duplicate Rekordbox entries. Remove the missing entries before importing the relocated file.');
+  const replacements = targets.map((track) => openingReplacement(source, track, 'Location', replacementLocation));
+  for (const playlist of index.playlistNodes) {
+    if (playlist.keyType !== '1') continue;
+    for (const track of playlist.trackReferences) {
+      if (locations.has(track.attributes.Key ?? '')) replacements.push(openingReplacement(source, track, 'Key', replacementLocation));
+    }
+  }
+  const result = applyReplacements(source, replacements);
+  scanXml(result);
+  return result;
+};
+
 export const editRekordboxXml = async ({
   edit,
   expectedFingerprint,

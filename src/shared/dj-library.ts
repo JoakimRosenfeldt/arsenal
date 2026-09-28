@@ -3,7 +3,16 @@ import type { SmartPlaylistDefinition } from './smart-playlists';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
+  connections: 'dj-library:connections',
+  connectLibrary: 'dj-library:connect-library',
+  manageLibraryConnection: 'dj-library:manage-library-connection',
+  selectSyncLibrary: 'dj-library:select-sync-library',
   importExport: 'dj-library:import-export',
+  importSerato: 'dj-library:import-serato',
+  syncLibraries: 'dj-library:sync-libraries',
+  resolveSyncMissingFile: 'dj-library:resolve-sync-missing-file',
+  syncPreferences: 'dj-library:sync-preferences',
+  chooseSyncLibrary: 'dj-library:choose-sync-library',
   listSongs: 'dj-library:list-songs',
   findDuplicates: 'dj-library:find-duplicates',
   listPlaylists: 'dj-library:list-playlists',
@@ -131,8 +140,11 @@ export type DuplicateScan = Readonly<{
   trackCount: number;
 }>;
 
+export type LibrarySourceKind = 'rekordbox' | 'serato';
+
 export type LibrarySummary = Readonly<{
   revision: string;
+  sourceKind: LibrarySourceKind;
   sourceName: string;
   importedAt: string;
   songCount: number;
@@ -183,15 +195,133 @@ export type LibraryStatus =
   | Readonly<{ kind: 'empty' }>
   | Readonly<{ kind: 'ready'; library: LibrarySummary }>;
 
+export type LibraryConnection = Readonly<{
+  id: string;
+  kind: LibrarySourceKind;
+  name: string;
+  path: string;
+  available: boolean;
+}>;
+
+export type LibraryConnections = Readonly<{
+  connections: readonly LibraryConnection[];
+  activeConnectionId: string | null;
+  sourceOfTruthId: string | null;
+}>;
+
+export type LibraryConnectionAction = Readonly<{
+  kind: 'open' | 'refresh' | 'disconnect' | 'source-of-truth' | 'locate' | 'replace';
+  id: string;
+}>;
+
+export type LibraryConnectionResult =
+  | Readonly<{ kind: 'cancelled' }>
+  | Readonly<{ kind: 'rejected'; message: string }>
+  | Readonly<{ kind: 'updated'; connections: LibraryConnections; status: LibraryStatus; warnings: readonly string[] }>;
+
 export type ImportFailure =
   | 'cannot-read'
   | 'not-rekordbox-xml'
+  | 'not-serato-library'
+  | 'cannot-save-library'
   | 'malformed-xml';
 
 export type ImportResult =
-  | Readonly<{ kind: 'imported'; library: LibrarySummary }>
+  | Readonly<{ kind: 'imported'; library: LibrarySummary; warnings?: readonly string[] }>
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{ kind: 'rejected'; reason: ImportFailure }>;
+
+export type SyncDirection = 'rekordbox-to-serato' | 'serato-to-rekordbox' | 'both';
+
+export type SyncFields = Readonly<{
+  tracks: boolean;
+  metadata: boolean;
+  playlists: boolean;
+  hotCues: boolean;
+  loops: boolean;
+  beatgrids: boolean;
+}>;
+
+export type SyncRequest = Readonly<{
+  direction: SyncDirection;
+  mode?: 'merge' | 'replace';
+  conflictSource: LibrarySourceKind;
+  fields: SyncFields;
+  timingOffsetMs: number;
+}>;
+
+export type SyncPreferences = Readonly<{
+  request: SyncRequest | null;
+  rekordboxPath: string | null;
+  seratoPath: string | null;
+}>;
+
+export const readSyncRequest = (request: unknown): SyncRequest => {
+  const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
+  if (!isRecord(request) ||
+    (request.direction !== 'rekordbox-to-serato' && request.direction !== 'serato-to-rekordbox' && request.direction !== 'both') ||
+    (request.conflictSource !== 'rekordbox' && request.conflictSource !== 'serato')) {
+    throw new Error('Invalid library sync request');
+  }
+  const mode = request.mode === undefined ? 'merge' : request.mode;
+  if (mode !== 'merge' && mode !== 'replace' || mode === 'replace' && request.direction === 'both') {
+    throw new Error('Overwrite is available only when syncing in one direction');
+  }
+  const fields = request.fields;
+  if (!isRecord(fields) || typeof fields.tracks !== 'boolean' || typeof fields.metadata !== 'boolean' ||
+    typeof fields.playlists !== 'boolean' || typeof fields.hotCues !== 'boolean' || typeof fields.loops !== 'boolean' ||
+    typeof fields.beatgrids !== 'boolean' ||
+    ![fields.tracks, fields.metadata, fields.playlists, fields.hotCues, fields.loops, fields.beatgrids].some(Boolean)) {
+    throw new Error('Choose at least one category to sync');
+  }
+  if (typeof request.timingOffsetMs !== 'number' || !Number.isSafeInteger(request.timingOffsetMs) ||
+    request.timingOffsetMs < -1000 || request.timingOffsetMs > 1000) {
+    throw new Error('Timing correction must be a whole number between -1000 and 1000 milliseconds');
+  }
+  return { direction: request.direction, mode, conflictSource: request.conflictSource, timingOffsetMs: request.timingOffsetMs,
+    fields: { tracks: fields.tracks, metadata: fields.metadata, playlists: fields.playlists,
+      hotCues: fields.hotCues, loops: fields.loops, beatgrids: fields.beatgrids } };
+};
+
+export type SyncMissingFile = Readonly<{
+  path: string;
+  title: string;
+  artist: SongRow['artist'];
+  libraries: readonly LibrarySourceKind[];
+  libraryPaths?: readonly string[];
+  candidates: readonly string[];
+}>;
+
+export type SyncMissingFileAction =
+  | Readonly<{ kind: 'search' | 'locate' | 'remove'; path: string }>
+  | Readonly<{ kind: 'relink'; path: string; replacementPath: string }>
+  | Readonly<{ kind: 'search-many' | 'remove-many'; paths: readonly string[] }>
+  | Readonly<{ kind: 'relink-many'; replacements: readonly Readonly<{ path: string; replacementPath: string }>[] }>;
+
+export type SyncResult =
+  | Readonly<{ kind: 'cancelled' }>
+  | Readonly<{
+      kind: 'missing-files';
+      files: readonly SyncMissingFile[];
+      message: string;
+      warnings: readonly string[];
+      backupPaths: readonly string[];
+    }>
+  | Readonly<{
+      kind: 'synced';
+      trackCount: number;
+      playlistCount: number;
+      skippedTrackCount: number;
+      warnings: readonly string[];
+      backupPaths: readonly string[];
+      message: string;
+    }>
+  | Readonly<{
+      kind: 'rejected';
+      message: string;
+      warnings: readonly string[];
+      backupPaths: readonly string[];
+    }>;
 
 export type PageRequest = Readonly<{
   offset: number;
@@ -309,7 +439,16 @@ export type LibraryMutationResult =
 
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
+  connections(): Promise<LibraryConnections>;
+  connectLibrary(kind: LibrarySourceKind): Promise<LibraryConnectionResult>;
+  manageLibraryConnection(action: LibraryConnectionAction): Promise<LibraryConnectionResult>;
+  selectSyncLibrary(id: string): Promise<SyncPreferences>;
   importRekordboxExport(): Promise<ImportResult>;
+  importSeratoLibrary(): Promise<ImportResult>;
+  syncLibraries(request: SyncRequest): Promise<SyncResult>;
+  resolveSyncMissingFile(action: SyncMissingFileAction): Promise<SyncResult>;
+  syncPreferences(): Promise<SyncPreferences>;
+  chooseSyncLibrary(kind: LibrarySourceKind, direction: SyncDirection): Promise<SyncPreferences | null>;
   listSongs(page: PageRequest): Promise<SongPage>;
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;
   listPlaylists(): Promise<readonly RekordboxPlaylist[]>;

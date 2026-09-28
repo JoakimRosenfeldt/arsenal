@@ -1,5 +1,5 @@
 import { stat } from 'node:fs/promises';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep, win32 } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import {
@@ -28,6 +28,7 @@ import {
 } from './main/track-artwork';
 import {
   DJ_LIBRARY_CHANNELS,
+  readSyncRequest,
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
   SONG_SOURCE_LABELS,
@@ -41,6 +42,7 @@ import {
   type PlaylistWindowContext,
   type PlaylistWindowRequest,
   type LibraryMutationResult,
+  type SyncMissingFileAction,
 } from './shared/dj-library';
 import { readSmartDefinition } from './shared/smart-playlists';
 
@@ -338,12 +340,133 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     return library.status();
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.connections, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage connections from the library window');
+    return library.connections();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.connectLibrary, async (event, kind: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Connect libraries from the library window');
+    if (kind !== 'rekordbox' && kind !== 'serato') throw new Error('Choose Rekordbox or Serato');
+    libraryActions += 1;
+    try {
+      return await library.connectLibrary(owner, kind);
+    } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.manageLibraryConnection, async (event, action: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage connections from the library window');
+    if (!isRecord(action) || typeof action.id !== 'string' || !action.id ||
+      (action.kind !== 'open' && action.kind !== 'refresh' && action.kind !== 'disconnect' && action.kind !== 'source-of-truth' && action.kind !== 'locate' && action.kind !== 'replace')) {
+      throw new Error('Invalid library connection action');
+    }
+    libraryActions += 1;
+    try {
+      return await library.manageLibraryConnection(owner, { kind: action.kind, id: action.id });
+    } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.selectSyncLibrary, async (event, id: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Choose sync libraries from the library window');
+    if (typeof id !== 'string' || !id) throw new Error('Choose a connected library');
+    libraryActions += 1;
+    try { return await library.selectSyncLibrary(id); } finally { libraryActions -= 1; }
+  });
+
   ipc.handle(DJ_LIBRARY_CHANNELS.importExport, async (event) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Import from the library window');
     libraryActions += 1;
     try {
       return await library.importExport(owner);
+    } finally {
+      libraryActions -= 1;
+    }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.importSerato, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Import from the library window');
+    libraryActions += 1;
+    try {
+      return await library.importSerato(owner);
+    } finally {
+      libraryActions -= 1;
+    }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.syncPreferences, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Choose sync libraries from the library window');
+    return library.syncPreferences();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.chooseSyncLibrary, async (event, kind: unknown, direction: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Choose sync libraries from the library window');
+    if ((kind !== 'rekordbox' && kind !== 'serato') ||
+      (direction !== 'rekordbox-to-serato' && direction !== 'serato-to-rekordbox' && direction !== 'both')) {
+      throw new Error('Invalid sync library selection');
+    }
+    libraryActions += 1;
+    try {
+      return await library.chooseSyncLibrary(owner, kind, direction);
+    } finally {
+      libraryActions -= 1;
+    }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.syncLibraries, async (event, request: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Sync from the library window');
+    const validated = readSyncRequest(request);
+    libraryActions += 1;
+    try {
+      return await library.syncLibraries(owner, validated);
+    } finally {
+      libraryActions -= 1;
+    }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.resolveSyncMissingFile, async (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Resolve missing files from the library window');
+    if (!isRecord(value)) throw new Error('Invalid missing file selection');
+    const missingPath = (path: unknown): path is string => typeof path === 'string' &&
+      (isAbsolute(path) || win32.isAbsolute(path)) && !path.includes('\0');
+    const replacementPath = (path: unknown): path is string => typeof path === 'string' && isAbsolute(path) && !path.includes('\0');
+    let action: SyncMissingFileAction;
+    if (value.kind === 'search-many' || value.kind === 'remove-many') {
+      if (!Array.isArray(value.paths) || value.paths.length === 0) throw new Error('Choose valid missing files');
+      const paths: unknown[] = Array.from(value.paths);
+      if (!paths.every(missingPath)) throw new Error('Choose valid missing files');
+      action = { kind: value.kind, paths: [...new Set(paths)] };
+    } else if (value.kind === 'relink-many') {
+      if (!Array.isArray(value.replacements) || value.replacements.length === 0) throw new Error('Choose replacement audio files');
+      const replacements = Array.from(value.replacements, (entry: unknown) => {
+        if (!isRecord(entry) || !missingPath(entry.path) || !replacementPath(entry.replacementPath)) throw new Error('Choose valid replacement audio files');
+        return { path: entry.path, replacementPath: entry.replacementPath };
+      });
+      if (new Set(replacements.map((entry) => entry.path)).size !== replacements.length) throw new Error('Choose each missing file only once');
+      action = { kind: value.kind, replacements };
+    } else if (value.kind === 'relink') {
+      if (!missingPath(value.path) || !replacementPath(value.replacementPath)) {
+        throw new Error('Choose a valid missing file and replacement audio file');
+      }
+      action = { kind: value.kind, path: value.path, replacementPath: value.replacementPath };
+    } else if (value.kind === 'search' || value.kind === 'locate' || value.kind === 'remove') {
+      if (!missingPath(value.path)) throw new Error('Invalid missing file selection');
+      action = { kind: value.kind, path: value.path };
+    } else {
+      throw new Error('Invalid missing file action');
+    }
+    libraryActions += 1;
+    try {
+      return await library.resolveSyncMissingFile(owner, action);
     } finally {
       libraryActions -= 1;
     }
