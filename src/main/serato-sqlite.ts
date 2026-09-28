@@ -7,7 +7,7 @@ import type { SQLInputValue, SQLOutputValue } from 'node:sqlite';
 import { promisify } from 'node:util';
 
 import type { SongRow } from '../shared/dj-library';
-import type { SyncLibrary, SyncPlaylist, SyncTrack } from './library-sync-model';
+import type { PlaylistNodeMove, SyncLibrary, SyncPlaylist, SyncTrack } from './library-sync-model';
 import { seratoSmartRules } from './serato-smart-crates';
 import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { assertMissingFileRepair, type LibraryFileRepairResult } from './repair-library-files';
@@ -199,6 +199,77 @@ export const readSeratoSqlite = async (rootPath: string): Promise<SyncLibrary> =
   } finally {
     db.close();
   }
+};
+
+export const moveSeratoSqliteNode = async (rootPath: string, move: PlaylistNodeMove): Promise<void> => {
+  await assertSeratoClosed();
+  const db = new DatabaseSync(rootPath, { timeout: 3000 });
+  try {
+    const { spaceId, rootId } = anchors(db);
+    const expectedRevision = id(db.prepare('SELECT revision FROM serato').get()?.revision);
+    const rows = db.prepare('SELECT id, parent_id, name, type FROM container WHERE space_id = ? ORDER BY list_order, id').all(spaceId);
+    const byId = new Map(rows.map((row) => [id(row.id), row]));
+    const paths = new Map<number, readonly string[]>([[rootId, []]]);
+    const pathFor = (rowId: number): readonly string[] => {
+      const saved = paths.get(rowId);
+      if (saved) return saved;
+      const row = byId.get(rowId);
+      if (!row) throw new Error('Invalid Serato crate hierarchy.');
+      const path = [...pathFor(id(row.parent_id)), text(row.name) ?? ''];
+      paths.set(rowId, path);
+      return path;
+    };
+    const key = (path: readonly string[]): string => JSON.stringify(path);
+    const find = (path: readonly string[]): Row => {
+      const found = rows.filter((row) => key(pathFor(id(row.id))) === key(path));
+      if (found.length !== 1) throw new Error(`The Serato crate ${path.join(' / ')} is missing or ambiguous. Sync playlists first.`);
+      return found[0]!;
+    };
+    const moved = find(move.sourcePath);
+    const parent = move.parentPath.length ? find(move.parentPath) : byId.get(rootId)!;
+    const before = move.beforePath === null ? null : find(move.beforePath);
+    const movedId = id(moved.id);
+    const parentId = id(parent.id);
+    const oldParentId = id(moved.parent_id);
+    if (parent.type !== 0 && parent.type !== 1) throw new Error('A smart crate cannot contain other crates.');
+    if (move.parentPath.length >= move.sourcePath.length && key(move.parentPath.slice(0, move.sourcePath.length)) === key(move.sourcePath)) {
+      throw new Error('A folder cannot move into itself.');
+    }
+    if (before && (before.parent_id !== parentId || id(before.id) === movedId)) throw new Error('Invalid Serato drop position.');
+    if (rows.some((row) => id(row.id) !== movedId && row.parent_id === parentId &&
+      text(row.name)?.toLocaleLowerCase() === text(moved.name)?.toLocaleLowerCase())) {
+      throw new Error('A crate with this name already exists in the destination folder.');
+    }
+    const siblings = rows.filter((row) => id(row.id) !== movedId && row.parent_id === parentId);
+    const insertAt = before === null ? siblings.length : siblings.findIndex((row) => id(row.id) === id(before.id));
+    if (insertAt < 0) throw new Error('Invalid Serato drop position.');
+    siblings.splice(insertAt, 0, moved);
+    db.exec('BEGIN IMMEDIATE');
+    if (id(db.prepare('SELECT revision FROM serato').get()?.revision) !== expectedRevision) {
+      throw new Error('The Serato library changed. Try the move again.');
+    }
+    await assertSeratoClosed();
+    await backupSeratoDatabases(rootPath);
+    const foreignKeysBefore = db.prepare('PRAGMA foreign_key_check').all().length;
+    const revision = expectedRevision + 1;
+    db.prepare('UPDATE serato SET revision = ?').run(revision);
+    const update = db.prepare('UPDATE container SET parent_id = ?, list_order = ?, revision = ? WHERE id = ?');
+    for (const [position, row] of siblings.entries()) update.run(parentId, position + 1, revision, id(row.id));
+    if (oldParentId !== parentId) {
+      for (const [position, row] of rows.filter((row) => id(row.id) !== movedId && row.parent_id === oldParentId).entries()) {
+        update.run(oldParentId, position + 1, revision, id(row.id));
+      }
+    }
+    db.prepare('UPDATE space SET revision = ? WHERE id = ?').run(revision, spaceId);
+    if (db.prepare('PRAGMA foreign_key_check').all().length > foreignKeysBefore || db.prepare('PRAGMA quick_check').get()?.quick_check !== 'ok') {
+      throw new Error('Serato library verification failed.');
+    }
+    await assertSeratoClosed();
+    db.exec('COMMIT');
+  } catch (error) {
+    if (db.isTransaction) db.exec('ROLLBACK');
+    throw error;
+  } finally { db.close(); }
 };
 
 const assertSeratoClosed = async (): Promise<void> => {
@@ -401,6 +472,7 @@ export const writeSeratoSqlite = async (
     const updateMember = db.prepare('UPDATE container_asset SET revision = ?, list_order = ? WHERE id = ?');
     const syncedCrates = new Set<number>();
     const retainedCrates = new Set<number>([rootId]);
+    const crateOrder = new Map<number, number>();
     for (const playlist of incoming.playlists) {
       const smart = smartCrates.get(playlist);
       let containerId = rootId;
@@ -420,6 +492,7 @@ export const writeSeratoSqlite = async (
           if (type === 1) db.prepare('DELETE FROM smart_crate_rules WHERE container_id = ?').run(containerId);
         }
         retainedCrates.add(containerId);
+        if (!crateOrder.has(containerId)) crateOrder.set(containerId, crateOrder.size);
       }
       if (smart) {
         saveSmartRules.run(containerId, revision, smart.version, smart.rules);
@@ -452,6 +525,20 @@ export const writeSeratoSqlite = async (
       const removeCrate = db.prepare('DELETE FROM container WHERE id = ?');
       for (const row of db.prepare('SELECT id FROM container WHERE space_id = ?').all(spaceId)) {
         if (!retainedCrates.has(id(row.id))) removeCrate.run(id(row.id));
+      }
+    }
+    if (incoming.playlists.length > 0) {
+      const siblings = new Map<number, Row[]>();
+      for (const row of db.prepare('SELECT id, parent_id FROM container WHERE space_id = ? AND id != ? ORDER BY list_order, id').all(spaceId, rootId)) {
+        const parentId = id(row.parent_id);
+        const group = siblings.get(parentId) ?? [];
+        group.push(row);
+        siblings.set(parentId, group);
+      }
+      const setOrder = db.prepare('UPDATE container SET list_order = ?, revision = ? WHERE id = ?');
+      for (const group of siblings.values()) {
+        group.sort((left, right) => (crateOrder.get(id(left.id)) ?? Infinity) - (crateOrder.get(id(right.id)) ?? Infinity));
+        for (const [position, row] of group.entries()) setOrder.run(position + 1, revision, id(row.id));
       }
     }
     if (options.replaceTracks) {

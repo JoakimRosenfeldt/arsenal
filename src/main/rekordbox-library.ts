@@ -54,10 +54,10 @@ import {
   type ArtworkAsset,
   isSupportedAudioPath,
 } from './track-artwork';
-import { findSeratoSource, readSeratoLibrary, repairSeratoMissingFile, type SeratoSource } from './serato-library';
+import { assertSeratoClosed, findSeratoSource, moveSeratoNode, readSeratoLibrary, repairSeratoMissingFile, type SeratoSource } from './serato-library';
 import { mergeRekordboxXml, rekordboxSyncLibrary, repairRekordboxMissingFile } from './sync-rekordbox-xml';
 import { readSeratoWithPerformance, saveLibraryXml, syncLibraryFiles } from './sync-libraries';
-import { normalizePath, type SyncLibrary } from './library-sync-model';
+import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
 import { seratoSmartRules } from './serato-smart-crates';
 import { resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
@@ -128,7 +128,7 @@ const sameWorkspaceEntries = (left: SyncLibrary, right: SyncLibrary): boolean =>
       const smart = seratoSmartRules(playlist);
       return { path: JSON.stringify(playlist.path), tracks: playlist.trackPaths.map(normalizePath).sort(),
         smart: smart ? { version: smart.version, rules: smart.rules } : null };
-    }).sort((a, b) => a.path.localeCompare(b.path)) });
+    }) });
   return entries(left) === entries(right);
 };
 
@@ -1103,6 +1103,8 @@ export class RekordboxLibrary {
         return this.setPlaylistTracks(catalog, change);
       case 'remove-playlist':
         return this.removePlaylist(catalog, change);
+      case 'move-playlist-node':
+        return this.movePlaylistNode(catalog, change);
       case 'create-playlist':
       case 'create-folder':
       case 'save-smart-playlist':
@@ -1241,6 +1243,96 @@ export class RekordboxLibrary {
     this.cancelSuggestions();
     this.catalog = reload.catalog;
     return { kind: 'playlist-removed', library: summaryFor(reload.catalog) };
+  }
+
+  private async movePlaylistNode(
+    catalog: CurrentCatalog,
+    change: Extract<LibraryMutation, { kind: 'move-playlist-node' }>,
+  ): Promise<LibraryMutationResult> {
+    const move: PlaylistNodeMove = change;
+    const key = (path: readonly string[]): string => JSON.stringify(path);
+    const sourceKey = key(move.sourcePath);
+    const parentKey = key(move.parentPath);
+    const sourceName = move.sourcePath.at(-1);
+    if (!sourceName || (move.parentPath.length >= move.sourcePath.length &&
+      key(move.parentPath.slice(0, move.sourcePath.length)) === sourceKey) ||
+      (move.beforePath !== null && (key(move.beforePath.slice(0, -1)) !== parentKey || key(move.beforePath) === sourceKey))) {
+      return { kind: 'rejected', reason: 'invalid-playlist' };
+    }
+    const validate = (paths: readonly (readonly string[])[], folderPaths: readonly (readonly string[])[]): void => {
+      const all = new Set(paths.map(key));
+      const folders = new Set(folderPaths.map(key));
+      if (!all.has(sourceKey) || (move.parentPath.length > 0 && !folders.has(parentKey)) ||
+        (move.beforePath !== null && !all.has(key(move.beforePath))) ||
+        paths.some((path) => key(path) !== sourceKey && key(path.slice(0, -1)) === parentKey &&
+          path.at(-1)?.toLocaleLowerCase() === sourceName.toLocaleLowerCase())) {
+        throw new Error('This move cannot be saved in every connected library. Sync playlists first.');
+      }
+    };
+    const xmlPaths = (parsed: Awaited<ReturnType<typeof parseRekordboxXml>>) => ({
+      paths: [...parsed.folders.map((folder) => folder.folderPath),
+        ...parsed.playlists.map((playlist) => [...playlist.folderPath, playlist.name])],
+      folders: parsed.folders.map((folder) => folder.folderPath),
+    });
+    const edits: { kind: 'xml'; path: string; fingerprint: string }[] = [];
+    const natives: { kind: 'serato'; source: SeratoSource }[] = [];
+    try {
+      const connections = this.connectedLibraries.length ? this.connectedLibraries : [{
+        id: 'current', kind: catalog.sourceKind, path: catalog.seratoPath ?? catalog.sourcePath,
+        workspacePath: catalog.sourceKind === 'serato' ? catalog.sourcePath : null, dirty: false,
+      } satisfies StoredLibraryConnection];
+      for (const connection of connections) {
+        if (connection.kind === 'rekordbox') {
+          const parsed = await parseRekordboxXml(connection.path);
+          const structure = xmlPaths(parsed);
+          validate(structure.paths, structure.folders);
+          edits.push({ kind: 'xml', path: connection.path, fingerprint: parsed.fingerprint });
+        } else {
+          await assertSeratoClosed();
+          const source = await findSeratoSource(connection.path);
+          const native = await readSeratoLibrary(source);
+          const paths = native.playlists.map((playlist) => playlist.path);
+          const folders = [...native.playlists.filter((playlist) => playlist.kind !== 'smart').map((playlist) => playlist.path),
+            ...paths.flatMap((path) => path.slice(0, -1).map((_, index) => path.slice(0, index + 1)))];
+          validate([...paths, ...folders], folders);
+          natives.push({ kind: 'serato', source });
+          if (connection.workspacePath !== null && (connection.dirty || connection.id === this.activeConnectionId || connection.id === 'current')) {
+            const parsed = await parseRekordboxXml(connection.workspacePath);
+            const structure = xmlPaths(parsed);
+            validate(structure.paths, structure.folders);
+            edits.push({ kind: 'xml', path: connection.workspacePath, fingerprint: parsed.fingerprint });
+          }
+        }
+      }
+    } catch (error) {
+      return { kind: 'rejected', reason: error instanceof Error && error.message.includes('Close Serato')
+        ? 'serato-open' : 'playlist-sync-needed' };
+    }
+    let saved = 0;
+    let warning: string | undefined;
+    const targets = [...edits.sort((left, right) => Number(right.path === catalog.sourcePath) - Number(left.path === catalog.sourcePath)), ...natives];
+    for (const target of targets) {
+      try {
+        if (target.kind === 'xml') await editRekordboxXml({ edit: { kind: 'move-playlist-node', ...move },
+          expectedFingerprint: target.fingerprint, filePath: target.path });
+        else await moveSeratoNode(target.source, move);
+        saved += 1;
+      } catch (error) {
+        if (saved === 0) return { kind: 'rejected', reason: error instanceof RekordboxWriteError &&
+          error.reason === 'source-changed' ? 'source-changed' : error instanceof Error &&
+          error.message.includes('Close Serato') ? 'serato-open' : 'cannot-write' };
+        warning = `The move reached ${saved} connected library file${saved === 1 ? '' : 's'}, but another save failed. Sync playlists to repair the difference.`;
+        break;
+      }
+    }
+    try {
+      this.catalog = await this.catalogFor(catalog.sourcePath, catalog.seratoPath);
+    } catch {
+      return { kind: 'rejected', reason: 'cannot-write' };
+    }
+    this.cancelSuggestions();
+    return { kind: 'playlist-node-moved', library: summaryFor(this.catalog), sourcePath: move.sourcePath,
+      destinationPath: [...move.parentPath, sourceName], ...(warning ? { warning } : {}) };
   }
 
   private async createPlaylistNode(

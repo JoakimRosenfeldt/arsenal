@@ -27,6 +27,12 @@ export type SyncLibrary = Readonly<{
   playlists: readonly SyncPlaylist[];
 }>;
 
+export type PlaylistNodeMove = Readonly<{
+  sourcePath: readonly string[];
+  parentPath: readonly string[];
+  beforePath: readonly string[] | null;
+}>;
+
 export const normalizePath = (path: string): string => {
   const slashes = path.replaceAll('\\', '/');
   const normalized = posix.normalize(slashes);

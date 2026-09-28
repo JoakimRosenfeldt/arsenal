@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type JSX, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 
 import { UiIcon } from './UiIcon';
 import type { PlaylistFolder, RekordboxPlaylist } from './shared/dj-library';
@@ -7,6 +7,8 @@ const MIN_SIDEBAR_WIDTH = 170;
 const MAX_SIDEBAR_WIDTH = 480;
 const SIDEBAR_WIDTH_KEY = 'arsenal.sidebarWidth';
 const COLLAPSED_FOLDERS_KEY = 'arsenal.collapsedPlaylistFolders';
+const pathKey = (path: readonly string[]): string => JSON.stringify(path);
+type DropPlacement = 'before' | 'inside' | 'after';
 
 const savedCollapsedFolders = (libraryId: string | null): ReadonlySet<string> => {
   if (libraryId === null) return new Set();
@@ -98,36 +100,119 @@ const playlistMenuEvents = (onMenu: () => void) => ({
 
 const PlaylistBranch = ({
   activePage,
+  busy,
   collapsedFolderPaths,
+  draggedPath,
+  dropHint,
   onSelect,
   onFolderToggle,
+  onMove,
   parentFolderId,
   folders,
   onMenu,
   playlists,
+  setDraggedPath,
+  setDropHint,
   selectedPlaylistId,
 }: Readonly<{
   activePage: PageId;
+  busy: boolean;
   collapsedFolderPaths: ReadonlySet<string>;
+  draggedPath: readonly string[] | null;
+  dropHint: Readonly<{ path: string; placement: DropPlacement }> | null;
   onSelect: (playlistId: string) => void;
   onFolderToggle: (folderPath: string, open: boolean) => void;
+  onMove: (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null) => Promise<boolean>;
   parentFolderId: string | null;
   folders: readonly PlaylistFolder[];
   onMenu: (parentFolderId: string | null, playlistId: string | null) => void;
   playlists: readonly RekordboxPlaylist[];
+  setDraggedPath: (path: readonly string[] | null) => void;
+  setDropHint: (hint: Readonly<{ path: string; placement: DropPlacement }> | null) => void;
   selectedPlaylistId: string | null;
 }>): JSX.Element => {
   const nodes: (PlaylistFolder | RekordboxPlaylist)[] = [...folders, ...playlists];
+  const siblings = nodes.filter((node) => node.parentFolderId === parentFolderId).sort((a, b) => a.order - b.order);
+  const parentPath = parentFolderId === null ? [] : folders.find((folder) => folder.id === parentFolderId)?.folderPath ?? [];
+  const nodePath = (node: PlaylistFolder | RekordboxPlaylist): readonly string[] =>
+    'tracks' in node ? [...node.folderPath, node.name] : node.folderPath;
+  const dragStart = (event: DragEvent<HTMLElement>, path: readonly string[]): void => {
+    if (busy) { event.preventDefault(); return; }
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', pathKey(path));
+    setDraggedPath(path);
+  };
+  const placement = (event: DragEvent<HTMLElement>, folder: boolean): DropPlacement => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const fraction = (event.clientY - rect.top) / rect.height;
+    return fraction < (folder ? 0.25 : 0.5) ? 'before' : folder && fraction < 0.75 ? 'inside' : 'after';
+  };
+  const targetFor = (node: PlaylistFolder | RekordboxPlaylist, place: DropPlacement): Readonly<{
+    parent: readonly string[]; before: readonly string[] | null;
+  }> => {
+    const path = nodePath(node);
+    if (place === 'inside') return { parent: path, before: null };
+    const remaining = siblings.filter((sibling) => pathKey(nodePath(sibling)) !== pathKey(draggedPath ?? []));
+    const index = remaining.findIndex((sibling) => sibling.id === node.id);
+    return { parent: parentPath, before: place === 'before' ? path : remaining[index + 1] ? nodePath(remaining[index + 1]!) : null };
+  };
+  const canDrop = (node: PlaylistFolder | RekordboxPlaylist, place: DropPlacement): boolean => {
+    if (busy || draggedPath === null || pathKey(draggedPath) === pathKey(nodePath(node))) return false;
+    const target = targetFor(node, place);
+    return pathKey(target.parent.slice(0, draggedPath.length)) !== pathKey(draggedPath);
+  };
+  const dragOver = (event: DragEvent<HTMLElement>, node: PlaylistFolder | RekordboxPlaylist, folder: boolean): void => {
+    event.stopPropagation();
+    const place = placement(event, folder);
+    if (!canDrop(node, place)) { setDropHint(null); return; }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'move';
+    setDropHint({ path: pathKey(nodePath(node)), placement: place });
+  };
+  const drop = (event: DragEvent<HTMLElement>, node: PlaylistFolder | RekordboxPlaylist, folder: boolean): void => {
+    event.stopPropagation();
+    event.preventDefault();
+    const place = placement(event, folder);
+    if (canDrop(node, place) && draggedPath !== null) {
+      const target = targetFor(node, place);
+      void onMove(draggedPath, target.parent, target.before);
+    }
+    setDraggedPath(null);
+    setDropHint(null);
+  };
+  const rowClass = (path: readonly string[], base: string): string => {
+    const hint = dropHint?.path === pathKey(path) ? dropHint.placement : null;
+    return hint === null ? base : `${base} is-drop-${hint}`;
+  };
   return (
-    <div className="sidebar-playlist-branch">
-      {nodes.filter((node) => node.parentFolderId === parentFolderId).sort((a, b) => a.order - b.order).map((node) => {
+    <div className={dropHint?.path === pathKey(parentPath) && dropHint.placement === 'inside'
+      ? 'sidebar-playlist-branch is-drop-inside' : 'sidebar-playlist-branch'} onDragOver={(event) => {
+      if (event.target !== event.currentTarget || draggedPath === null || busy ||
+        pathKey(parentPath.slice(0, draggedPath.length)) === pathKey(draggedPath)) return;
+      event.preventDefault();
+      setDropHint({ path: pathKey(parentPath), placement: 'inside' });
+    }} onDrop={(event) => {
+      if (event.target !== event.currentTarget || draggedPath === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      void onMove(draggedPath, parentPath, null);
+      setDraggedPath(null);
+      setDropHint(null);
+    }}>
+      {siblings.map((node) => {
         if ('tracks' in node) {
           const playlist = node;
           const active = activePage === 'playlists' && playlist.id === selectedPlaylistId;
+          const path = nodePath(playlist);
           return (
             <button
-              className={active ? 'sidebar-playlist is-active' : 'sidebar-playlist'}
+              className={rowClass(path, active ? 'sidebar-playlist is-active' : 'sidebar-playlist')}
               type="button"
+              draggable={!busy}
+              onDragStart={(event) => dragStart(event, path)}
+              onDragEnd={() => { setDraggedPath(null); setDropHint(null); }}
+              onDragOver={(event) => dragOver(event, playlist, false)}
+              onDrop={(event) => drop(event, playlist, false)}
               onClick={() => onSelect(playlist.id)}
               {...playlistMenuEvents(() => onMenu(parentFolderId, playlist.id))}
               aria-current={active ? 'page' : undefined}
@@ -144,20 +229,31 @@ const PlaylistBranch = ({
         return (
           <details className="sidebar-playlist-folder" open={!collapsedFolderPaths.has(folderPath)}
             onToggle={(event) => onFolderToggle(folderPath, event.currentTarget.open)} key={folder.id}>
-            <summary {...playlistMenuEvents(() => onMenu(folder.id, null))}>
+            <summary className={rowClass(folder.folderPath, '')} draggable={!busy}
+              onDragStart={(event) => dragStart(event, folder.folderPath)}
+              onDragEnd={() => { setDraggedPath(null); setDropHint(null); }}
+              onDragOver={(event) => dragOver(event, folder, true)}
+              onDrop={(event) => drop(event, folder, true)}
+              {...playlistMenuEvents(() => onMenu(folder.id, null))}>
               <UiIcon name="folder" size={16} />
               <span>{folder.name}</span>
               <span className="folder-caret" aria-hidden><UiIcon name="chevron-right" size={14} /></span>
             </summary>
             <PlaylistBranch
               activePage={activePage}
+              busy={busy}
               collapsedFolderPaths={collapsedFolderPaths}
+              draggedPath={draggedPath}
+              dropHint={dropHint}
               onSelect={onSelect}
               onFolderToggle={onFolderToggle}
+              onMove={onMove}
               parentFolderId={folder.id}
               folders={folders}
               onMenu={onMenu}
               playlists={playlists}
+              setDraggedPath={setDraggedPath}
+              setDropHint={setDropHint}
               selectedPlaylistId={selectedPlaylistId}
             />
           </details>
@@ -175,6 +271,7 @@ export const CueboxSidebar = ({
   libraryId,
   folders,
   onMenu,
+  onMove,
   onNavigate,
   onPlaylistSelect,
   playlists,
@@ -187,6 +284,7 @@ export const CueboxSidebar = ({
   libraryId: string | null;
   folders: readonly PlaylistFolder[];
   onMenu: (parentFolderId: string | null, playlistId: string | null) => void;
+  onMove: (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null) => Promise<boolean>;
   onNavigate: (page: PageId) => void;
   onPlaylistSelect: (playlistId: string) => void;
   playlists: readonly RekordboxPlaylist[] | null;
@@ -202,6 +300,8 @@ export const CueboxSidebar = ({
     }
   });
   const [collapsedFolderPaths, setCollapsedFolderPaths] = useState(() => savedCollapsedFolders(libraryId));
+  const [draggedPath, setDraggedPath] = useState<readonly string[] | null>(null);
+  const [dropHint, setDropHint] = useState<Readonly<{ path: string; placement: DropPlacement }> | null>(null);
   const [windowWidth, setWindowWidth] = useState(window.innerWidth);
   const dragStart = useRef<{ x: number; width: number } | null>(null);
   const maxWidth = Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, windowWidth - 480));
@@ -239,6 +339,21 @@ export const CueboxSidebar = ({
       if (open) next.delete(folderPath); else next.add(folderPath);
       return next;
     });
+  };
+
+  const moveNode = async (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null): Promise<boolean> => {
+    const moved = await onMove(sourcePath, parentPath, beforePath);
+    if (moved && folders.some((folder) => pathKey(folder.folderPath) === pathKey(sourcePath))) {
+      const destinationPath = [...parentPath, sourcePath.at(-1)!];
+      setCollapsedFolderPaths((current) => new Set([...current].map((saved) => {
+        try {
+          const path: unknown = JSON.parse(saved);
+          return Array.isArray(path) && pathKey(path.slice(0, sourcePath.length)) === pathKey(sourcePath)
+            ? pathKey([...destinationPath, ...path.slice(sourcePath.length)]) : saved;
+        } catch { return saved; }
+      })));
+    }
+    return moved;
   };
 
   const resize = (nextWidth: number): void => {
@@ -282,7 +397,19 @@ export const CueboxSidebar = ({
         />
 
         <div className="sidebar-group sidebar-playlist-group">
-          <div className="sidebar-playlist-title" {...playlistMenuEvents(() => onMenu(null, null))}>
+          <div className="sidebar-playlist-title" {...playlistMenuEvents(() => onMenu(null, null))}
+            onDragOver={(event) => {
+              if (draggedPath === null || busy) return;
+              event.preventDefault();
+              setDropHint({ path: pathKey([]), placement: 'inside' });
+            }}
+            onDrop={(event) => {
+              if (draggedPath === null || busy) return;
+              event.preventDefault();
+              void moveNode(draggedPath, [], null);
+              setDraggedPath(null);
+              setDropHint(null);
+            }}>
             <p className="sidebar-section-label">Playlists</p>
             <button className="sidebar-add" type="button" aria-label="Create playlist or folder" aria-haspopup="menu"
               title="New playlist, smart playlist, or folder" disabled={!hasLibrary || busy} onClick={() => onMenu(null, null)}>+</button>
@@ -292,13 +419,19 @@ export const CueboxSidebar = ({
             {playlists !== null && (
               <PlaylistBranch
                 activePage={activePage}
+                busy={busy}
                 collapsedFolderPaths={collapsedFolderPaths}
+                draggedPath={draggedPath}
+                dropHint={dropHint}
                 onSelect={onPlaylistSelect}
                 onFolderToggle={toggleFolder}
+                onMove={moveNode}
                 parentFolderId={null}
                 folders={folders}
                 onMenu={onMenu}
                 playlists={playlists}
+                setDraggedPath={setDraggedPath}
+                setDropHint={setDropHint}
                 selectedPlaylistId={selectedPlaylistId}
               />
             )}

@@ -380,6 +380,13 @@ export type LibraryMutation =
       playlistId: string;
     }>
   | Readonly<{
+      kind: 'move-playlist-node';
+      revision: string;
+      sourcePath: readonly string[];
+      parentPath: readonly string[];
+      beforePath: readonly string[] | null;
+    }>
+  | Readonly<{
       kind: 'save-smart-playlist';
       revision: string;
       name: string;
@@ -405,6 +412,8 @@ export type MutationFailure =
   | 'invalid-playlist'
   | 'name-conflict'
   | 'folder-not-found'
+  | 'playlist-sync-needed'
+  | 'serato-open'
   | 'cannot-write';
 
 export type LibraryMutationResult =
@@ -432,6 +441,13 @@ export type LibraryMutationResult =
   | Readonly<{
       kind: 'playlist-removed';
       library: LibrarySummary;
+    }>
+  | Readonly<{
+      kind: 'playlist-node-moved';
+      library: LibrarySummary;
+      sourcePath: readonly string[];
+      destinationPath: readonly string[];
+      warning?: string;
     }>
   | Readonly<{
       kind: 'folder-created';

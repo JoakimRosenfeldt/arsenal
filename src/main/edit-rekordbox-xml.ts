@@ -43,6 +43,12 @@ export type RekordboxXmlEdit =
       playlistId: string;
     }>
   | Readonly<{
+      kind: 'move-playlist-node';
+      sourcePath: readonly string[];
+      parentPath: readonly string[];
+      beforePath: readonly string[] | null;
+    }>
+  | Readonly<{
       kind: 'update-smart-playlist';
       playlistId: string;
       name: string;
@@ -78,6 +84,7 @@ type ElementSpan = {
 type PlaylistNodeSpan = Omit<ElementSpan, 'kind'> & {
   kind: 'playlist-node';
   id: string;
+  path: readonly string[];
   nodeType: string | null;
   keyType: string | null;
   childNodeCount: number;
@@ -170,6 +177,7 @@ const scanXml = (source: string): XmlIndex => {
             id: tag.attributes.Type === '1' || isSmartPlaylistNode(tag.attributes)
               ? `playlist-${++playlistCount}`
               : parent === playlists ? 'root' : `folder-${++folderCount}`,
+            path: parent?.kind === 'playlist-node' ? [...parent.path, tag.attributes.Name ?? ''] : [],
             ...common,
             nodeType: tag.attributes.Type ?? null,
             keyType: tag.attributes.KeyType ?? null,
@@ -623,6 +631,55 @@ const removePlaylist = (
   ]);
 };
 
+const movePlaylistNode = (
+  source: string,
+  index: XmlIndex,
+  edit: Extract<RekordboxXmlEdit, { kind: 'move-playlist-node' }>,
+): string => {
+  const key = (path: readonly string[]): string => JSON.stringify(path);
+  const matching = (path: readonly string[]): PlaylistNodeSpan[] => index.playlistNodes.filter((node) => key(node.path) === key(path));
+  const moved = matching(edit.sourcePath);
+  const parents = matching(edit.parentPath);
+  const before = edit.beforePath === null ? [] : matching(edit.beforePath);
+  const node = moved[0];
+  const parent = parents[0];
+  const next = before[0];
+  if (moved.length !== 1 || parents.length !== 1 || (edit.beforePath !== null && before.length !== 1) ||
+    node === undefined || parent === undefined || (edit.beforePath !== null && next === undefined) ||
+    (parent !== index.rootPlaylistNode && parent.nodeType !== '0') ||
+    key(edit.parentPath.slice(0, edit.sourcePath.length)) === key(edit.sourcePath) ||
+    (next !== undefined && (next === node || key(next.path.slice(0, -1)) !== key(parent.path))) ||
+    index.playlistNodes.some((candidate) => candidate !== node && candidate !== next &&
+      key(candidate.path) === key([...edit.parentPath, edit.sourcePath.at(-1)!]))) {
+    throw new RekordboxWriteError('target-not-found', 'The playlist move no longer matches this XML');
+  }
+  const oldParent = index.playlistNodes.filter((candidate) => candidate.start < node.start && candidate.end > node.end).at(-1);
+  if (oldParent === undefined) throw new RekordboxWriteError('invalid-document', 'The playlist has no parent');
+  const oldIndent = lineIndentAt(source, node.start);
+  const newIndent = `${lineIndentAt(source, parent.start)}  `;
+  const newline = source.includes('\r\n') ? '\r\n' : '\n';
+  const markup = source.slice(node.start, node.end).replace(/(\r?\n)([\t ]*)/g, (_match, breakText: string, whitespace: string) =>
+    whitespace.startsWith(oldIndent) ? `${breakText}${newIndent}${whitespace.slice(oldIndent.length)}` : `${breakText}${whitespace}`);
+  const insertion = next === undefined ? parent.closeStart : next.start;
+  const insertionText = next === undefined ? `${newline}${newIndent}${markup}` : `${markup}${newline}${newIndent}`;
+  const sameParent = oldParent === parent;
+  const replacements: Replacement[] = [
+    removalReplacement(source, node),
+    { start: insertion, end: insertion, text: insertionText },
+  ];
+  if (!sameParent) {
+    replacements.push(openingReplacement(source, oldParent, 'Count', String(oldParent.childNodeCount - 1)),
+      openingReplacement(source, parent, 'Count', String(parent.childNodeCount + 1)));
+  }
+  if (parent.selfClosing) {
+    const opening = replaceAttribute(source.slice(parent.start, parent.openEnd), 'Count', '1').replace(/\/\s*>$/, '>');
+    return applyReplacements(source, [removalReplacement(source, node),
+      openingReplacement(source, oldParent, 'Count', String(oldParent.childNodeCount - 1)),
+      { start: parent.start, end: parent.end, text: `${opening}${newline}${newIndent}${markup}${newline}${lineIndentAt(source, parent.start)}</NODE>` }]);
+  }
+  return applyReplacements(source, replacements);
+};
+
 const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
   const index = scanXml(source);
   let edited: string;
@@ -632,6 +689,8 @@ const editedXml = (source: string, edit: RekordboxXmlEdit): string => {
     edited = setPlaylistTracks(source, index, edit);
   } else if (edit.kind === 'remove-playlist') {
     edited = removePlaylist(source, index, edit.playlistId);
+  } else if (edit.kind === 'move-playlist-node') {
+    edited = movePlaylistNode(source, index, edit);
   } else if (edit.kind === 'update-smart-playlist') {
     const node = index.playlistNodes.find((candidate) => candidate.id === edit.playlistId);
     if (node === undefined) throw new RekordboxWriteError('target-not-found', 'The playlist no longer exists');

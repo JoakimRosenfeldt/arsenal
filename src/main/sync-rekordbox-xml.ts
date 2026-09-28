@@ -384,6 +384,24 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
     if (node.attributes.Type === '0') node.attributes.Count = String(children(node, 'NODE').length);
     children(node, 'NODE').forEach(updateCounts);
   };
+  if (fields?.playlists !== false && incomingPlaylists.length > 0) {
+    const order = new Map<string, number>();
+    for (const playlist of incomingPlaylists) {
+      for (let depth = 1; depth <= playlist.path.length; depth += 1) {
+        const key = JSON.stringify(playlist.path.slice(0, depth));
+        if (!order.has(key)) order.set(key, order.size);
+      }
+    }
+    const reorder = (parent: XmlNode, path: readonly string[]): void => {
+      const slots = parent.parts.flatMap((part, index) => typeof part !== 'string' && part.name === 'NODE' ? [index] : []);
+      const sorted = slots.map((slot) => parent.parts[slot] as XmlNode).sort((left, right) =>
+        (order.get(JSON.stringify([...path, left.attributes.Name])) ?? Infinity) -
+        (order.get(JSON.stringify([...path, right.attributes.Name])) ?? Infinity));
+      for (const [index, slot] of slots.entries()) parent.parts[slot] = sorted[index]!;
+      for (const node of sorted) reorder(node, [...path, node.attributes.Name ?? '']);
+    };
+    reorder(playlistRoot, []);
+  }
   updateCounts(playlistRoot);
   return document.prefix + render(document.root) + document.suffix;
 };

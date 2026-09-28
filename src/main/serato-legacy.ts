@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, parse, posix, resolve, sep, win32 } from 'node:path';
 
 import type { SongRow } from '../shared/dj-library';
-import { mergeLibraries, normalizePath, type SyncLibrary, type SyncPlaylist, type SyncTrack } from './library-sync-model';
+import { mergeLibraries, normalizePath, type PlaylistNodeMove, type SyncLibrary, type SyncPlaylist, type SyncTrack } from './library-sync-model';
 import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { assertMissingFileRepair, saveRepairedLibraryFiles, type LibraryFileRepairResult } from './repair-library-files';
 
@@ -286,6 +286,89 @@ const defaultCrateRecords = (): RecordField[] => [
   })),
 ];
 
+export const moveSeratoLegacyNode = async (directory: string, move: PlaylistNodeMove): Promise<void> => {
+  const native = await readNativeLibrary(directory, false);
+  const key = (path: readonly string[]): string => JSON.stringify(path);
+  const under = (path: readonly string[], prefix: readonly string[]): boolean =>
+    path.length >= prefix.length && key(path.slice(0, prefix.length)) === key(prefix);
+  const paths = native.crates.map((crate) => crate.playlist.path);
+  const exists = (path: readonly string[]): boolean => path.length === 0 || paths.some((candidate) => under(candidate, path));
+  if (!exists(move.sourcePath) || !exists(move.parentPath) ||
+    (move.beforePath !== null && !exists(move.beforePath)) ||
+    under(move.parentPath, move.sourcePath) ||
+    (move.beforePath !== null && (under(move.beforePath, move.sourcePath) ||
+      key(move.beforePath.slice(0, -1)) !== key(move.parentPath)))) {
+    throw new Error('The Serato crate move is invalid. Sync playlists first.');
+  }
+  const destinationPath = [...move.parentPath, move.sourcePath.at(-1)!];
+  const moved = native.crates.filter((crate) => under(crate.playlist.path, move.sourcePath));
+  const retained = native.crates.filter((crate) => !under(crate.playlist.path, move.sourcePath));
+  if (retained.some((crate) => under(crate.playlist.path, destinationPath))) {
+    throw new Error('A crate with this name already exists in the destination folder.');
+  }
+  const position = move.beforePath === null
+    ? retained.reduce((last, crate, index) => under(crate.playlist.path, move.parentPath) ? index : last, -1) + 1
+    : retained.findIndex((crate) => under(crate.playlist.path, move.beforePath!));
+  if (position < 0) throw new Error('The Serato drop position is missing.');
+  const ordered = [...retained];
+  ordered.splice(position, 0, ...moved);
+  const changedPath = (path: readonly string[]): readonly string[] => under(path, move.sourcePath)
+    ? [...destinationPath, ...path.slice(move.sourcePath.length)] : path;
+  const filenames = ordered.map((crate) => crateFilename(changedPath(crate.playlist.path)));
+  if (new Set(filenames.map((name) => name.toLocaleLowerCase())).size !== filenames.length) {
+    throw new Error('The destination has conflicting Serato crate names.');
+  }
+  const preferencePath = await readOptional(join(directory, 'neworder.pref')) !== null
+    ? join(directory, 'neworder.pref') : await readOptional(join(directory, 'Neworder.pref')) !== null
+      ? join(directory, 'Neworder.pref') : join(directory, 'neworder.pref');
+  const previousPreference = await readOptional(preferencePath);
+  const oldLines = previousPreference === null ? [] : new TextDecoder('utf-16be').decode(previousPreference).split(/\r?\n/);
+  const otherLines = oldLines.filter((line) => line && !line.startsWith('[crate]'));
+  const preference = Buffer.from([...otherLines, ...filenames.map((name) => `[crate]${name.slice(0, -6)}`)].join('\r\n') + '\r\n', 'utf16le').swap16();
+  const updates = new Map<string, { before: Buffer | null; after: Buffer | null }>();
+  for (const crate of moved) {
+    const destination = join(native.subcrates, crateFilename(changedPath(crate.playlist.path)));
+    if (destination === crate.path) continue;
+    updates.set(crate.path, { before: crate.bytes, after: null });
+    updates.set(destination, { before: null, after: crate.bytes });
+  }
+  if (previousPreference?.equals(preference) && updates.size === 0) return;
+  updates.set(preferencePath, { before: previousPreference, after: preference });
+  const suffix = `.arsenal-${Date.now()}-${randomUUID()}`;
+  const staged: string[] = [];
+  const committed: string[] = [];
+  try {
+    if (JSON.stringify(await crateNames(native.subcrates)) !== JSON.stringify([...native.names].sort())) throw new Error('Serato crates changed. Close Serato and retry.');
+    for (const crate of native.crates) {
+      if (!(await readOptional(crate.path))?.equals(crate.bytes ?? Buffer.alloc(0))) throw new Error('Serato crates changed. Close Serato and retry.');
+    }
+    for (const [path, { before, after }] of updates) {
+      const current = await readOptional(path);
+      if (before === null ? current !== null : !current?.equals(before)) throw new Error('Serato order changed. Close Serato and retry.');
+      if (after !== null) {
+        const temporary = `${path}${suffix}.tmp`;
+        await writeFile(temporary, after, { flag: 'wx' });
+        staged.push(temporary);
+      }
+      if (before !== null) await writeFile(`${path}${suffix}.bak`, before, { flag: 'wx' });
+    }
+    for (const [path, { after }] of updates) {
+      if (after === null) await rm(path);
+      else await rename(`${path}${suffix}.tmp`, path);
+      committed.push(path);
+    }
+  } catch (error) {
+    for (const path of committed.reverse()) {
+      const before = updates.get(path)?.before;
+      if (before === null) await rm(path, { force: true });
+      else if (before !== undefined) await writeFile(path, before);
+    }
+    throw error;
+  } finally {
+    await Promise.all(staged.map((path) => rm(path, { force: true })));
+  }
+};
+
 export const writeSeratoLegacy = async (
   directory: string,
   incoming: SyncLibrary,
@@ -354,6 +437,17 @@ export const writeSeratoLegacy = async (
       updates.set(path, { before: await readFile(path), after: null });
     }
   }
+  if (merged.playlists.length > 0) {
+    const preferencePath = await readOptional(join(directory, 'neworder.pref')) !== null
+      ? join(directory, 'neworder.pref') : await readOptional(join(directory, 'Neworder.pref')) !== null
+        ? join(directory, 'Neworder.pref') : join(directory, 'neworder.pref');
+    const before = await readOptional(preferencePath);
+    const otherLines = before === null ? [] : new TextDecoder('utf-16be').decode(before).split(/\r?\n/)
+      .filter((line) => line && !line.startsWith('[crate]'));
+    const after = Buffer.from([...otherLines, ...merged.playlists.map((playlist) =>
+      `[crate]${crateFilename(playlist.path).slice(0, -6)}`)].join('\r\n') + '\r\n', 'utf16le').swap16();
+    updates.set(preferencePath, { before, after });
+  }
   for (const [path, { before, after }] of updates) if (after !== null && before?.equals(after)) updates.delete(path);
   if (updates.size === 0) return { trackCount: merged.tracks.length, playlistCount: merged.playlists.length, backupPaths: [] };
 
@@ -373,7 +467,7 @@ export const writeSeratoLegacy = async (
       await writeFile(temporary, after, { flag: 'wx', ...(mode === undefined ? {} : { mode }) });
       staged.push(temporary);
     }
-    if (JSON.stringify(await crateNames(native.subcrates)) !== JSON.stringify(native.names)) throw new Error('Serato crates changed during sync. Close Serato and retry.');
+    if (JSON.stringify(await crateNames(native.subcrates)) !== JSON.stringify([...native.names].sort())) throw new Error('Serato crates changed during sync. Close Serato and retry.');
     if (options.replacePlaylists && JSON.stringify(await crateNames(smartDirectory, '.scrate')) !== JSON.stringify(smartNames)) throw new Error('Serato smart crates changed during sync. Close Serato and retry.');
     for (const file of [native.database, ...native.crates]) {
       const current = await readOptional(file.path);

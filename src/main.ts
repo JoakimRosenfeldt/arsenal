@@ -253,6 +253,16 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
     }
     return { kind: 'remove-playlist', revision: value.revision, playlistId: value.playlistId };
   }
+  if (value.kind === 'move-playlist-node') {
+    const validPath = (path: unknown): path is string[] => Array.isArray(path) && path.length <= 32 &&
+      path.every((part) => typeof part === 'string' && part.length > 0 && part.length <= 100);
+    if (typeof value.revision !== 'string' || !validPath(value.sourcePath) || value.sourcePath.length === 0 ||
+      !validPath(value.parentPath) || (value.beforePath !== null && !validPath(value.beforePath))) {
+      throw new Error('Invalid playlist move');
+    }
+    return { kind: 'move-playlist-node', revision: value.revision, sourcePath: value.sourcePath,
+      parentPath: value.parentPath, beforePath: value.beforePath };
+  }
   throw new Error('Invalid library mutation');
 };
 

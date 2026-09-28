@@ -87,6 +87,8 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
     'Could not save this playlist. Check its name, tracks, and rules.',
   'name-conflict': 'A playlist or folder with this name already exists here. Choose another name.',
   'folder-not-found': 'The destination folder no longer exists. Choose another folder.',
+  'playlist-sync-needed': 'This playlist move cannot be saved in every connected library. Sync playlists first.',
+  'serato-open': 'Close Serato before moving playlists and folders.',
   'cannot-write':
     'Could not save the library. Check the file permissions and try again.',
   unexpected:
@@ -524,6 +526,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       setFeedback(
         result.kind === 'songs-removed'
           ? feedbackForRemoval(result)
+          : result.kind === 'playlist-node-moved'
+            ? { tone: result.warning ? 'warning' : 'success', message: result.warning ?? 'Playlist or folder moved.' }
           : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : result.kind === 'playlist-updated' ? 'Playlist saved.' : result.kind === 'playlist-removed' ? 'Playlist removed.' : 'Playlist created.' },
       );
       if (result.kind === 'playlist-created' || result.kind === 'smart-playlist-saved' || result.kind === 'playlist-updated') {
@@ -534,6 +538,15 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         setEditor(null);
       } else if (result.kind === 'playlist-removed') {
         setSelectedPlaylistId(null);
+      } else if (result.kind === 'playlist-node-moved') {
+        const selected = playlists?.find((playlist) => playlist.id === selectedPlaylistId);
+        if (selected) {
+          const path = [...selected.folderPath, selected.name];
+          const moved = JSON.stringify(path.slice(0, result.sourcePath.length)) === JSON.stringify(result.sourcePath);
+          const wanted = moved ? [...result.destinationPath, ...path.slice(result.sourcePath.length)] : path;
+          setSelectedPlaylistId(tree.playlists.find((playlist) =>
+            JSON.stringify([...playlist.folderPath, playlist.name]) === JSON.stringify(wanted))?.id ?? null);
+        }
       }
       return true;
     } catch {
@@ -546,6 +559,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
 
   const applyMutation = (changeFor: (revision: string) => LibraryMutation): Promise<boolean> =>
     applyOperation(() => window.djLibrary.mutate(changeFor(libraryVersion)));
+
+  const movePlaylistNode = (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null): Promise<boolean> =>
+    applyMutation((revision) => ({ kind: 'move-playlist-node', revision, sourcePath, parentPath, beforePath }));
 
   const openPlaylistEditor = (request: PlaylistWindowRequest, initialName = ''): void => {
     const loadEditor = async (): Promise<void> => {
@@ -824,6 +840,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         duplicateCount={duplicateCount}
         folders={folders}
         onMenu={(parentFolderId, playlistId) => void openPlaylistMenu(parentFolderId, playlistId)}
+        onMove={movePlaylistNode}
         hasLibrary={view !== null}
         libraryId={connections?.activeConnectionId ?? null}
         onNavigate={navigate}
