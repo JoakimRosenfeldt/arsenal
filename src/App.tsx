@@ -204,6 +204,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<LibraryView | null>(null);
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
+  const startupChecked = useRef(false);
+  const [startupSyncResult, setStartupSyncResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
   const [folders, setFolders] = useState<readonly PlaylistFolder[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -252,6 +254,24 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
 
     const loadInitialState = async (): Promise<void> => {
       try {
+        if (!playlistWindow && !startupChecked.current) {
+          try {
+            const startup = await window.djLibrary.checkStartupChanges();
+            if (!active) return;
+            const syncResult = startup.syncResult?.kind === 'cancelled' ? null : startup.syncResult;
+            setStartupSyncResult(syncResult);
+            if (startup.message !== null || startup.warnings.length > 0) {
+              setFeedback({ tone: startup.warnings.length ? 'warning' : 'success',
+                message: [startup.message, ...startup.warnings].filter(Boolean).join(' ') });
+            }
+            if (syncResult !== null || startup.warnings.length > 0) setActivePage('connections');
+          } catch (cause) {
+            if (!active) return;
+            setFeedback({ tone: 'warning', message: `Could not check for changed libraries. ${cause instanceof Error ? cause.message : 'Try reopening Arsenal.'}` });
+            setActivePage('connections');
+          }
+          startupChecked.current = true;
+        }
         const [status, settings, connected] = await Promise.all([
           window.djLibrary.status(), window.preferences.library(),
           playlistWindow ? Promise.resolve(null) : window.djLibrary.connections(),
@@ -444,6 +464,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   ): Promise<LibraryConnectionResult> => {
     if (busy) return { kind: 'cancelled' };
     setBusy(true);
+    setStartupSyncResult(null);
     searchSequence.current += 1;
     setSearching(false);
     setQuery(viewQuery);
@@ -487,6 +508,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const runSync = async (operation: () => Promise<SyncResult>): Promise<SyncResult> => {
     if (busy) return { kind: 'cancelled' };
     setBusy(true);
+    setStartupSyncResult(null);
     searchSequence.current += 1;
     setSearching(false);
     setError(null);
@@ -787,6 +809,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     switch (activePage) {
       case 'connections':
         return <LibraryConnectionsPage busy={busy} state={connections}
+          initialSyncResult={startupSyncResult}
           onImportBackup={() => manageConnection(() => window.djLibrary.importBackup())}
           onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind))}
           onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open')}

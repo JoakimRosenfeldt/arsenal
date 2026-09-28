@@ -369,6 +369,13 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     return library.backupStatus();
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.checkStartupChanges, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Check changed libraries from the library window');
+    libraryActions += 1;
+    try { return await library.checkStartupChanges(owner); } finally { libraryActions -= 1; }
+  });
+
   ipc.handle(DJ_LIBRARY_CHANNELS.configureBackup, async (event, includeMusic: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Manage backups from the library window');

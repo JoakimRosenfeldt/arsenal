@@ -22,11 +22,12 @@ const libraryKinds = [
   { kind: 'serato', label: 'Serato library', key: 'seratoPath' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string; key: 'rekordboxPath' | 'seratoPath' }[];
 
-export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissing }: Readonly<{
+export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissing, initialResult = null }: Readonly<{
   busy: boolean;
   connections: LibraryConnections | null;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
+  initialResult?: Exclude<SyncResult, { kind: 'cancelled' }> | null;
 }>): JSX.Element => {
   const resultRef = useRef<HTMLElement>(null);
   const removalRef = useRef<HTMLDivElement>(null);
@@ -40,7 +41,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const [fields, setFields] = useState<SyncFields>({
     tracks: true, metadata: true, playlists: true, hotCues: true, loops: true, beatgrids: true,
   });
-  const [result, setResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
+  const [result, setResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(initialResult);
   const [repairError, setRepairError] = useState<string | null>(null);
   const [selectedPaths, setSelectedPaths] = useState<readonly string[]>([]);
   const [removePaths, setRemovePaths] = useState<readonly string[]>([]);

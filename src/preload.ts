@@ -17,6 +17,7 @@ import {
 const api: DjLibraryApi = Object.freeze({
   status: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.status),
   connections: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.connections),
+  checkStartupChanges: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.checkStartupChanges),
   backupStatus: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.backupStatus),
   configureBackup: (includeMusic) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.configureBackup, includeMusic),
   backupNow: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.backupNow),

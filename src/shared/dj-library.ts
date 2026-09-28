@@ -5,6 +5,7 @@ import type { BackupStatus } from './library-backup';
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   connections: 'dj-library:connections',
+  checkStartupChanges: 'dj-library:check-startup-changes',
   backupStatus: 'dj-library:backup-status',
   configureBackup: 'dj-library:configure-backup',
   backupNow: 'dj-library:backup-now',
@@ -226,6 +227,14 @@ export type LibraryConnectionResult =
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{ kind: 'rejected'; message: string }>
   | Readonly<{ kind: 'updated'; connections: LibraryConnections; status: LibraryStatus; warnings: readonly string[] }>;
+
+export type LibraryStartupResult = Readonly<{
+  connections: LibraryConnections;
+  status: LibraryStatus;
+  message: string | null;
+  warnings: readonly string[];
+  syncResult: SyncResult | null;
+}>;
 
 export type ImportFailure =
   | 'cannot-read'
@@ -473,6 +482,7 @@ export type LibraryMutationResult =
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   connections(): Promise<LibraryConnections>;
+  checkStartupChanges(): Promise<LibraryStartupResult>;
   backupStatus(): Promise<BackupStatus>;
   configureBackup(includeMusic: boolean): Promise<BackupStatus | null>;
   backupNow(): Promise<BackupStatus>;

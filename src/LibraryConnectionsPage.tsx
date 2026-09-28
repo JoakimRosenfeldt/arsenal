@@ -10,7 +10,7 @@ const libraryKinds = [
   { kind: 'serato', label: 'Serato library' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string }[];
 
-export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSync, onResolveMissing, onImportBackup }: Readonly<{
+export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSync, onResolveMissing, onImportBackup, initialSyncResult }: Readonly<{
   busy: boolean;
   state: LibraryConnections | null;
   onConnect: (kind: LibrarySourceKind) => Promise<LibraryConnectionResult>;
@@ -18,6 +18,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
   onSync: (request: SyncRequest) => Promise<SyncResult>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
   onImportBackup: () => Promise<LibraryConnectionResult>;
+  initialSyncResult?: Exclude<SyncResult, { kind: 'cancelled' }> | null;
 }>): JSX.Element => {
   const [pending, setPending] = useState<string | null>(null);
   const [removing, setRemoving] = useState<LibraryConnection | null>(null);
@@ -110,7 +111,8 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
         <LibraryBackupSettings busy={working} connectionId={state?.activeConnectionId ?? null}
           connectionName={connections.find((connection) => connection.id === state?.activeConnectionId)?.name ?? null}
           onBusy={setPending} onImport={() => run(onImportBackup, 'Importing backup…')} />
-        <SyncLibrarySettings busy={working} connections={state} onSync={onSync} onResolveMissing={onResolveMissing} />
+        <SyncLibrarySettings busy={working} connections={state} onSync={onSync} onResolveMissing={onResolveMissing}
+          initialResult={initialSyncResult ?? null} />
       </div>
 
       {removing !== null && <dialog className="tracklist-export-dialog library-connection-remove-dialog" ref={removeDialogRef}

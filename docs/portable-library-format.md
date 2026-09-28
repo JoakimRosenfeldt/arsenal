@@ -19,6 +19,16 @@ Arsenal remembers the backup folder and music option for each connection. It che
 
 Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Stopping automatic backup keeps the files already saved.
 
+## Changes between sessions
+
+When Arsenal opens, it checks every connected library for changes since its last accepted import or save. Existing connections without a saved comparison establish one on their first launch after this feature is installed.
+
+For imported backups, Arsenal remembers the source snapshot and music search folders. It checks that source folder for newer snapshots of the same library. Startup checks read library data and file information; music fingerprints are verified during import. Backups imported before source tracking was available need to be imported again to enable these checks.
+
+Arsenal lists changed libraries and asks before importing them. Approval also runs the saved sync settings when a changed library belongs to the selected sync pair. Other changed libraries are imported without syncing. If no sync pair is configured, Arsenal only imports the changes. Choosing **Not now** leaves the changes pending for the next launch.
+
+If an imported library or Serato workspace also has unsynced local edits, Arsenal asks which version to keep. Importing the external version saves a backup of the local XML first. Keeping local edits, an unavailable source, or an import failure defers automatic sync. Missing music uses the existing import and sync recovery flow.
+
 ## Document
 
 An empty library is valid:
