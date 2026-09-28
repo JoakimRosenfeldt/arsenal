@@ -10,6 +10,15 @@ const COLLAPSED_FOLDERS_KEY = 'arsenal.collapsedPlaylistFolders';
 const pathKey = (path: readonly string[]): string => JSON.stringify(path);
 type DropPlacement = 'before' | 'inside' | 'after';
 
+const moveCollapsedPath = (saved: string, from: readonly string[], to: readonly string[]): string => {
+  try {
+    const path: unknown = JSON.parse(saved);
+    return Array.isArray(path) && path.every((part) => typeof part === 'string') &&
+      pathKey(path.slice(0, from.length)) === pathKey(from)
+      ? pathKey([...to, ...path.slice(from.length)]) : saved;
+  } catch { return saved; }
+};
+
 const savedCollapsedFolders = (libraryId: string | null): ReadonlySet<string> => {
   if (libraryId === null) return new Set();
   try {
@@ -342,17 +351,18 @@ export const CueboxSidebar = ({
   };
 
   const moveNode = async (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null): Promise<boolean> => {
+    const name = sourcePath.at(-1);
+    if (name === undefined) return false;
+    const destinationPath = [...parentPath, name];
+    const folder = folders.find((candidate) => pathKey(candidate.folderPath) === pathKey(sourcePath));
+    const migrate = folder !== undefined && ![...folders, ...(playlists ?? [])].some((candidate) =>
+      candidate.id !== folder.id && pathKey('tracks' in candidate
+        ? [...candidate.folderPath, candidate.name] : candidate.folderPath) === pathKey(destinationPath));
+    if (migrate) setCollapsedFolderPaths((current) =>
+      new Set([...current].map((saved) => moveCollapsedPath(saved, sourcePath, destinationPath))));
     const moved = await onMove(sourcePath, parentPath, beforePath);
-    if (moved && folders.some((folder) => pathKey(folder.folderPath) === pathKey(sourcePath))) {
-      const destinationPath = [...parentPath, sourcePath.at(-1)!];
-      setCollapsedFolderPaths((current) => new Set([...current].map((saved) => {
-        try {
-          const path: unknown = JSON.parse(saved);
-          return Array.isArray(path) && pathKey(path.slice(0, sourcePath.length)) === pathKey(sourcePath)
-            ? pathKey([...destinationPath, ...path.slice(sourcePath.length)]) : saved;
-        } catch { return saved; }
-      })));
-    }
+    if (!moved && migrate) setCollapsedFolderPaths((current) =>
+      new Set([...current].map((saved) => moveCollapsedPath(saved, destinationPath, sourcePath))));
     return moved;
   };
 

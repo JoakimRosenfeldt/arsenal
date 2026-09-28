@@ -120,10 +120,64 @@ const feedbackForRemoval = (
   };
 };
 
-const loadPlaylistTree = async (): Promise<Readonly<{
+type PlaylistTree = Readonly<{
   playlists: readonly RekordboxPlaylist[];
   folders: readonly PlaylistFolder[];
-}>> => {
+}>;
+
+const playlistPath = (node: RekordboxPlaylist | PlaylistFolder): readonly string[] =>
+  'tracks' in node ? [...node.folderPath, node.name] : node.folderPath;
+
+const movePlaylistTree = (
+  tree: PlaylistTree,
+  sourcePath: readonly string[],
+  parentPath: readonly string[],
+  beforePath: readonly string[] | null,
+): PlaylistTree | null => {
+  const key = (path: readonly string[]): string => JSON.stringify(path);
+  const moved = [...tree.folders, ...tree.playlists].filter((node) => key(playlistPath(node)) === key(sourcePath));
+  const node = moved[0];
+  const parent = parentPath.length === 0 ? null : tree.folders.find((folder) => key(folder.folderPath) === key(parentPath));
+  const parentId = parent?.id ?? null;
+  const name = sourcePath.at(-1);
+  if (moved.length !== 1 || node === undefined || name === undefined || (parentPath.length > 0 && parent === undefined) ||
+    (beforePath !== null && ![...tree.folders, ...tree.playlists].some((candidate) =>
+      candidate.id !== node.id && candidate.parentFolderId === parentId && key(playlistPath(candidate)) === key(beforePath))) ||
+    (!('tracks' in node) && key(parentPath.slice(0, sourcePath.length)) === key(sourcePath)) ||
+    [...tree.folders, ...tree.playlists].some((candidate) => candidate.id !== node.id &&
+      candidate.parentFolderId === parentId && candidate.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+    return null;
+  }
+  const destinationPath = [...parentPath, name];
+  const movedFolder = 'tracks' in node ? null : node;
+  const inMovedFolder = (path: readonly string[]): boolean => movedFolder !== null &&
+    key(path.slice(0, sourcePath.length)) === key(sourcePath);
+  const folders = tree.folders.map((folder) => ({ ...folder,
+    folderPath: inMovedFolder(folder.folderPath)
+      ? [...destinationPath, ...folder.folderPath.slice(sourcePath.length)] : folder.folderPath,
+    parentFolderId: folder.id === movedFolder?.id ? parentId : folder.parentFolderId,
+  }));
+  const playlists = tree.playlists.map((playlist) => ({ ...playlist,
+    folderPath: playlist.id === node.id ? parentPath : inMovedFolder(playlist.folderPath)
+      ? [...destinationPath, ...playlist.folderPath.slice(sourcePath.length)] : playlist.folderPath,
+    parentFolderId: playlist.id === node.id ? parentId : playlist.parentFolderId,
+  }));
+  const siblings = [...folders, ...playlists].filter((candidate) =>
+    candidate.parentFolderId === parentId && candidate.id !== node.id).sort((left, right) => left.order - right.order);
+  const position = beforePath === null ? siblings.length : siblings.findIndex((candidate) => key(playlistPath(candidate)) === key(beforePath));
+  if (position < 0) return null;
+  const reordered = [...siblings];
+  const updated = [...folders, ...playlists].find((candidate) => candidate.id === node.id);
+  if (updated === undefined) return null;
+  reordered.splice(position, 0, updated);
+  const order = new Map(reordered.map((candidate, index) => [candidate.id, index]));
+  return {
+    folders: folders.map((folder) => ({ ...folder, order: order.get(folder.id) ?? folder.order })),
+    playlists: playlists.map((playlist) => ({ ...playlist, order: order.get(playlist.id) ?? playlist.order })),
+  };
+};
+
+const loadPlaylistTree = async (): Promise<PlaylistTree> => {
   const [playlists, folders, order] = await Promise.all([
     window.djLibrary.listPlaylists(),
     window.djLibrary.listFolders(),
@@ -496,6 +550,24 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         return true;
       }
 
+      if (result.kind === 'playlist-node-moved') {
+        const tree = await loadPlaylistTree();
+        setView((current) => current === null ? null : { ...current, library: result.library });
+        setPlaylists(tree.playlists);
+        setFolders(tree.folders);
+        if (result.warning) setFeedback({ tone: 'warning', message: result.warning });
+        setSelectedPlaylistId((current) => {
+          const selected = playlists?.find((playlist) => playlist.id === current);
+          if (!selected) return null;
+          const path = [...selected.folderPath, selected.name];
+          const moved = JSON.stringify(path.slice(0, result.sourcePath.length)) === JSON.stringify(result.sourcePath);
+          const wanted = moved ? [...result.destinationPath, ...path.slice(result.sourcePath.length)] : path;
+          return tree.playlists.find((playlist) =>
+            JSON.stringify([...playlist.folderPath, playlist.name]) === JSON.stringify(wanted))?.id ?? null;
+        });
+        return true;
+      }
+
       searchSequence.current += 1;
       setSearching(false);
       const maxOffset = Math.max(
@@ -523,13 +595,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         libraryVersion: result.library.revision,
         scan,
       });
-      setFeedback(
-        result.kind === 'songs-removed'
+      setFeedback(result.kind === 'songs-removed'
           ? feedbackForRemoval(result)
-          : result.kind === 'playlist-node-moved'
-            ? { tone: result.warning ? 'warning' : 'success', message: result.warning ?? 'Playlist or folder moved.' }
-          : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : result.kind === 'playlist-updated' ? 'Playlist saved.' : result.kind === 'playlist-removed' ? 'Playlist removed.' : 'Playlist created.' },
-      );
+          : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : result.kind === 'playlist-updated' ? 'Playlist saved.' : result.kind === 'playlist-removed' ? 'Playlist removed.' : 'Playlist created.' });
       if (result.kind === 'playlist-created' || result.kind === 'smart-playlist-saved' || result.kind === 'playlist-updated') {
         setEditor(null);
         setSelectedPlaylistId(result.playlistId);
@@ -538,15 +606,6 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         setEditor(null);
       } else if (result.kind === 'playlist-removed') {
         setSelectedPlaylistId(null);
-      } else if (result.kind === 'playlist-node-moved') {
-        const selected = playlists?.find((playlist) => playlist.id === selectedPlaylistId);
-        if (selected) {
-          const path = [...selected.folderPath, selected.name];
-          const moved = JSON.stringify(path.slice(0, result.sourcePath.length)) === JSON.stringify(result.sourcePath);
-          const wanted = moved ? [...result.destinationPath, ...path.slice(result.sourcePath.length)] : path;
-          setSelectedPlaylistId(tree.playlists.find((playlist) =>
-            JSON.stringify([...playlist.folderPath, playlist.name]) === JSON.stringify(wanted))?.id ?? null);
-        }
       }
       return true;
     } catch {
@@ -560,8 +619,20 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const applyMutation = (changeFor: (revision: string) => LibraryMutation): Promise<boolean> =>
     applyOperation(() => window.djLibrary.mutate(changeFor(libraryVersion)));
 
-  const movePlaylistNode = (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null): Promise<boolean> =>
-    applyMutation((revision) => ({ kind: 'move-playlist-node', revision, sourcePath, parentPath, beforePath }));
+  const movePlaylistNode = async (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null): Promise<boolean> => {
+    if (busy || view === null || playlists === null) return false;
+    const optimistic = movePlaylistTree({ playlists, folders }, sourcePath, parentPath, beforePath);
+    if (optimistic !== null) {
+      setPlaylists(optimistic.playlists);
+      setFolders(optimistic.folders);
+    }
+    const saved = await applyMutation((revision) => ({ kind: 'move-playlist-node', revision, sourcePath, parentPath, beforePath }));
+    if (!saved && optimistic !== null) {
+      setPlaylists(playlists);
+      setFolders(folders);
+    }
+    return saved;
+  };
 
   const openPlaylistEditor = (request: PlaylistWindowRequest, initialName = ''): void => {
     const loadEditor = async (): Promise<void> => {
