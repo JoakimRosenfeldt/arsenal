@@ -399,7 +399,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   useEffect(() => {
     let active = true;
     let receivedActivity = false;
-    const attentionMessage = 'Ongoing sync needs attention. Open Connections to review it. Edits still save to the primary library.';
+    const attentionMessage = 'Ongoing sync needs attention. Open Connections to review it. Edits still save to your Arsenal library.';
     const stopActivity = window.djLibrary.onSyncActivity((activity) => {
       receivedActivity = true;
       setBackgroundSyncing(activity.state === 'syncing');

@@ -1,6 +1,31 @@
-# Portable DJ library format
+# Arsenal library and backup formats
 
-Arsenal saves a library as UTF-8 JSON with optional music files. The format does not require a DJ application or its database. Each JSON file is a complete snapshot. Files use `format: "dj-library"` and `version: 1`.
+## Local library
+
+Arsenal owns its primary library in `libraries/arsenal.json` inside the application's data directory. It remains available when DJ connections are disconnected or unavailable. The local document uses UTF-8 JSON:
+
+```json
+{
+	"format": "arsenal-library",
+	"version": 1,
+	"library": {
+		"tracks": [],
+		"playlists": []
+	}
+}
+```
+
+Tracks store their entry path, optional separate media location, metadata, and performance data. Playlists store their path, kind, ordered track references, and smart rules. Arsenal smart definitions are saved directly, including nested rules, sorting, and limits. Temporary artwork and playback URLs are excluded.
+
+Local saves validate the model and atomically replace the JSON file after flushing it to disk. They do not hash, copy, or search music files. Invalid documents and unsupported versions produce an error without resetting the library. The local JSON limit is 128 MiB.
+
+The first launch with this storage migrates the previous primary library once. Subsequent launches read Arsenal's JSON. A failed migration keeps the original files. `libraries/arsenal.xml` is a disposable adapter for existing editing and display code; Arsenal recreates it from its JSON when it starts.
+
+Connections always shows Arsenal as the primary library. Importing or refreshing a DJ connection merges its collection into Arsenal while preserving existing Arsenal smart definitions. DJ libraries remain sources for import and destinations for sync. Removing a connection does not remove Arsenal's collection.
+
+## Portable backups
+
+Arsenal backs up its owned collection as UTF-8 JSON with optional music files. The backup format does not require a DJ application or its database. Each JSON file is a complete snapshot with `format: "dj-library"` and `version: 1`.
 
 A backup directory contains immutable snapshots and a shared music folder:
 
@@ -15,33 +40,33 @@ My library/
 
 Each snapshot references music relative to its own directory. Copying the entire backup directory preserves those references. Cloud services can synchronize the directory as ordinary files. JSON snapshots are published after their music copies finish. Previous snapshots and music files remain available.
 
-Opening a backup folder selects its newest snapshot and opens the restored library in Arsenal. A snapshot file can also be opened directly. Arsenal rejects an unreadable newest snapshot instead of silently restoring an older one. Bundled music needs no manual relinking.
+Opening a backup folder selects its newest snapshot and imports the collection into Arsenal's own library. A snapshot file can also be opened directly. Arsenal rejects an unreadable newest snapshot instead of silently restoring an older one. Bundled music needs no manual relinking.
 
 Importing bundled music creates local working copies so syncing audio tags cannot change the backup files. Arsenal uses independent copy-on-write clones where the filesystem supports them and verifies each new working copy. Initial transfer and verification time depends on the collection size and storage speed. Each connected library reuses its working copies when importing newer snapshots. Existing copies keep their local tag edits. Libraries imported before this protection may need to be imported again before syncing music metadata or performance data.
 
-Backup folders appear as connections alongside DJ libraries. Every folder backs up the primary collection, which receives all edits made in Arsenal, as an app-independent Arsenal library. Folder settings do not select a DJ application or source connection. Changing the primary library changes the collection saved to all connected folders. Each folder keeps its own music option, and new connections include music by default.
+Backup folders appear as connections alongside DJ libraries. Every folder backs up Arsenal's own collection automatically. Folder settings do not select a DJ application or source connection. Each folder keeps its own music option, and new connections include music by default.
 
-Arsenal checks for backup changes after library operations and every 30 seconds while it is open. Unchanged libraries reuse the previous snapshot. Each folder connection creates a separate output directory, so different computers do not overwrite one another's snapshots. Existing output directories and snapshots survive migration. Imports are explicit and create separate local libraries.
+Arsenal checks for backup changes after library operations and every 30 seconds while it is open. Unchanged libraries reuse the previous snapshot. Each folder connection creates a separate output directory, so different computers do not overwrite one another's snapshots. Existing output directories and snapshots survive migration. Imports are explicit and remember their source for later updates.
 
-Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Disconnecting a folder stops automatic backups and keeps the files already saved. If no primary library is available, Arsenal reports the problem and keeps the existing snapshots.
+Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Disconnecting a folder stops automatic backups and keeps the files already saved. Backup failures keep existing snapshots and appear on the folder connection.
 
 ## Changes between sessions
 
-When Arsenal opens, it checks every connected library for changes since its last accepted import or save. Existing connections without a saved comparison establish one on their first launch after this feature is installed.
+When Arsenal opens, it checks connected DJ libraries and imported backup sources for changes since their last accepted import or save. Existing connections without a saved comparison establish one on their first launch after this feature is installed.
 
 For imported backups, Arsenal remembers the source snapshot and music search folders. It checks that source folder for newer snapshots of the same library. Startup checks read library data and file information; music fingerprints are verified during import. Backups imported before source tracking was available need to be imported again to enable these checks.
 
-Arsenal lists changed libraries and asks before importing them. Approval also runs the saved sync settings when a changed library belongs to the selected sync pair. Other changed libraries are imported without syncing. If no sync pair is configured, Arsenal only imports the changes. Choosing **Not now** leaves the changes pending for the next launch.
+Arsenal lists changed libraries and asks before importing them into its collection. Approval also runs the saved sync settings when destinations are configured and available. Otherwise, Arsenal only imports the changes. Choosing **Not now** leaves the changes pending for the next launch.
 
 If an imported library or Serato workspace also has unsynced local edits, Arsenal asks which version to keep. Importing the external version saves a backup of the local XML first. Keeping local edits, an unavailable source, or an import failure defers automatic sync. Missing music uses the existing import and sync recovery flow.
 
 ## Ongoing sync and app edits
 
-Connections offers **Ongoing** and **One time** sync. Ongoing sync runs when you start it and after library edits made in Arsenal. The selected direction and categories apply to each run. One-time sync runs once and stops any ongoing sync. **Stop ongoing sync** stops future runs. Arsenal remembers this choice across launches and still asks before importing changes found at startup.
+Connections offers **Ongoing** and **One time** sync. Ongoing sync runs when you start it and after library edits made in Arsenal. The selected destinations and categories apply to each run. One-time sync runs once and stops any ongoing sync. **Stop ongoing sync** stops future runs. Arsenal remembers this choice across launches and still asks before importing changes found at startup.
 
-Library edits made in Arsenal always update the primary library, including when another library is open or ongoing sync is off. Edits update the affected tracks and playlists without replacing unrelated primary entries. If the primary cannot be written, Arsenal rejects the edit and explains why. Serato must be closed before Arsenal can write its native library.
+Library edits always save to Arsenal's JSON first, including when ongoing sync is off. A failed local save rejects the edit. DJ connections are optional, so an unavailable destination does not prevent local editing. Serato must be closed before Arsenal can write its native library.
 
-When ongoing sync is active, app edits also update the selected destination for the enabled categories. If that destination cannot be updated, the primary edit stays saved and ongoing sync pauses. Review the message on Connections before resuming. Merge combines the libraries and may retain entries missing from one side; overwrite applies the selected source to its destination.
+When ongoing sync is active, app edits also update the selected destinations for the enabled categories. If a destination cannot be updated, the Arsenal edit stays saved and ongoing sync pauses. Review the message on Connections before resuming. Merge may retain destination entries that are absent from Arsenal; overwrite replaces the selected categories with Arsenal's collection.
 
 ## Document
 

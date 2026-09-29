@@ -6,7 +6,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { SONG_SOURCE_LABELS, type SongRow } from '../shared/dj-library';
 import { readSmartDefinition } from '../shared/smart-playlists';
 import {
-  normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary,
+  normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncPlaylist,
   type SyncLoop, type SyncPerformance, type SyncSmartRules,
 } from './library-sync-model';
 
@@ -25,7 +25,7 @@ export type PortableLibraryManifest = Readonly<{
   tracks: readonly PortableTrack[]; playlists: readonly PortablePlaylist[];
 }>;
 
-const invalid = (field: string): never => { throw new Error(`Invalid portable library: ${field}.`); };
+const invalid = (field: string): never => { throw new Error(`Invalid library data: ${field}.`); };
 const record = (value: unknown, field: string): Record<string, unknown> => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return invalid(field);
   return value as Record<string, unknown>;
@@ -136,6 +136,45 @@ const readSmart = (value: unknown): SyncSmartRules => {
     conditions: array(rules.conditions, 'rule conditions', 10000).map((value) =>
       Object.fromEntries(Object.entries(record(value, 'rule condition')).map(([key, value]) => [text(key, 'rule property'), text(value, 'rule value')]))),
   } };
+};
+
+export const readLibraryModel = (value: unknown): SyncLibrary => {
+  const raw = record(value, 'library');
+  const paths = new Set<string>();
+  const ids = new Set<string>();
+  const tracks = array(raw.tracks, 'tracks').map((value) => {
+    const track = record(value, 'track');
+    const path = nonempty(track.path, 'track path');
+    const key = normalizePath(path);
+    if (paths.has(key)) return invalid('duplicate track path');
+    paths.add(key);
+    const song = record(track.song, 'track metadata');
+    const id = nonempty(song.id, 'track ID');
+    if (ids.has(id)) return invalid('duplicate track ID');
+    ids.add(id);
+    return { path, ...(track.location === undefined ? {} : { location: nonempty(track.location, 'track location') }),
+      song: { ...readMetadata(song), id, artworkUrl: null, audioUrl: null },
+      ...(track.performance === undefined ? {} : { performance: readPerformance(track.performance) }) };
+  });
+  const playlistPaths = new Set<string>();
+  const playlists = array(raw.playlists, 'playlists', 100000).map((value): SyncPlaylist => {
+    const playlist = record(value, 'playlist');
+    const path = array(playlist.path, 'playlist path', 100).map((value) => nonempty(value, 'playlist name'));
+    if (!path.length) return invalid('playlist path');
+    const key = JSON.stringify(path);
+    if (playlistPaths.has(key)) return invalid('duplicate playlist path');
+    playlistPaths.add(key);
+    const kind = playlist.kind;
+    if (kind !== undefined && kind !== 'folder' && kind !== 'playlist' && kind !== 'smart') return invalid('playlist kind');
+    const smart = playlist.smart === undefined ? undefined : readSmart(playlist.smart);
+    if (kind === 'smart' && smart === undefined || kind !== undefined && kind !== 'smart' && smart !== undefined) return invalid('smart playlist kind');
+    const trackPaths = array(playlist.trackPaths, 'playlist tracks').map((value) => {
+      const path = nonempty(value, 'playlist track path');
+      return paths.has(normalizePath(path)) ? path : invalid('unknown playlist track path');
+    });
+    return { path, trackPaths, ...(kind === undefined ? {} : { kind }), ...(smart === undefined ? {} : { smart }) };
+  });
+  return { tracks, playlists };
 };
 
 const readManifest = (value: unknown): PortableLibraryManifest => {

@@ -6,6 +6,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  dialog,
   Menu,
   type IpcMainInvokeEvent,
   net,
@@ -984,9 +985,14 @@ const openPreferences = (updates: AppUpdates): void => {
 void app.whenReady().then(async () => {
   app.dock?.setIcon(APP_ICON_PATH);
   await openRouter.initialize(join(app.getPath('userData'), 'ai-settings.json'));
-  await library.initialize(
-    join(app.getPath('userData'), 'last-library.json'),
-  );
+  try {
+    await library.initialize(join(app.getPath('userData'), 'last-library.json'));
+  } catch (error) {
+    dialog.showErrorBox('Could not open the Arsenal library',
+      `${error instanceof Error ? error.message : 'The saved library could not be read.'}\n\nYour library files have been kept. Resolve the error and reopen Arsenal.`);
+    app.quit();
+    return;
+  }
   library.onSyncActivity = (activity) => {
     for (const window of BrowserWindow.getAllWindows()) {
       window.webContents.send(DJ_LIBRARY_CHANNELS.syncActivityChanged, activity);

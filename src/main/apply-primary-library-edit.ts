@@ -173,7 +173,9 @@ export const preparePrimaryLibraryEdit = async ({ sourcePath, expectedFingerprin
     if (native === null || nativeBefore === null) {
       return async () => { await saveLibraryXml(primary.path, targetXml, targetBefore); };
     }
-    const after = rekordboxSyncLibrary(target, { includeNonLocal: true });
+    const edited = rekordboxSyncLibrary(target, { includeNonLocal: true });
+    const after: SyncLibrary = { ...edited, playlists: edited.playlists.map((playlist) => playlist.smart?.kind === 'arsenal'
+      ? { path: playlist.path, kind: 'playlist', trackPaths: playlist.trackPaths } : playlist) };
     const comparePlaylist = (playlist: SyncPlaylist) => JSON.stringify({ path: playlist.path, kind: playlist.kind ?? 'playlist',
       trackPaths: playlist.trackPaths, smart: playlist.smart });
     const beforePlaylists = new Map(nativeBefore.playlists.map((playlist) => [pathKey(playlist.path), playlist]));

@@ -154,8 +154,8 @@ const NoLibrary = ({
       <span />
       <span />
     </div>
-    <h1 id="empty-page-title">Connect your libraries</h1>
-    <p className="library-connect-description">Connect a Rekordbox XML file or a Serato library to start working with your tracks.</p>
+    <h1 id="empty-page-title">Build your Arsenal library</h1>
+    <p className="library-connect-description">Import tracks from a DJ app or open an Arsenal backup folder. Your library is saved locally in Arsenal.</p>
     <button className="accent-button" type="button" onClick={onManageLibraries} disabled={busy}>Connections</button>
     <button className="quiet-button library-empty-sync" type="button" onClick={onSync} disabled={busy}>
       <UiIcon name="refresh" size={16} /> Sync libraries
@@ -310,8 +310,7 @@ export const LibraryPage = ({
       </header>
 
       <p className="library-source-note">
-        {view.library.sourceKind === 'serato' ? 'Serato' : 'Rekordbox XML'} · {view.library.sourceName}
-        {view.library.sourceKind === 'serato' && <span> Edits stay in Arsenal until you sync.</span>}
+        {view.library.sourceName} · Saved locally in Arsenal
       </p>
 
       <div className="library-tools">

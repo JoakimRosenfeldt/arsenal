@@ -2,6 +2,8 @@ import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSug
 import type { SmartPlaylistDefinition } from './smart-playlists';
 import type { BackupConfiguration, BackupConnection } from './library-backup';
 
+export const ARSENAL_LIBRARY_ID = 'arsenal';
+
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   connections: 'dj-library:connections',
@@ -213,7 +215,7 @@ export type LibraryConnection = Readonly<{
   name: string;
   path: string;
   available: boolean;
-  origin?: 'portable';
+  origin?: 'portable' | 'arsenal';
 }>;
 
 export type LibraryConnections = Readonly<{
