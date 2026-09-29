@@ -53,7 +53,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
   const connectionCard = (connection: LibraryConnection, label: string): JSX.Element => {
     return (
       <section key={connection.id} className="library-connection-card"
-        aria-label={`${connection.origin === 'portable' ? 'Portable library' : label}: ${connection.name}`}>
+        aria-label={`${connection.origin === 'portable' ? 'Arsenal library' : label}: ${connection.name}`}>
         <div className="library-connection-heading">
           <h2>{connection.origin === 'portable' ? connection.name : label}</h2>
           <span className={`library-connection-status${connection.available ? ' is-connected' : ' is-unavailable'}`}>
@@ -61,8 +61,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
             {connection.available ? 'Connected' : 'Unavailable'}
           </span>
         </div>
-        {connection.origin === 'portable' && <p className="library-connection-empty-status">Portable library</p>}
-        <p className="library-connection-path">{connection.path}</p>
+        <p className="library-connection-empty-status">{connection.origin === 'portable' ? 'Arsenal library' : connection.name}</p>
         <div className="library-connection-actions">
           <button className="quiet-button" type="button" disabled={working}
             aria-label={`Import ${connection.name} into Arsenal`}
@@ -84,8 +83,13 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
       </header>
 
       <div className="library-connections-content" aria-busy={working}>
-        <p>Arsenal saves your library locally. Connect DJ apps to import and sync, or connect a folder for automatic backups.</p>
+        <p>Connect an Arsenal library or DJ app to import and sync, or connect a folder for automatic backups.</p>
         {state === null ? <p role="status">Loading connections…</p> : <div className="library-connection-grid">
+          <button className="library-connect-button" type="button" disabled={working}
+            onClick={() => void run(() => onImportBackup('snapshot'), 'Connecting Arsenal library…')}>
+            <span><UiIcon name="plus" size={20} /> Connect Arsenal library</span>
+            <span className="library-connection-empty-status">Open an Arsenal library file</span>
+          </button>
           {libraryKinds.flatMap(({ kind, label }) => {
             const connected = connections.filter((connection) => connection.kind === kind && connection.origin === undefined);
             return connected.length === 0 ? [
@@ -96,9 +100,8 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
               </button>,
             ] : connected.map((connection) => connectionCard(connection, label));
           })}
-          {connections.filter((connection) => connection.origin === 'portable').map((connection) => connectionCard(connection, 'Portable library'))}
-          <LibraryBackupConnections busy={working} connections={state} onBusy={setPending}
-            onImport={(mode) => run(() => onImportBackup(mode), 'Opening Arsenal library…')} />
+          {connections.filter((connection) => connection.origin === 'portable').map((connection) => connectionCard(connection, 'Arsenal library'))}
+          <LibraryBackupConnections busy={working} connections={state} onBusy={setPending} />
         </div>}
 
         {pending !== null && <p className="library-connection-progress" role="status">{pending}</p>}
@@ -121,7 +124,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
           <h2 id="library-remove-title">Remove connection?</h2>
           <button className="inspector-close" type="button" onClick={() => removeDialogRef.current?.close()} aria-label="Cancel removal"><UiIcon name="close" size={16} /></button>
         </div>
-        <p className="library-connection-path">{removing.path}</p>
+        <p>{removing.name}</p>
         <p id="library-remove-description">Your Arsenal library stays saved. The connected library and music files stay on disk.</p>
         <div className="library-connection-remove-actions">
           <button className="quiet-button" type="button" autoFocus onClick={() => removeDialogRef.current?.close()}>Cancel</button>

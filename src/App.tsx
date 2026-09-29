@@ -210,6 +210,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [view, setView] = useState<LibraryView | null>(null);
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
   const startupChecked = useRef(false);
+  const initialStateLoaded = useRef(false);
   const [startupSyncResult, setStartupSyncResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
   const [folders, setFolders] = useState<readonly PlaylistFolder[]>([]);
@@ -290,6 +291,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         }
         if (status.kind === 'empty') {
           if (!playlistWindow) setActivePage('connections');
+          initialStateLoaded.current = true;
           return;
         }
 
@@ -301,6 +303,12 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           loadPlaylistTree(),
         ]);
         if (active) {
+          if (!initialStateLoaded.current && !playlistWindow && connected !== null &&
+            !connected.connections.some((connection) => connection.origin !== 'arsenal') &&
+            status.library.totalSongCount === 0 && tree.playlists.length === 0 && tree.folders.length === 0) {
+            setActivePage('connections');
+          }
+          initialStateLoaded.current = true;
           setView({ library: status.library, page });
           setPlaylists(tree.playlists);
           setFolders(tree.folders);
@@ -878,7 +886,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         return <LibraryConnectionsPage busy={busy} state={connections}
           initialSyncResult={startupSyncResult}
           onImportBackup={(mode) => manageConnection(() => window.djLibrary.importBackup(mode), true)}
-          onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind))}
+          onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind), true)}
           onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open')}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
           onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />;

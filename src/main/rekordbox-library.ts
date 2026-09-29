@@ -266,6 +266,7 @@ const summaryFor = (catalog: CurrentCatalog): LibrarySummary => ({
   sourceKind: catalog.sourceKind,
   importedAt: catalog.importedAt,
   songCount: catalog.songs.length,
+  totalSongCount: catalog.tracks.length,
   playlistCount: catalog.playlists.length,
 });
 

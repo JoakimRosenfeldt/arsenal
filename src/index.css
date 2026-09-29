@@ -2836,20 +2836,10 @@ button.sidebar-search {
   grid-column: 1 / -1;
 }
 
-.library-folder-dialog > p,
-.library-folder-import p {
+.library-folder-dialog > p {
   color: var(--text-soft);
   font-size: 13px;
   line-height: 1.6;
-}
-
-.library-folder-import {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 24px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line-strong);
 }
 
 .library-sync-settings-grid {

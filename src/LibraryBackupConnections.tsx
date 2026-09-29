@@ -4,11 +4,12 @@ import { UiIcon } from './UiIcon';
 import type { LibraryConnections } from './shared/dj-library';
 import { MUSIC_ORGANIZATION_OPTIONS, readMusicOrganization, type BackupConfiguration, type BackupConnection } from './shared/library-backup';
 
-export const LibraryBackupConnections = ({ busy, connections, onBusy, onImport }: Readonly<{
+const folderName = (directory: string): string => directory.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Backup folder';
+
+export const LibraryBackupConnections = ({ busy, connections, onBusy }: Readonly<{
   busy: boolean;
   connections: LibraryConnections;
   onBusy: (message: string | null) => void;
-  onImport: (mode: 'folder' | 'snapshot') => Promise<void>;
 }>): JSX.Element => {
   const [backups, setBackups] = useState(connections.backupConnections);
   const [editing, setEditing] = useState<BackupConfiguration | null>(null);
@@ -65,7 +66,7 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy, onImport }
   const hasLibrary = connections.sourceOfTruthId !== null;
 
   return <>
-    {backups.map((backup) => <section key={backup.id} className="library-connection-card" aria-label={`Folder backup: ${backup.directory}`}>
+    {backups.map((backup) => <section key={backup.id} className="library-connection-card" aria-label={`Folder backup: ${folderName(backup.directory)}`}>
       <div className="library-connection-heading">
         <h2>Folder backup</h2>
         <span className={`library-connection-status ${backup.state === 'error' ? 'is-unavailable' : 'is-connected'}`}>
@@ -73,7 +74,7 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy, onImport }
           {backup.state === 'saving' ? 'Saving…' : backup.state === 'error' ? 'Needs attention' : 'Connected'}
         </span>
       </div>
-      <p className="library-connection-path">{backup.directory}</p>
+      <p className="library-connection-empty-status">{folderName(backup.directory)}</p>
       <p className="library-folder-summary">Arsenal library<br />
         Automatic backup · {backup.includeMusic ? 'With music' : 'Library data only'}
         {backup.includeMusic && <><br />Music folders: {MUSIC_ORGANIZATION_OPTIONS.find((option) => option.value === backup.musicOrganization)?.label}</>}
@@ -85,8 +86,6 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy, onImport }
           setError(null);
           setEditing({ kind: 'update', id: backup.id, includeMusic: backup.includeMusic, musicOrganization: backup.musicOrganization });
         }}>Settings</button>
-        <button className="quiet-button" type="button" disabled={working || !hasLibrary}
-          onClick={() => void run(() => window.djLibrary.backupNow(backup.id), 'Saving backup…')}>Back up now</button>
         <button className="quiet-button" type="button" disabled={working} onClick={() => setRemoving(backup)}>
           <UiIcon name="close" size={14} /> Remove
         </button>
@@ -109,7 +108,7 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy, onImport }
       </div>
       <p>Save your Arsenal library to a local folder, an external drive, or a folder synced by your cloud app.
         Arsenal updates one <strong>Arsenal Library.json</strong> file automatically while it is open.</p>
-      {editing.kind === 'update' && <p className="library-connection-path">{backups.find((backup) => backup.id === editing.id)?.directory}</p>}
+      {editing.kind === 'update' && <p>{folderName(backups.find((backup) => backup.id === editing.id)?.directory ?? '')}</p>}
       {!hasLibrary && <p>Open or import a library in Arsenal before creating a backup.</p>}
       <label className="library-backup-music">
         <input type="checkbox" checked={editing.includeMusic} disabled={working}
@@ -128,10 +127,6 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy, onImport }
         </label>
         <p className="library-connection-path">{MUSIC_ORGANIZATION_OPTIONS.find((option) => option.value === editing.musicOrganization)?.example}</p>
       </div>}
-      {editing.kind === 'update' && backups.find((backup) => backup.id === editing.id)?.manifestPath && <details>
-        <summary>Library file</summary>
-        <p className="library-connection-path">{backups.find((backup) => backup.id === editing.id)?.manifestPath}</p>
-      </details>}
       {error && <p className="tracklist-export-note" role="alert">{error}</p>}
       <div className="library-connection-remove-actions">
         <button className="quiet-button" type="button" disabled={busy} onClick={() => settingsDialog.current?.close()}>Cancel</button>
@@ -143,18 +138,6 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy, onImport }
           {editing.kind === 'connect' ? 'Choose folder…' : 'Save settings'}
         </button>
       </div>
-      {editing.kind === 'connect' && <div className="library-folder-import">
-        <p>Have your Arsenal library on another computer? Open its backup folder or library file.
-          Arsenal checks for changes when it opens and asks before importing and syncing.</p>
-        <button className="quiet-button" type="button" disabled={working} onClick={() => {
-          settingsDialog.current?.close();
-          void onImport('folder');
-        }}>Open library folder…</button>
-        <button className="quiet-button" type="button" disabled={working} onClick={() => {
-          settingsDialog.current?.close();
-          void onImport('snapshot');
-        }}>Open library file…</button>
-      </div>}
     </dialog>}
 
     {removing !== null && <dialog className="tracklist-export-dialog library-connection-remove-dialog" ref={removeDialog}
@@ -163,7 +146,7 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy, onImport }
         <h2 id="folder-remove-title">Remove folder connection?</h2>
         <button className="inspector-close" type="button" onClick={() => removeDialog.current?.close()} aria-label="Cancel folder removal"><UiIcon name="close" size={16} /></button>
       </div>
-      <p className="library-connection-path">{removing.directory}</p>
+      <p>{folderName(removing.directory)}</p>
       <p id="folder-remove-description">Automatic backups stop. Your saved library and music files stay on disk.</p>
       <div className="library-connection-remove-actions">
         <button className="quiet-button" type="button" autoFocus onClick={() => removeDialog.current?.close()}>Cancel</button>

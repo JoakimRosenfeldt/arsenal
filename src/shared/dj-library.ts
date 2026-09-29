@@ -162,6 +162,7 @@ export type LibrarySummary = Readonly<{
   sourceName: string;
   importedAt: string;
   songCount: number;
+  totalSongCount: number;
   playlistCount: number;
 }>;
 
