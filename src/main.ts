@@ -23,7 +23,7 @@ import { OpenRouterConnection } from './main/openrouter';
 import { PLAYLIST_PROGRESS_CHANNEL } from './shared/playlist-suggestions';
 import { APP_UPDATE_CHANNELS } from './shared/app-updates';
 import { PREFERENCES_CHANNELS } from './shared/preferences';
-import type { BackupConfiguration } from './shared/library-backup';
+import { readMusicOrganization, type BackupConfiguration } from './shared/library-backup';
 import {
   TRACK_ARTWORK_SCHEME,
   TRACK_MEDIA_SCHEME,
@@ -384,9 +384,10 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     if (!isRecord(request) || (request.kind !== 'connect' && request.kind !== 'update') ||
       typeof request.includeMusic !== 'boolean') throw new Error('Choose whether to include music');
     if (request.kind === 'update' && (typeof request.id !== 'string' || !request.id)) throw new Error('Choose a folder connection');
+    const musicOrganization = readMusicOrganization(request.musicOrganization);
     const configuration: BackupConfiguration = request.kind === 'update' && typeof request.id === 'string'
-      ? { kind: request.kind, id: request.id, includeMusic: request.includeMusic }
-      : { kind: 'connect', includeMusic: request.includeMusic };
+      ? { kind: request.kind, id: request.id, includeMusic: request.includeMusic, musicOrganization }
+      : { kind: 'connect', includeMusic: request.includeMusic, musicOrganization };
     libraryActions += 1;
     try { return await library.configureBackup(owner, configuration); } finally { libraryActions -= 1; }
   });

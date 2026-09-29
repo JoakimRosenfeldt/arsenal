@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { LibrarySourceKind } from '../shared/dj-library';
 import type { SyncLibrary } from './library-sync-model';
 import { parseRekordboxXml } from './parse-rekordbox-xml';
-import { portableSnapshotDate, readPortableLibrary } from './portable-library';
+import { PORTABLE_LIBRARY_FILENAME, portableSnapshotDate, readPortableLibrary } from './portable-library';
 import { findSeratoSource } from './serato-library';
 import { readSeratoWithPerformance } from './sync-libraries';
 import { rekordboxSyncLibrary } from './sync-rekordbox-xml';
@@ -18,8 +18,16 @@ export type PortableLibrarySource = Readonly<{
 
 const newestPortableLibrary = async (source: PortableLibrarySource, followLatest: boolean) => {
   let manifestPath = source.manifestPath;
+  if (basename(manifestPath) === PORTABLE_LIBRARY_FILENAME || !followLatest) {
+    return { manifest: await readPortableLibrary(manifestPath), manifestPath };
+  }
+  const fixedPath = join(dirname(manifestPath), PORTABLE_LIBRARY_FILENAME);
+  try {
+    return { manifest: await readPortableLibrary(fixedPath), manifestPath: fixedPath };
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
   let manifest = await readPortableLibrary(manifestPath);
-  if (!followLatest) return { manifest, manifestPath };
   const directory = dirname(manifestPath);
   const candidates = (await readdir(directory)).flatMap((name) => {
     const date = portableSnapshotDate(name);

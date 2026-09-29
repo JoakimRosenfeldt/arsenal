@@ -21,42 +21,54 @@ Local saves validate the model and atomically replace the JSON file after flushi
 
 The first launch with this storage migrates the previous primary library once. Subsequent launches read Arsenal's JSON. A failed migration keeps the original files. `libraries/arsenal.xml` is a disposable adapter for existing editing and display code; Arsenal recreates it from its JSON when it starts.
 
-Connections always shows Arsenal as the primary library. Importing or refreshing a DJ connection merges its collection into Arsenal while preserving existing Arsenal smart definitions. DJ libraries remain sources for import and destinations for sync. Removing a connection does not remove Arsenal's collection.
+Arsenal always owns the primary library. Connections shows connected DJ libraries, imported backups, and backup folders. Importing or refreshing a DJ connection merges its collection into Arsenal while preserving existing Arsenal smart definitions. DJ libraries remain sources for import and destinations for sync. Removing a connection does not remove Arsenal's collection.
 
 ## Portable backups
 
-Arsenal backs up its owned collection as UTF-8 JSON with optional music files. The backup format does not require a DJ application or its database. Each JSON file is a complete snapshot with `format: "dj-library"` and `version: 1`.
+Arsenal backs up its owned collection to one UTF-8 JSON file named `Arsenal Library.json` in the selected folder. The file uses `format: "dj-library"` and `version: 2`. It does not require a DJ application or its database.
 
-A backup directory contains immutable snapshots and a shared music folder:
+Included music lives in a sibling `Music` folder. For example, Artist organization produces:
 
 ```text
 My library/
-  2026-09-28T10-30-00.000Z-<uuid>.json
-  2026-09-28T11-30-00.000Z-<uuid>.json
-  media/
-    <sha256>.mp3
-    <sha256>.flac
+  Arsenal Library.json
+  Music/
+    Artist/
+      Artist - Track [content-hash].mp3
 ```
 
-Each snapshot references music relative to its own directory. Copying the entire backup directory preserves those references. Cloud services can synchronize the directory as ordinary files. JSON snapshots are published after their music copies finish. Previous snapshots and music files remain available.
+Each folder connection has an **Include music files** setting and a music organization choice:
 
-Opening a backup folder selects its newest snapshot and imports the collection into Arsenal's own library. A snapshot file can also be opened directly. Arsenal rejects an unreadable newest snapshot instead of silently restoring an older one. Bundled music needs no manual relinking.
+| Organization | Music location |
+| --- | --- |
+| All music in one folder | `Music/` |
+| Artist, the default | `Music/<artist>/` |
+| Album | `Music/<album>/` |
+| Artist and album | `Music/<artist>/<album>/` |
+| Genre | `Music/<genre>/` |
+| Label | `Music/<label>/` |
 
-Importing bundled music creates local working copies so syncing audio tags cannot change the backup files. Arsenal uses independent copy-on-write clones where the filesystem supports them and verifies each new working copy. Initial transfer and verification time depends on the collection size and storage speed. Each connected library reuses its working copies when importing newer snapshots. Existing copies keep their local tag edits. Libraries imported before this protection may need to be imported again before syncing music metadata or performance data.
+Missing metadata uses names such as `Unknown Artist` and `Unknown Genre`. Arsenal replaces characters that cannot be used in portable filenames and limits name lengths. Music filenames contain the artist, title, and a content hash to distinguish different files with the same metadata. Identical music files share a copy within each save.
 
-Backup folders appear as connections alongside DJ libraries. Every folder backs up Arsenal's own collection automatically. Folder settings do not select a DJ application or source connection. Each folder keeps its own music option, and new connections include music by default.
+The JSON references bundled music by relative path. Transfer the JSON and its `Music` folder together when music is included. A backup without music needs only the JSON file; import can locate audio in a chosen music folder.
 
-Arsenal checks for backup changes after library operations and every 30 seconds while it is open. Unchanged libraries reuse the previous snapshot. Each folder connection creates a separate output directory, so different computers do not overwrite one another's snapshots. Existing output directories and snapshots survive migration. Imports are explicit and remember their source for later updates.
+Arsenal checks for backup changes after library operations and every 30 seconds while it is open. Changed data replaces the same JSON file after music copies finish and pass verification. Unchanged data reuses the existing file. Each connection remembers its organization setting across restarts.
 
-Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Disconnecting a folder stops automatic backups and keeps the files already saved. Backup failures keep existing snapshots and appear on the folder connection.
+A temporary file and atomic replacement protect the previous JSON during saving. Arsenal checks the existing file's fingerprint before writing and again before replacement. An outside change stops the backup and requires import before another save. An existing `Arsenal Library.json` cannot be overwritten by connecting its folder as a new backup. Open that file to import it, or choose another destination.
+
+Opening a backup folder uses `Arsenal Library.json`. The file can also be opened directly. An unreadable fixed file produces an error instead of restoring an older snapshot. Bundled music needs no manual relinking once the full folder has arrived.
+
+Importing bundled music creates independent local working copies so DJ sync cannot change backup audio. Arsenal uses copy-on-write clones where supported and verifies each new copy. Initial transfer time depends on the collection size and storage speed. Imported connections reuse their working copies for later imports.
+
+Version 1 backups remain readable, including timestamped snapshots and their lower-case `media` folders. Existing folder connections retain their destination directories and switch to the fixed JSON filename. Old snapshots and copied music are kept. Changing organization or excluding music affects new saves; it does not delete earlier copies or unrelated files. Disconnecting stops automatic backups and keeps saved files.
 
 ## Changes between sessions
 
 When Arsenal opens, it checks connected DJ libraries and imported backup sources for changes since their last accepted import or save. Existing connections without a saved comparison establish one on their first launch after this feature is installed.
 
-For imported backups, Arsenal remembers the source snapshot and music search folders. It checks that source folder for newer snapshots of the same library. Startup checks read library data and file information; music fingerprints are verified during import. Backups imported before source tracking was available need to be imported again to enable these checks.
+For imported backups, Arsenal remembers the library file and music search folders. It checks the fixed file for changes. Legacy snapshot connections discover the fixed file when available, or continue checking for newer legacy snapshots. Startup checks read library data and file information; music fingerprints are verified during import. Backups imported before source tracking was available need to be imported again to enable these checks.
 
-Arsenal lists changed libraries and asks before importing them into its collection. Approval also runs the saved sync settings when destinations are configured and available. Otherwise, Arsenal only imports the changes. Choosing **Not now** leaves the changes pending for the next launch.
+Arsenal also checks its connected backup destinations for outside changes. It lists changed libraries and asks before importing them into its collection. Approval also runs the saved sync settings when destinations are configured and available. Otherwise, Arsenal only imports the changes. Choosing **Not now** leaves the changes pending for the next launch and keeps automatic backups from overwriting a changed destination.
 
 If an imported library or Serato workspace also has unsynced local edits, Arsenal asks which version to keep. Importing the external version saves a backup of the local XML first. Keeping local edits, an unavailable source, or an import failure defers automatic sync. Missing music uses the existing import and sync recovery flow.
 
@@ -75,7 +87,7 @@ An empty library is valid:
 ```json
 {
 	"format": "dj-library",
-	"version": 1,
+	"version": 2,
 	"name": "My library",
 	"savedAt": "2026-09-28T10:30:00.000Z",
 	"includeMusic": false,
@@ -119,17 +131,17 @@ Metadata preserves the source library's rating scale. In particular, Rekordbox e
 	"originalPath": "/Users/dj/Music/Example.mp3",
 	"sizeBytes": 1234567,
 	"sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-	"relativePath": "media/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.mp3"
+	"relativePath": "Music/Artist/Artist - Example [0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef].mp3"
 }
 ```
 
 `originalPath` is a location hint. `sizeBytes` and `sha256` identify the file's exact bytes, including tags. Both backup modes calculate the fingerprint for available music.
 
-`relativePath` is `null` when music is excluded or unavailable. A present path must have the form `media/<sha256>` with an optional lowercase alphanumeric extension. `sha256` is `null` when the original file cannot be read. Its size can also be `null`.
+`relativePath` is `null` when music is excluded or unavailable. Version 2 paths use forward slashes and stay under `Music/`. Absolute paths, parent-directory segments, empty segments, and unsafe filename characters are rejected. Version 1 paths retain the `media/<sha256>` form with an optional lowercase alphanumeric extension. `sha256` is `null` when the original file cannot be read. Its size can also be `null`.
 
 The importer makes independent working copies of bundled music and verifies their sizes and hashes. It checks original paths for tracks without a usable bundled copy. It searches a selected music folder recursively for unresolved tracks. File sizes narrow the search before hashing. A different filename does not prevent an exact match. Search does not follow symbolic links in the selected music folders.
 
-Bundled paths cannot escape the backup directory, including through symbolic links. Files with missing or mismatched fingerprints remain unresolved. Choosing to import without them creates unavailable references, so an unrelated file at an old path cannot play. Re-importing the original snapshot allows another search after the music becomes available.
+Bundled paths cannot escape the backup directory, including through symbolic links. Files with missing or mismatched fingerprints remain unresolved. Choosing to import without them creates unavailable references, so an unrelated file at an old path cannot play. Re-importing the library file allows another search after the music becomes available.
 
 Changes to audio tags change the file hash. A file with edited tags does not count as an exact match, even if its audio sounds identical.
 

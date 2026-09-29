@@ -51,31 +51,27 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
   };
 
   const connectionCard = (connection: LibraryConnection, label: string): JSX.Element => {
-    const owned = connection.origin === 'arsenal';
     return (
-      <section key={connection.id} className={`library-connection-card${owned ? ' is-primary' : ''}`}
-        aria-label={`${owned ? 'Arsenal library' : connection.origin === 'portable' ? 'Portable library' : label}: ${connection.name}`}>
+      <section key={connection.id} className="library-connection-card"
+        aria-label={`${connection.origin === 'portable' ? 'Portable library' : label}: ${connection.name}`}>
         <div className="library-connection-heading">
-          <h2>{owned ? 'Arsenal library' : connection.origin === 'portable' ? connection.name : label}</h2>
+          <h2>{connection.origin === 'portable' ? connection.name : label}</h2>
           <span className={`library-connection-status${connection.available ? ' is-connected' : ' is-unavailable'}`}>
             {connection.available && <UiIcon name="check" size={14} />}
-            {connection.available ? owned ? 'Saved locally' : 'Connected' : 'Unavailable'}
+            {connection.available ? 'Connected' : 'Unavailable'}
           </span>
         </div>
-        {owned ? <p className="library-folder-summary">Primary library<br />Your tracks, edits, and smart playlist rules are saved on this computer.</p>
-          : <>
-            {connection.origin === 'portable' && <p className="library-connection-empty-status">Portable library</p>}
-            <p className="library-connection-path">{connection.path}</p>
-          </>}
+        {connection.origin === 'portable' && <p className="library-connection-empty-status">Portable library</p>}
+        <p className="library-connection-path">{connection.path}</p>
         <div className="library-connection-actions">
           <button className="quiet-button" type="button" disabled={working}
-            aria-label={owned ? 'Open Arsenal library' : `Import ${connection.name} into Arsenal`}
-            onClick={() => void run(() => onManage({ kind: 'open', id: connection.id }), owned ? 'Opening Arsenal library…' : 'Importing into Arsenal…')}>
-            {owned ? 'Open' : 'Import into Arsenal'}
+            aria-label={`Import ${connection.name} into Arsenal`}
+            onClick={() => void run(() => onManage({ kind: 'open', id: connection.id }), 'Importing into Arsenal…')}>
+            Import into Arsenal
           </button>
-          {!owned && <button className="quiet-button" type="button" disabled={working} onClick={() => setRemoving(connection)}>
+          <button className="quiet-button" type="button" disabled={working} onClick={() => setRemoving(connection)}>
             <UiIcon name="close" size={14} /> Remove
-          </button>}
+          </button>
         </div>
       </section>
     );
@@ -90,7 +86,6 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
       <div className="library-connections-content" aria-busy={working}>
         <p>Arsenal saves your library locally. Connect DJ apps to import and sync, or connect a folder for automatic backups.</p>
         {state === null ? <p role="status">Loading connections…</p> : <div className="library-connection-grid">
-          {connections.filter((connection) => connection.origin === 'arsenal').map((connection) => connectionCard(connection, 'Arsenal library'))}
           {libraryKinds.flatMap(({ kind, label }) => {
             const connected = connections.filter((connection) => connection.kind === kind && connection.origin === undefined);
             return connected.length === 0 ? [

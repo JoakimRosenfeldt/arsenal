@@ -4,6 +4,7 @@ import { copyFile, lstat, mkdir, open, opendir, readdir, readFile, realpath, ren
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { SONG_SOURCE_LABELS, type SongRow } from '../shared/dj-library';
+import type { MusicOrganization } from '../shared/library-backup';
 import { readSmartDefinition } from '../shared/smart-playlists';
 import {
   normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncPlaylist,
@@ -21,9 +22,15 @@ type PortablePlaylist = Readonly<{
 }>;
 
 export type PortableLibraryManifest = Readonly<{
-  format: 'dj-library'; version: 1; name: string; savedAt: string; includeMusic: boolean;
+  format: 'dj-library'; version: 1 | 2; name: string; savedAt: string; includeMusic: boolean;
   tracks: readonly PortableTrack[]; playlists: readonly PortablePlaylist[];
 }>;
+
+export const PORTABLE_LIBRARY_FILENAME = 'Arsenal Library.json';
+
+const portableName = (name: string): boolean => name.length > 0 && name !== '.' && name !== '..' &&
+  !/[<>:"/\\|?*]|\p{Cc}/u.test(name) && !/[. ]$/.test(name) &&
+  !/^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/i.test(name) && Buffer.byteLength(name) <= 255;
 
 const invalid = (field: string): never => { throw new Error(`Invalid library data: ${field}.`); };
 const record = (value: unknown, field: string): Record<string, unknown> => {
@@ -180,7 +187,8 @@ export const readLibraryModel = (value: unknown): SyncLibrary => {
 const readManifest = (value: unknown): PortableLibraryManifest => {
   const raw = record(value, 'document');
   if (raw.format !== 'dj-library') throw new Error('This file is not a portable DJ library.');
-  if (raw.version !== 1) throw new Error('This portable library version is not supported.');
+  const version = raw.version;
+  if (version !== 1 && version !== 2) throw new Error('This portable library version is not supported.');
   const ids = new Set<string>();
   const tracks = array(raw.tracks, 'tracks').map((value): PortableTrack => {
     const raw = record(value, 'track');
@@ -197,7 +205,12 @@ const readManifest = (value: unknown): PortableLibraryManifest => {
       const relativePath = nullableText(file.relativePath, 'media path');
       if (sha256 !== null && !/^[a-f0-9]{64}$/.test(sha256)) return invalid('SHA-256');
       if (sha256 !== null && sizeBytes === null) return invalid('hashed media size');
-      if (relativePath !== null && (sha256 === null || !new RegExp(`^media/${sha256}(?:\\.[a-z0-9]{1,12})?$`).test(relativePath))) return invalid('relative media path');
+      if (relativePath !== null) {
+        const parts = relativePath.split('/');
+        const legacy = sha256 !== null && new RegExp(`^media/${sha256}(?:\\.[a-z0-9]{1,12})?$`).test(relativePath);
+        const organized = version === 2 && parts[0] === 'Music' && parts.length >= 2 && parts.length <= 10 && parts.every(portableName);
+        if (sha256 === null || !legacy && !organized) return invalid('relative media path');
+      }
       media = { kind: 'local', originalPath: nonempty(file.originalPath, 'original path'), sizeBytes, sha256, relativePath };
     } else if (file.kind === 'reference' && metadata.source !== 'local') {
       media = { kind: 'reference', uri: nonempty(file.uri, 'source reference') };
@@ -230,7 +243,7 @@ const readManifest = (value: unknown): PortableLibraryManifest => {
   if (!Number.isFinite(Date.parse(savedAt))) return invalid('save date');
   const includeMusic = boolean(raw.includeMusic, 'music option');
   if (!includeMusic && tracks.some((track) => track.media.kind === 'local' && track.media.relativePath !== null)) return invalid('music excluded but bundled files referenced');
-  return { format: 'dj-library', version: 1, name: nonempty(raw.name, 'library name'), savedAt, includeMusic, tracks, playlists };
+  return { format: 'dj-library', version, name: nonempty(raw.name, 'library name'), savedAt, includeMusic, tracks, playlists };
 };
 
 const fingerprints = new Map<string, Readonly<{ stamp: string; sha256: string; sizeBytes: number }>>();
@@ -263,12 +276,78 @@ const within = (directory: string, path: string): boolean => {
 };
 const stableId = (kind: 'track' | 'playlist', value: string): string => `${kind}-${createHash('sha256').update(value).digest('hex')}`;
 
-export const writePortableLibrary = async ({ library, directory, name, includeMusic }: Readonly<{
-  library: SyncLibrary; directory: string; name: string; includeMusic: boolean;
+const safeName = (value: string | null, fallback: string): string => {
+  const cleaned = (value ?? '').normalize('NFC').replace(/[<>:"/\\|?*]|\p{Cc}/gu, '_').trim().replace(/^[. ]+|[. ]+$/g, '');
+  let shortened = '';
+  for (const character of cleaned) {
+    if (Buffer.byteLength(shortened + character) > 80) break;
+    shortened += character;
+  }
+  shortened = shortened.replace(/[. ]+$/g, '') || fallback;
+  return portableName(shortened) ? shortened : `_${shortened}`;
+};
+
+const musicFolders = (song: SongRow, organization: MusicOrganization): string[] => {
+  switch (organization) {
+    case 'none': return [];
+    case 'artist': return [safeName(song.artist, 'Unknown Artist')];
+    case 'album': return [safeName(song.album, 'Unknown Album')];
+    case 'artist-album': return [safeName(song.artist, 'Unknown Artist'), safeName(song.album, 'Unknown Album')];
+    case 'genre': return [safeName(song.genre, 'Unknown Genre')];
+    case 'label': return [safeName(song.label, 'Unknown Label')];
+    default: { const unexpected: never = organization; throw new Error(`Unknown music organization: ${unexpected}.`); }
+  }
+};
+
+const audioExtension = (path: string): string => {
+  const extension = extname(path).toLowerCase();
+  return /^\.[a-z0-9]{1,12}$/.test(extension) ? extension : '';
+};
+
+const createMusicDirectory = async (root: string, parts: readonly string[]): Promise<string> => {
+  let directory = root;
+  for (const part of parts) {
+    directory = join(directory, part);
+    try { await mkdir(directory); } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+    }
+    const info = await lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink() || !within(root, await realpath(directory))) {
+      throw new Error('Backup music folders must be real directories inside the selected backup folder.');
+    }
+  }
+  return directory;
+};
+
+export const readPortableLibraryFingerprint = async (path: string): Promise<string | null> => {
+  try {
+    const info = await lstat(path);
+    if (!info.isFile() || info.isSymbolicLink() || info.size > 128 * 1024 * 1024) {
+      throw new Error('The existing Arsenal Library.json must be a regular JSON file smaller than 128 MiB.');
+    }
+    const bytes = await readFile(path);
+    if (bytes.length > 128 * 1024 * 1024) throw new Error('The existing Arsenal Library.json exceeds the supported size of 128 MiB.');
+    const value: unknown = JSON.parse(bytes.toString('utf8'));
+    readManifest(value);
+    return createHash('sha256').update(bytes).digest('hex');
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+};
+
+export const writePortableLibrary = async ({ library, directory, name, includeMusic, musicOrganization = 'artist', expectedManifestFingerprint }: Readonly<{
+  library: SyncLibrary; directory: string; name: string; includeMusic: boolean; musicOrganization?: MusicOrganization;
+  expectedManifestFingerprint?: string | null;
 }>) => {
+  const initialFingerprint = await readPortableLibraryFingerprint(join(directory, PORTABLE_LIBRARY_FILENAME));
+  const expected = expectedManifestFingerprint === undefined ? initialFingerprint : expectedManifestFingerprint;
+  if (initialFingerprint !== expected) throw new Error('The backup library changed outside Arsenal. Import its changes before saving again.');
   await mkdir(directory, { recursive: true });
   const root = await realpath(directory);
+  const manifestPath = join(root, PORTABLE_LIBRARY_FILENAME);
   const warnings: string[] = [];
+  const musicPaths = new Map<string, string>();
   const paths = new Map<string, string>();
   for (const track of library.tracks) {
     const path = normalizePath(track.path);
@@ -289,11 +368,12 @@ export const writePortableLibrary = async ({ library, directory, name, includeMu
       }
       let relativePath: string | null = null;
       if (identity !== null && includeMusic) {
-        const extension = extname(sourcePath).toLowerCase();
-        relativePath = `media/${identity.sha256}${/^\.[a-z0-9]{1,12}$/.test(extension) ? extension : ''}`;
-        const mediaDirectory = join(root, 'media');
-        await mkdir(mediaDirectory, { recursive: true });
-        if ((await lstat(mediaDirectory)).isSymbolicLink() || !within(root, await realpath(mediaDirectory))) throw new Error('The backup media folder must be inside the selected backup folder.');
+        const extension = audioExtension(sourcePath);
+        const contentKey = `${identity.sha256}${extension}`;
+        const filename = `${safeName(track.song.artist, 'Unknown Artist')} - ${safeName(track.song.title, 'Untitled track')} [${identity.sha256}]${extension}`;
+        relativePath = musicPaths.get(contentKey) ?? ['Music', ...musicFolders(track.song, musicOrganization), filename].join('/');
+        musicPaths.set(contentKey, relativePath);
+        await createMusicDirectory(root, relativePath.split('/').slice(0, -1));
         const target = join(root, relativePath);
         let exists = false;
         try {
@@ -304,7 +384,7 @@ export const writePortableLibrary = async ({ library, directory, name, includeMu
           exists = true;
         } catch (error) { if (!missing(error)) throw error; }
         if (!exists) {
-          const temporary = `${target}.${randomUUID()}.tmp`;
+          const temporary = join(dirname(target), `.arsenal-${randomUUID()}.tmp`);
           try {
             await copyFile(sourcePath, temporary, constants.COPYFILE_EXCL);
             const copied = await fingerprint(temporary);
@@ -323,7 +403,7 @@ export const writePortableLibrary = async ({ library, directory, name, includeMu
       ...(track.performance === undefined ? {} : { performance: track.performance }) });
   }
   const savedAt = new Date().toISOString();
-  const manifest = readManifest({ format: 'dj-library', version: 1, name, savedAt, includeMusic, tracks,
+  const manifest = readManifest({ format: 'dj-library', version: 2, name, savedAt, includeMusic, tracks,
     playlists: library.playlists.map((playlist): PortablePlaylist => ({
       id: stableId('playlist', JSON.stringify(playlist.path)), path: playlist.path,
       kind: playlist.kind ?? (playlist.smart === undefined ? 'playlist' : 'smart'),
@@ -334,14 +414,17 @@ export const writePortableLibrary = async ({ library, directory, name, includeMu
       }), ...(playlist.smart === undefined ? {} : { smart: playlist.smart }),
     })),
   });
-  const manifestPath = join(root, `${savedAt.replaceAll(':', '-')}-${randomUUID()}.json`);
-  const temporary = `${manifestPath}.tmp`;
+  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  if (Buffer.byteLength(serialized) > 128 * 1024 * 1024) throw new Error('The library exceeds the supported JSON size of 128 MiB.');
+  const manifestFingerprint = createHash('sha256').update(serialized).digest('hex');
+  const temporary = `${manifestPath}.${randomUUID()}.tmp`;
   try {
     const file = await open(temporary, 'wx', 0o600);
-    try { await file.writeFile(`${JSON.stringify(manifest, null, 2)}\n`, 'utf8'); await file.sync(); } finally { await file.close(); }
+    try { await file.writeFile(serialized, 'utf8'); await file.sync(); } finally { await file.close(); }
+    if (await readPortableLibraryFingerprint(manifestPath) !== expected) throw new Error('The backup library changed while saving. Its changes were kept. Import them before saving again.');
     await rename(temporary, manifestPath);
   } finally { await unlink(temporary).catch((error: unknown) => { if (!missing(error)) throw error; }); }
-  return { manifestPath, savedAt, warnings };
+  return { manifestPath, manifestFingerprint, savedAt, warnings };
 };
 
 export const readPortableLibrary = async (manifestPath: string): Promise<PortableLibraryManifest> => {
@@ -361,7 +444,7 @@ export const portableSnapshotDate = (name: string): number | null => {
 export const readPortableLibraryFolder = async (directory: string) => {
   let root = directory;
   let entries = await readdir(root, { withFileTypes: true });
-  if (!entries.some((entry) => portableSnapshotDate(entry.name) !== null)) {
+  if (!entries.some((entry) => entry.name === PORTABLE_LIBRARY_FILENAME || portableSnapshotDate(entry.name) !== null)) {
     const children = entries.filter((entry) => entry.isDirectory() && /^Arsenal-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(entry.name));
     if (children.length > 1) throw new Error('This folder contains several Arsenal libraries. Choose the backup folder for the library you want to open.');
     const child = children[0];
@@ -370,16 +453,16 @@ export const readPortableLibraryFolder = async (directory: string) => {
       entries = await readdir(root, { withFileTypes: true });
     }
   }
-  const newest = entries.flatMap((entry) => {
+  const latestName = entries.some((entry) => entry.name === PORTABLE_LIBRARY_FILENAME) ? PORTABLE_LIBRARY_FILENAME : entries.flatMap((entry) => {
     const date = portableSnapshotDate(entry.name);
     return date === null ? [] : [{ name: entry.name, date }];
-  }).sort((left, right) => right.date - left.date || right.name.localeCompare(left.name))[0];
-  if (newest === undefined) throw new Error('No library snapshot was found. Choose the Arsenal backup folder after it has finished syncing.');
-  const manifestPath = join(root, newest.name);
+  }).sort((left, right) => right.date - left.date || right.name.localeCompare(left.name))[0]?.name;
+  if (latestName === undefined) throw new Error('No library was found. Choose the Arsenal backup folder after it has finished syncing.');
+  const manifestPath = join(root, latestName);
   try {
     return { manifest: await readPortableLibrary(manifestPath), manifestPath };
   } catch (error) {
-    throw new Error(`The latest library snapshot could not be read: ${newest.name}. Wait for the backup folder to finish syncing, then try again. ${error instanceof Error ? error.message : ''}`);
+    throw new Error(`The library file could not be read: ${latestName}. Wait for the backup folder to finish syncing, then try again. ${error instanceof Error ? error.message : ''}`);
   }
 };
 
@@ -470,7 +553,8 @@ export const resolvePortableLibrary = async (
       if (!directoryInfo.isDirectory() || directoryInfo.isSymbolicLink()) throw new Error('The imported music folder must be a local directory, not a symbolic link.');
       const directory = await realpath(managedMediaDirectory);
       for (const [path, media] of bundled) {
-        const copiedPath = join(directory, basename(path));
+        if (media.sha256 === null) throw new Error('Bundled music is missing its saved fingerprint.');
+        const copiedPath = join(directory, `${media.sha256}${audioExtension(path)}`);
         let created = false;
         try {
           await copyFile(path, copiedPath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
