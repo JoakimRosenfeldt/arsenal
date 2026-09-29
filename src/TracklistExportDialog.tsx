@@ -45,28 +45,33 @@ const tracklistText = (playlist: RekordboxPlaylist, options: TracklistOptions): 
   return [...(options.name ? [playlist.name, ''] : []), ...tracks].join('\n');
 };
 
-export const TracklistExportDialog = ({ playlist, onClose }: Readonly<{
+export const TracklistExportDialog = ({ playlist, onClose, onError }: Readonly<{
   playlist: RekordboxPlaylist;
   onClose: () => void;
+  onError?: (message: string) => void;
 }>): JSX.Element => {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const mounted = useRef(true);
   const [options, setOptions] = useState<TracklistOptions>({
     name: true, numbers: true, bpm: false, key: false, duration: false,
   });
-  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [copyFailed, setCopyFailed] = useState(false);
   const text = tracklistText(playlist, options);
 
   useEffect(() => {
+    mounted.current = true;
     const dialog = dialogRef.current;
     if (dialog && !dialog.open) dialog.showModal();
+    return () => { mounted.current = false; };
   }, []);
 
   const copy = async (): Promise<void> => {
+    setCopyFailed(false);
     try {
       await window.djLibrary.copyTracklist(text);
-      setCopyStatus('copied');
     } catch {
-      setCopyStatus('failed');
+      if (mounted.current && dialogRef.current?.open) setCopyFailed(true);
+      else onError?.('Could not copy tracklist.');
     }
   };
 
@@ -94,7 +99,7 @@ export const TracklistExportDialog = ({ playlist, onClose }: Readonly<{
             <label key={key}>
               <input type="checkbox" checked={options[key]} onChange={(event) => {
                 setOptions({ ...options, [key]: event.currentTarget.checked });
-                setCopyStatus('idle');
+                setCopyFailed(false);
               }} />
               <span>{label}</span>
             </label>
@@ -111,7 +116,7 @@ export const TracklistExportDialog = ({ playlist, onClose }: Readonly<{
 
       <div className="tracklist-export-actions">
         <span>{playlist.tracks.length} {playlist.tracks.length === 1 ? 'track' : 'tracks'}</span>
-        <span role="status">{copyStatus === 'copied' ? 'Copied to clipboard.' : copyStatus === 'failed' ? 'Could not copy tracklist.' : ''}</span>
+        {copyFailed && <span role="alert">Could not copy tracklist.</span>}
         <button className="accent-button" type="button" disabled={playlist.tracks.length === 0} onClick={() => void copy()}>Copy to clipboard</button>
       </div>
     </dialog>

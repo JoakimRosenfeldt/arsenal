@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from 'react';
+import { useEffect, useRef, useState, type JSX } from 'react';
 
 import type { UpdateStatus } from './shared/app-updates';
 
@@ -24,9 +24,13 @@ const messageFor = (status: UpdateStatus): string => {
   }
 };
 
-export const AppUpdates = (): JSX.Element => {
+export const AppUpdates = ({ onError }: Readonly<{
+  onError?: (message: string) => void;
+}> = {}): JSX.Element => {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [requestFailed, setRequestFailed] = useState(false);
+  const [pending, setPending] = useState(false);
+  const reportedError = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -35,24 +39,37 @@ export const AppUpdates = (): JSX.Element => {
       receivedChange = true;
       setStatus(nextStatus);
       setRequestFailed(false);
+      if (nextStatus.kind === 'error' && onError && reportedError.current !== nextStatus.message) {
+        reportedError.current = nextStatus.message;
+        onError(nextStatus.message);
+      }
     });
     void window.appUpdates.status().then((initialStatus) => {
       if (active && !receivedChange) {
         setStatus(initialStatus);
+        if (initialStatus.kind === 'error') onError?.(initialStatus.message);
       }
     }).catch(() => {
       if (active) {
         setRequestFailed(true);
+        onError?.('Could not load update status. Reopen Preferences to try again.');
       }
     });
     return () => {
       active = false;
       unsubscribe();
     };
-  }, []);
+  }, [onError]);
 
   const performAction = async (): Promise<void> => {
+    if (pending || status === null || status.kind === 'disabled' || status.kind === 'checking' || status.kind === 'downloading') return;
     setRequestFailed(false);
+    reportedError.current = null;
+    setPending(true);
+    const optimisticStatus: UpdateStatus = status.kind === 'available'
+      ? { kind: 'downloading', version: status.version, percent: 0, currentVersion: status.currentVersion }
+      : status.kind === 'downloaded' ? status : { kind: 'checking', currentVersion: status.currentVersion };
+    setStatus(optimisticStatus);
     try {
       if (status?.kind === 'available') {
         await window.appUpdates.download();
@@ -61,8 +78,21 @@ export const AppUpdates = (): JSX.Element => {
       } else {
         await window.appUpdates.check();
       }
+      if (status.kind === 'downloaded') return;
+      const next = await window.appUpdates.status();
+      setStatus(next);
+      if (next.kind === 'error' && onError && reportedError.current !== next.message) {
+        reportedError.current = next.message;
+        onError(next.message);
+      }
     } catch {
+      setStatus((current) => current === optimisticStatus ? status : current);
       setRequestFailed(true);
+      onError?.(status.kind === 'downloaded'
+        ? 'Could not restart Arsenal. Wait for library actions to finish, then try again.'
+        : 'Could not update Arsenal. Try again.');
+    } finally {
+      setPending(false);
     }
   };
 
@@ -73,7 +103,7 @@ export const AppUpdates = (): JSX.Element => {
       : status?.kind === 'available'
         ? 'Download update'
         : status?.kind === 'downloaded'
-          ? 'Install and restart'
+          ? pending ? 'Restarting...' : 'Install and restart'
           : status?.kind === 'error' || requestFailed
             ? 'Retry update check'
             : 'Check for updates';
@@ -85,12 +115,13 @@ export const AppUpdates = (): JSX.Element => {
     <div className="app-updates">
       <div className="app-updates-description">
         <strong>{status === null ? 'Arsenal' : `Arsenal ${status.currentVersion}`}</strong>
-        <p role={requestFailed || status?.kind === 'error' ? 'alert' : 'status'}>{message}</p>
+        {(!onError || !requestFailed && status?.kind !== 'error') &&
+          <p role={requestFailed || status?.kind === 'error' ? 'alert' : undefined}>{message}</p>}
       </div>
       <button
         type="button"
         onClick={() => void performAction()}
-        disabled={status?.kind === 'disabled' || status?.kind === 'checking' || status?.kind === 'downloading'}
+        disabled={pending || status === null || status.kind === 'disabled' || status.kind === 'checking' || status.kind === 'downloading'}
       >
         {label}
       </button>

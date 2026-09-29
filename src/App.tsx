@@ -18,6 +18,7 @@ import {
 import {
   SONG_PAGE_SIZE,
   DEFAULT_SONG_FILTERS,
+  songMetadataGapCount,
   type DuplicateMatchMode,
   type DuplicateScan,
   type ImportFailure,
@@ -46,7 +47,7 @@ import type { SmartPlaylistDefinition } from './shared/smart-playlists';
 type DisplayError = ImportFailure | MutationFailure | 'unexpected';
 
 type Feedback = Readonly<{
-  tone: 'success' | 'warning';
+  tone: 'warning';
   message: string;
 }>;
 
@@ -98,7 +99,7 @@ const errorMessages: Readonly<Record<DisplayError, string>> = {
 
 const feedbackForRemoval = (
   result: Extract<LibraryMutationResult, { kind: 'songs-removed' }>,
-): Feedback => {
+): Feedback | null => {
   const warnings = {
     shared: 'Files still used by other tracks were kept.',
     missing: 'Some local files could not be found.',
@@ -108,17 +109,7 @@ const feedbackForRemoval = (
   const problems = [...new Set(result.fileActions)].flatMap((action) =>
     action === 'kept' || action === 'trashed' ? [] : [warnings[action]],
   );
-  const trashedCount = result.fileActions.filter((action) => action === 'trashed').length;
-  return {
-    tone: problems.length === 0 ? 'success' : 'warning',
-    message: [
-      `Removed ${result.removedCount} ${result.removedCount === 1 ? 'track' : 'tracks'}.`,
-      ...(trashedCount === 0 ? [] : [
-        `Moved ${trashedCount} ${trashedCount === 1 ? 'file' : 'files'} to Trash.`,
-      ]),
-      ...problems,
-    ].join(' '),
-  };
+  return problems.length === 0 ? null : { tone: 'warning', message: problems.join(' ') };
 };
 
 type PlaylistTree = Readonly<{
@@ -203,10 +194,15 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [loading, setLoading] = useState(true);
   const [minimumSongLengthSeconds, setMinimumSongLengthSeconds] = useState(DEFAULT_MINIMUM_SONG_LENGTH_SECONDS);
   const [operationBusy, setBusy] = useState(false);
+  const operationPending = useRef(false);
+  const pendingMutation = useRef<Promise<boolean> | null>(null);
+  const navigationSequence = useRef(0);
+  const [reloadRequired, setReloadRequired] = useState(false);
+  const [reloadSequence, setReloadSequence] = useState(0);
   const [backgroundSyncing, setBackgroundSyncing] = useState(false);
   const [backgroundLibrary, setBackgroundLibrary] = useState<LibraryStatus | null>(null);
   const handledBackgroundLibrary = useRef<LibraryStatus | null>(null);
-  const busy = operationBusy || backgroundSyncing;
+  const busy = operationBusy || backgroundSyncing || reloadRequired;
   const [view, setView] = useState<LibraryView | null>(null);
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
   const startupChecked = useRef(false);
@@ -218,6 +214,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [exportPlaylistId, setExportPlaylistId] = useState<string | null>(null);
   const [error, setError] = useState<DisplayError | null>(null);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const reportError = useCallback((message: string): void => setFeedback({ tone: 'warning', message }), []);
   const errorRef = useRef<HTMLDivElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState('');
@@ -243,6 +240,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [playbackFailed, setPlaybackFailed] = useState(false);
   const hasLibrary = view !== null;
   const libraryVersion = view?.library.revision ?? 'empty';
+  const browseState = useRef({ query, filters, view, playlists });
+  useEffect(() => { browseState.current = { query, filters, view, playlists }; }, [query, filters, view, playlists]);
 
   useEffect(() => {
     if (error === null && feedback === null) return;
@@ -266,11 +265,10 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             if (!active) return;
             const syncResult = startup.syncResult?.kind === 'cancelled' ? null : startup.syncResult;
             setStartupSyncResult(syncResult);
-            if (startup.message !== null || startup.warnings.length > 0) {
-              setFeedback({ tone: startup.warnings.length ? 'warning' : 'success',
-                message: [startup.message, ...startup.warnings].filter(Boolean).join(' ') });
+            if (startup.warnings.length > 0) {
+              setFeedback({ tone: 'warning', message: startup.warnings.join(' ') });
             }
-            if (syncResult !== null || startup.warnings.length > 0) setActivePage('connections');
+            if ((syncResult !== null && (syncResult.kind !== 'synced' || syncResult.warnings.length > 0)) || startup.warnings.length > 0) setActivePage('connections');
           } catch (cause) {
             if (!active) return;
             setFeedback({ tone: 'warning', message: `Could not check for changed libraries. ${cause instanceof Error ? cause.message : 'Try reopening Arsenal.'}` });
@@ -278,6 +276,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           }
           startupChecked.current = true;
         }
+        await pendingMutation.current;
+        if (!active) return;
         const [status, settings, connected] = await Promise.all([
           window.djLibrary.status(), window.preferences.library(),
           playlistWindow ? Promise.resolve(null) : window.djLibrary.connections(),
@@ -312,6 +312,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           setView({ library: status.library, page });
           setPlaylists(tree.playlists);
           setFolders(tree.folders);
+          setReloadRequired(false);
         }
       } catch {
         if (active) {
@@ -328,10 +329,10 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     return () => {
       active = false;
     };
-  }, [playlistWindow, minimumSongLengthSeconds]);
+  }, [playlistWindow, minimumSongLengthSeconds, reloadSequence]);
 
   useEffect(() => {
-    if (!hasLibrary || playlistWindow !== undefined) {
+    if (!hasLibrary || playlistWindow !== undefined || operationBusy) {
       return;
     }
 
@@ -361,7 +362,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     return () => {
       active = false;
     };
-  }, [duplicateMode, duplicateRefresh, hasLibrary, libraryVersion, playlistWindow, minimumSongLengthSeconds]);
+  }, [duplicateMode, duplicateRefresh, hasLibrary, libraryVersion, playlistWindow, minimumSongLengthSeconds, operationBusy]);
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent): void => {
@@ -515,28 +516,38 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   };
 
   const refreshLibrary = async (library: LibrarySummary): Promise<void> => {
-    searchSequence.current += 1;
-    setSearching(false);
+    const browsing = browseState.current;
+    const sequence = searchSequence.current;
+    const maxOffset = Math.max(0, Math.floor(Math.max(0, library.songCount - 1) / SONG_PAGE_SIZE) * SONG_PAGE_SIZE);
     const [page, tree] = await Promise.all([
-      window.djLibrary.listSongs({ offset: 0, limit: SONG_PAGE_SIZE }),
+      window.djLibrary.searchSongs({ offset: Math.min(browsing.view?.page.offset ?? 0, maxOffset),
+        limit: SONG_PAGE_SIZE, query: browsing.query, filters: browsing.filters }),
       loadPlaylistTree(),
     ]);
     stopPlayback();
-    setView({ library, page });
+    if (sequence === searchSequence.current) {
+      setSearching(false);
+      setView({ library, page });
+      setViewQuery(browsing.query);
+      setViewFilters(browsing.filters);
+    } else setView((current) => current === null ? null : { ...current, library });
     setPlaylists(tree.playlists);
     setFolders(tree.folders);
-    setSelectedPlaylistId(null);
-    setQuery('');
-    setViewQuery('');
-    setFilters(DEFAULT_SONG_FILTERS);
-    setViewFilters(DEFAULT_SONG_FILTERS);
+    setSelectedPlaylistId((current) => {
+      const selected = browseState.current.playlists?.find((playlist) => playlist.id === current);
+      return selected ? tree.playlists.find((playlist) =>
+        JSON.stringify(playlistPath(playlist)) === JSON.stringify(playlistPath(selected)))?.id ?? null : null;
+    });
   };
 
   const manageConnection = async (
     operation: () => Promise<LibraryConnectionResult>,
     openView = false,
+    disconnectId?: string,
   ): Promise<LibraryConnectionResult> => {
-    if (busy) return { kind: 'cancelled' };
+    if (busy || operationPending.current) return { kind: 'cancelled' };
+    operationPending.current = true;
+    const navigation = navigationSequence.current;
     setBusy(true);
     setStartupSyncResult(null);
     searchSequence.current += 1;
@@ -545,10 +556,15 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setFilters(viewFilters);
     setError(null);
     setFeedback(null);
+    if (disconnectId && connections) setConnections({ ...connections,
+      connections: connections.connections.filter((connection) => connection.id !== disconnectId) });
 
     try {
       const result = await operation();
-      if (result.kind !== 'updated') return result;
+      if (result.kind !== 'updated') {
+        if (disconnectId) setConnections(connections);
+        return result;
+      }
       setConnections(result.connections);
       try {
         if (result.status.kind === 'ready') {
@@ -567,20 +583,24 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           setDuplicateState({ kind: 'empty' });
         }
       } catch {
-        setActivePage('connections');
+        setReloadRequired(true);
+        if (navigation === navigationSequence.current) setActivePage('connections');
         return { ...result, warnings: [...result.warnings, 'Connection saved, but Arsenal could not refresh the collection view. Open the connection again.'] };
       }
-      setActivePage(openView && result.status.kind === 'ready' && result.warnings.length === 0 ? 'library' : 'connections');
+      if (navigation === navigationSequence.current) setActivePage(openView && result.status.kind === 'ready' && result.warnings.length === 0 ? 'library' : 'connections');
       return result;
     } catch (error) {
+      if (disconnectId) setConnections(connections);
       return { kind: 'rejected', message: error instanceof Error ? error.message : 'Could not update the library connection.' };
     } finally {
+      operationPending.current = false;
       setBusy(false);
     }
   };
 
   const runSync = async (operation: () => Promise<SyncResult>): Promise<SyncResult> => {
-    if (busy) return { kind: 'cancelled' };
+    if (busy || operationPending.current) return { kind: 'cancelled' };
+    operationPending.current = true;
     setBusy(true);
     setStartupSyncResult(null);
     searchSequence.current += 1;
@@ -596,6 +616,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           await refreshLibrary(status.library);
         }
       } catch {
+        setReloadRequired(true);
         return { ...result, warnings: [...result.warnings, 'Arsenal could not refresh the library view. Reopen the library to see the changes.'] };
       }
       return result;
@@ -604,138 +625,194 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         message: error instanceof Error ? error.message : 'Could not finish syncing. Check the libraries and try again.',
       };
     } finally {
+      operationPending.current = false;
       setBusy(false);
     }
   };
 
-  const applyOperation = async (
-    operation: () => Promise<LibraryMutationResult | null>,
+  const applyMutation = (
+    changeFor: (revision: string) => LibraryMutation,
+    songs: readonly SongRow[] = [],
   ): Promise<boolean> => {
-    if (busy || view === null) {
-      return false;
-    }
-
+    if (busy || operationPending.current || view === null || playlists === null) return Promise.resolve(false);
+    const change = changeFor(libraryVersion);
+    operationPending.current = true;
     setBusy(true);
     searchSequence.current += 1;
     setSearching(false);
     setError(null);
     setFeedback(null);
-    try {
-      const result = await operation();
-      if (result === null) return false;
-      if (result.kind === 'rejected') {
-        if (result.message) setFeedback({ tone: 'warning', message: result.message });
-        else setError(result.reason);
-        return false;
-      }
+    const navigation = navigationSequence.current;
+    let optimisticPlaylists = playlists;
+    let optimisticFolders = folders;
+    let rollbackEditor = editor;
+    let optimisticSelectedId = selectedPlaylistId;
+    const knownSongs = new Map([
+      ...view.page.items, ...playlists.flatMap((playlist) => playlist.tracks),
+      ...(duplicateState.kind === 'ready' ? duplicateState.scan.groups.flatMap((group) => group.candidates.map((candidate) => candidate.song)) : []),
+      ...songs,
+    ].map((song) => [song.id, song]));
+    const tracksFor = (ids: readonly string[]): readonly SongRow[] => ids.flatMap((id) => {
+      const song = knownSongs.get(id);
+      return song ? [song] : [];
+    });
+    const temporaryId = `pending-${++editorSequence.current}`;
 
-      if (playlistWindow !== undefined) {
-        window.close();
-        return true;
+    switch (change.kind) {
+      case 'ignore-duplicate-group':
+        if (duplicateState.kind === 'ready') setDuplicateState({ ...duplicateState, scan: { ...duplicateState.scan,
+          groups: duplicateState.scan.groups.filter((group) => group.key !== change.groupKey),
+          ignoredGroupCount: duplicateState.scan.ignoredGroupCount + 1,
+        } });
+        break;
+      case 'remove-songs': {
+        const removedIds = new Set(change.songIds);
+        const matches = (song: SongRow): boolean => {
+          const text = [song.title, song.artist, song.album, song.genre, song.musicalKey].filter(Boolean).join(' ').toLocaleLowerCase();
+          if (!viewQuery.trim().toLocaleLowerCase().split(/\s+/).every((term) => text.includes(term))) return false;
+          if (viewFilters.source !== 'all' && song.source !== viewFilters.source) return false;
+          if (viewFilters.metadata === 'complete') return songMetadataGapCount(song) === 0;
+          if (viewFilters.metadata === 'incomplete') return songMetadataGapCount(song) > 0;
+          return viewFilters.metadata !== 'no-cues' || song.cuePointCount === 0;
+        };
+        const total = Math.max(0, view.page.total - tracksFor([...removedIds]).filter(matches).length);
+        setView({ library: { ...view.library, songCount: Math.max(0, view.library.songCount - removedIds.size),
+          totalSongCount: Math.max(0, view.library.totalSongCount - removedIds.size) },
+        page: { ...view.page, items: view.page.items.filter((song) => !removedIds.has(song.id)), total,
+          hasNext: view.page.offset + view.page.limit < total } });
+        optimisticPlaylists = playlists.map((playlist) => ({ ...playlist, tracks: playlist.tracks.filter((song) => !removedIds.has(song.id)) }));
+        if (duplicateState.kind === 'ready') setDuplicateState({ ...duplicateState, scan: { ...duplicateState.scan,
+          groups: duplicateState.scan.groups.map((group) => ({ ...group,
+            candidates: group.candidates.filter((candidate) => !removedIds.has(candidate.song.id)),
+          })).filter((group) => group.candidates.length > 1),
+          trackCount: Math.max(0, duplicateState.scan.trackCount - removedIds.size),
+        } });
+        setPlaybackQueue((queue) => queue.filter((song) => !removedIds.has(song.id)));
+        if (playingSong && removedIds.has(playingSong.id)) stopPlayback();
+        break;
       }
-
-      if (result.kind === 'duplicate-ignored') {
-        setDuplicateState({
-          kind: 'ready',
-          libraryVersion: result.library.revision,
-          scan: result.scan,
-        });
-        setFeedback({
-          tone: 'success',
-          message: 'Group ignored.',
-        });
-        return true;
+      case 'set-playlist-tracks':
+        optimisticPlaylists = playlists.map((playlist) => playlist.id === change.playlistId
+          ? { ...playlist, tracks: tracksFor(change.songIds), missingTrackCount: 0 } : playlist);
+        break;
+      case 'remove-playlist':
+        optimisticPlaylists = playlists.filter((playlist) => playlist.id !== change.playlistId);
+        if (selectedPlaylistId === change.playlistId) optimisticSelectedId = null;
+        break;
+      case 'move-playlist-node': {
+        const tree = movePlaylistTree({ playlists, folders }, change.sourcePath, change.parentPath, change.beforePath);
+        if (tree) { optimisticPlaylists = tree.playlists; optimisticFolders = tree.folders; }
+        break;
       }
-
-      if (result.kind === 'playlist-node-moved') {
-        const tree = await loadPlaylistTree();
-        setView((current) => current === null ? null : { ...current, library: result.library });
-        setPlaylists(tree.playlists);
-        setFolders(tree.folders);
-        if (result.warning) setFeedback({ tone: 'warning', message: result.warning });
-        setSelectedPlaylistId((current) => {
-          const selected = playlists?.find((playlist) => playlist.id === current);
-          if (!selected) return null;
-          const path = [...selected.folderPath, selected.name];
-          const moved = JSON.stringify(path.slice(0, result.sourcePath.length)) === JSON.stringify(result.sourcePath);
-          const wanted = moved ? [...result.destinationPath, ...path.slice(result.sourcePath.length)] : path;
-          return tree.playlists.find((playlist) =>
-            JSON.stringify([...playlist.folderPath, playlist.name]) === JSON.stringify(wanted))?.id ?? null;
-        });
-        return true;
-      }
-
-      searchSequence.current += 1;
-      setSearching(false);
-      const maxOffset = Math.max(
-        0,
-        Math.floor(Math.max(0, result.library.songCount - 1) / SONG_PAGE_SIZE) *
-          SONG_PAGE_SIZE,
-      );
-      const [page, tree, scan] = await Promise.all([
-        window.djLibrary.searchSongs({
-          offset: Math.min(view.page.offset, maxOffset),
-          limit: SONG_PAGE_SIZE,
-          query,
-          filters,
-        }),
-        loadPlaylistTree(),
-        window.djLibrary.findDuplicates(duplicateMode),
-      ]);
-      setView({ library: result.library, page });
-      setPlaylists(tree.playlists);
-      setFolders(tree.folders);
-      setViewQuery(query);
-      setViewFilters(filters);
-      setDuplicateState({
-        kind: 'ready',
-        libraryVersion: result.library.revision,
-        scan,
-      });
-      setFeedback(result.warning ? { tone: 'warning', message: result.warning } : result.kind === 'songs-removed'
-          ? feedbackForRemoval(result)
-          : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : result.kind === 'playlist-updated' ? 'Playlist saved.' : result.kind === 'playlist-removed' ? 'Playlist removed.' : 'Playlist created.' });
-      if (result.kind === 'playlist-created' || result.kind === 'smart-playlist-saved' || result.kind === 'playlist-updated') {
+      case 'create-folder':
+      case 'create-playlist':
+      case 'save-smart-playlist': {
+        const folderPath = folders.find((folder) => folder.id === change.parentFolderId)?.folderPath ?? [];
+        const name = change.name.trim();
+        if (change.kind === 'create-folder') {
+          optimisticFolders = [...folders, { id: temporaryId, name, parentFolderId: change.parentFolderId,
+            folderPath: [...folderPath, name], order: playlists.length + folders.length }];
+        } else {
+          const existing = change.kind === 'save-smart-playlist' ? playlists.find((playlist) => playlist.id === change.playlistId) : undefined;
+          const playlist: RekordboxPlaylist = { id: existing?.id ?? temporaryId, name, parentFolderId: change.parentFolderId,
+            folderPath, order: existing?.order ?? playlists.length + folders.length,
+            kind: change.kind === 'save-smart-playlist' ? 'smart' : 'regular',
+            tracks: change.kind === 'create-playlist' ? tracksFor(change.songIds) : songs,
+            missingTrackCount: 0, smartRules: existing?.smartRules ?? null,
+            smartDefinition: change.kind === 'save-smart-playlist' ? change.definition : null,
+          };
+          optimisticPlaylists = existing ? playlists.map((item) => item.id === existing.id ? playlist : item) : [...playlists, playlist];
+          optimisticSelectedId = playlist.id;
+          setActivePage('playlists');
+        }
+        if (editor) rollbackEditor = { ...editor, initialName: name,
+          initialSongs: change.kind === 'create-playlist' ? tracksFor(change.songIds) : editor.initialSongs,
+          request: { ...editor.request, parentFolderId: change.parentFolderId },
+          ...(change.kind === 'save-smart-playlist' ? { smartDefinition: change.definition } : {}),
+        };
         setEditor(null);
-        setSelectedPlaylistId(result.playlistId);
-        setActivePage('playlists');
-      } else if (result.kind === 'folder-created') {
-        setEditor(null);
-      } else if (result.kind === 'playlist-removed') {
-        setSelectedPlaylistId(null);
+        break;
       }
-      return true;
-    } catch {
-      setError('unexpected');
-      return false;
-    } finally {
-      setBusy(false);
     }
-  };
+    setPlaylists(optimisticPlaylists);
+    setFolders(optimisticFolders);
+    setSelectedPlaylistId(optimisticSelectedId);
+    if (optimisticPlaylists.length !== playlists.length) setView((current) => current === null ? null : {
+      ...current, library: { ...current.library, playlistCount: optimisticPlaylists.length },
+    });
 
-  const applyMutation = (changeFor: (revision: string) => LibraryMutation): Promise<boolean> =>
-    applyOperation(() => window.djLibrary.mutate(changeFor(libraryVersion)));
-
-  const movePlaylistNode = async (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null): Promise<boolean> => {
-    if (busy || view === null || playlists === null) return false;
-    const optimistic = movePlaylistTree({ playlists, folders }, sourcePath, parentPath, beforePath);
-    if (optimistic !== null) {
-      setPlaylists(optimistic.playlists);
-      setFolders(optimistic.folders);
-    }
-    const saved = await applyMutation((revision) => ({ kind: 'move-playlist-node', revision, sourcePath, parentPath, beforePath }));
-    if (!saved && optimistic !== null) {
+    const rollback = (): void => {
+      setView(view);
       setPlaylists(playlists);
       setFolders(folders);
-    }
-    return saved;
+      setDuplicateState(duplicateState);
+      if (change.kind === 'remove-songs') setPlaybackQueue(playbackQueue);
+      if (navigation === navigationSequence.current) {
+        setEditor(rollbackEditor);
+        setSelectedPlaylistId(selectedPlaylistId);
+        setActivePage(activePage);
+      } else setSelectedPlaylistId((current) => current === temporaryId ? selectedPlaylistId : current);
+    };
+
+    const save = async (): Promise<boolean> => {
+      let committed = false;
+      try {
+        const result = await window.djLibrary.mutate(change);
+        if (result.kind === 'rejected') {
+          rollback();
+          if (result.message) setFeedback({ tone: 'warning', message: result.message });
+          else setError(result.reason);
+          return false;
+        }
+        committed = true;
+        if (playlistWindow) { window.close(); return true; }
+        if (result.warning) setFeedback({ tone: 'warning', message: result.warning });
+        else if (result.kind === 'songs-removed') setFeedback(feedbackForRemoval(result));
+        if (result.kind === 'duplicate-ignored') {
+          setDuplicateState({ kind: 'ready', libraryVersion: result.library.revision, scan: result.scan });
+          return true;
+        }
+        const maxOffset = Math.max(0, Math.floor(Math.max(0, result.library.songCount - 1) / SONG_PAGE_SIZE) * SONG_PAGE_SIZE);
+        const [page, tree] = await Promise.all([
+          window.djLibrary.searchSongs({ offset: Math.min(view.page.offset, maxOffset), limit: SONG_PAGE_SIZE, query: viewQuery, filters: viewFilters }),
+          loadPlaylistTree(),
+        ]);
+        setView({ library: result.library, page });
+        setPlaylists(tree.playlists);
+        setFolders(tree.folders);
+        setSelectedPlaylistId((current) => {
+          const selected = optimisticPlaylists.find((playlist) => playlist.id === current);
+          return selected ? tree.playlists.find((playlist) =>
+            JSON.stringify(playlistPath(playlist)) === JSON.stringify(playlistPath(selected)))?.id ?? null : null;
+        });
+        return true;
+      } catch {
+        if (committed) {
+          setReloadRequired(true);
+          setFeedback({ tone: 'warning', message: 'The change was saved, but the library could not refresh. Reload it before making another edit.' });
+        } else { rollback(); setError('unexpected'); }
+        return committed;
+      } finally {
+        operationPending.current = false;
+        pendingMutation.current = null;
+        setBusy(false);
+      }
+    };
+    const pending = save();
+    pendingMutation.current = pending;
+    return pending;
   };
 
-  const openPlaylistEditor = (request: PlaylistWindowRequest, initialName = ''): void => {
+  const movePlaylistNode = (sourcePath: readonly string[], parentPath: readonly string[], beforePath: readonly string[] | null): Promise<boolean> =>
+    applyMutation((revision) => ({ kind: 'move-playlist-node', revision, sourcePath, parentPath, beforePath }));
+
+  const openPlaylistEditor = (request: PlaylistWindowRequest, initialName = '', initialSongs: readonly SongRow[] = []): void => {
+    if (busy || operationPending.current) return;
+    const navigation = ++navigationSequence.current;
     const loadEditor = async (): Promise<void> => {
       const wanted = new Set(request.kind === 'playlist' ? request.songIds : []);
       const songs = new Map<string, SongRow>();
-      for (const song of [...(view?.page.items ?? []), ...(playlists?.flatMap((playlist) => playlist.tracks) ?? [])]) {
+      for (const song of [...(view?.page.items ?? []), ...(playlists?.flatMap((playlist) => playlist.tracks) ?? []), ...initialSongs]) {
         if (wanted.has(song.id)) songs.set(song.id, song);
       }
       try {
@@ -746,6 +823,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           if (!page.hasNext) break;
           offset += page.limit;
         }
+        if (navigation !== navigationSequence.current) return;
         if (songs.size !== wanted.size) { setError('song-not-found'); return; }
         setEditor({ id: ++editorSequence.current, request, initialSongs: [...wanted].flatMap((id) => {
           const song = songs.get(id);
@@ -757,44 +835,19 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     void loadEditor();
   };
 
-  const removeSongs = async (
-    songIds: readonly string[],
-    removeLocalFile: boolean,
-  ): Promise<boolean> => {
-    const removed = await applyMutation((revision) => ({
-      kind: 'remove-songs',
-      revision,
-      songIds,
-      removeLocalFile,
-    }));
-    if (removed) setPlaybackQueue((queue) => queue.filter((song) => !songIds.includes(song.id)));
-    if (removed && playingSong !== null && songIds.includes(playingSong.id)) {
-      stopPlayback();
-    }
-    return removed;
-  };
+  const removeSongs = (songIds: readonly string[], removeLocalFile: boolean, songs: readonly SongRow[] = []): Promise<boolean> =>
+    applyMutation((revision) => ({ kind: 'remove-songs', revision, songIds, removeLocalFile }), songs);
 
-  const createPlaylist = (
-    name: string,
-    songIds: readonly string[],
-    parentFolderId: string | null = null,
-  ): Promise<boolean> =>
-    applyMutation((revision) => ({
-      kind: 'create-playlist',
-      parentFolderId,
-      revision,
-      name,
-      songIds,
-    }));
+  const createPlaylist = (name: string, songIds: readonly string[], parentFolderId: string | null = null, songs: readonly SongRow[] = []): Promise<boolean> =>
+    applyMutation((revision) => ({ kind: 'create-playlist', parentFolderId, revision, name, songIds }), songs);
 
-  const addToPlaylist = (playlist: RekordboxPlaylist, songIds: readonly string[]): Promise<boolean> =>
-    applyMutation((revision) => ({
-      kind: 'set-playlist-tracks', revision, playlistId: playlist.id,
+  const addToPlaylist = (playlist: RekordboxPlaylist, songIds: readonly string[], songs: readonly SongRow[] = []): Promise<boolean> =>
+    applyMutation((revision) => ({ kind: 'set-playlist-tracks', revision, playlistId: playlist.id,
       songIds: [...new Set([...playlist.tracks.map((song) => song.id), ...songIds])],
-    }));
+    }), songs);
 
   const changePage = async (offset: number, nextQuery = query, nextFilters: SongFilters = filters): Promise<void> => {
-    if (busy || view === null || offset < 0) {
+    if (view === null || offset < 0) {
       return;
     }
 
@@ -803,6 +856,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setError(null);
 
     try {
+      await pendingMutation.current;
+      if (sequence !== searchSequence.current) return;
       const page = await window.djLibrary.searchSongs({
         offset,
         limit: SONG_PAGE_SIZE,
@@ -810,7 +865,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         filters: nextFilters,
       });
       if (sequence === searchSequence.current) {
-        setView({ library: view.library, page });
+        setView((current) => current === null ? null : { ...current, page });
         setViewQuery(nextQuery);
         setViewFilters(nextFilters);
       }
@@ -828,16 +883,16 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   };
 
   const navigate = (nextPage: PageId): void => {
-    if (busy) return;
+    navigationSequence.current += 1;
     setEditor(null);
     setActivePage(nextPage);
-    if (nextPage === 'connections') {
+    if (nextPage === 'connections' && !operationPending.current) {
       void window.djLibrary.connections().then(setConnections).catch(() => setError('unexpected'));
     }
   };
 
   const selectPlaylist = (playlistId: string): void => {
-    if (busy) return;
+    navigationSequence.current += 1;
     setEditor(null);
     setSelectedPlaylistId(playlistId);
     setActivePage('playlists');
@@ -884,14 +939,14 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     switch (activePage) {
       case 'connections':
         return <LibraryConnectionsPage busy={busy} state={connections}
-          initialSyncResult={startupSyncResult}
+          initialSyncResult={startupSyncResult} onError={reportError}
           onImportBackup={(mode) => manageConnection(() => window.djLibrary.importBackup(mode), true)}
           onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind), true)}
-          onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open')}
+          onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open', action.kind === 'disconnect' ? action.id : undefined)}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
           onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />;
       case 'preferences':
-        return <Preferences onCancel={() => setActivePage('library')} onSaved={() => setFeedback({ tone: 'success', message: 'Preferences saved.' })} />;
+        return <Preferences onCancel={() => navigate('library')} onError={reportError} />;
       case 'library':
         return (
           <LibraryPage
@@ -903,7 +958,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               setFilters(nextFilters);
               void changePage(0, nextQuery, nextFilters);
             }}
-            onCreate={(songIds) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds })}
+            onCreate={(songIds, songs) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds }, '', songs)}
             onAdd={addToPlaylist}
             onRemove={removeSongs}
             onManageLibraries={() => navigate('connections')}
@@ -941,14 +996,14 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       case 'playlists': {
         const editorKey = `${libraryVersion}-${editor?.id ?? 0}-${playlistEditor?.kind ?? 'view'}`;
         if (playlistEditor?.kind === 'folder') return <FolderCreator key={editorKey} busy={busy} folders={folders}
-          initialParentFolderId={playlistEditor.parentFolderId} onCancel={cancelPlaylistEditor}
+          initialParentFolderId={playlistEditor.parentFolderId} initialName={editor?.initialName ?? ''} onCancel={cancelPlaylistEditor}
           onCreate={(name, parentFolderId) => applyMutation((revision) => ({ kind: 'create-folder', revision, name, parentFolderId }))} />;
         if ((playlistEditor?.kind === 'smart-playlist' || playlistEditor?.kind === 'edit-smart-playlist') && view !== null) {
           const editing = playlistEditor.kind === 'edit-smart-playlist' ? playlists?.find((playlist) => playlist.id === playlistEditor.playlistId) : undefined;
-          const initialDefinition = editing?.smartDefinition ?? editor?.smartDefinition;
+          const initialDefinition = editor?.smartDefinition ?? editing?.smartDefinition;
           return <SmartPlaylistEditor key={editorKey} busy={busy} folders={folders} initialParentFolderId={playlistEditor.parentFolderId}
             minimumSongLengthSeconds={minimumSongLengthSeconds}
-            initialName={editing?.name ?? editor?.initialName ?? ''}
+            initialName={editor?.initialName || editing?.name || ''}
             editing={playlistEditor.kind === 'edit-smart-playlist'}
             {...(initialDefinition ? { initialDefinition } : {})}
             onManual={(name, parentFolderId, definition) => setEditor((draft) => draft === null ? null : {
@@ -956,10 +1011,10 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               request: { kind: 'playlist', songIds: draft.initialSongs.map((song) => song.id), revision: libraryVersion, parentFolderId },
             })}
             revision={view.library.revision} playback={playback} onCancel={cancelPlaylistEditor}
-            onSave={(name, parentFolderId, definition) => applyMutation((revision) => ({
+            onSave={(name, parentFolderId, definition, songs) => applyMutation((revision) => ({
               kind: 'save-smart-playlist', revision, name, parentFolderId, definition,
               playlistId: playlistEditor.kind === 'edit-smart-playlist' ? playlistEditor.playlistId : null,
-            }))} />;
+            }), songs)} />;
         }
         return (
           <PlaylistsPage
@@ -974,9 +1029,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               ...draft, initialName: name, initialSongs: songs,
               request: { kind: 'smart-playlist', revision: libraryVersion, parentFolderId },
             })}
-            onUpdateTracks={(playlist, songIds) => applyMutation((revision) => ({ kind: 'set-playlist-tracks', revision, playlistId: playlist.id, songIds }))}
+            onUpdateTracks={(playlist, songIds, songs) => applyMutation((revision) => ({ kind: 'set-playlist-tracks', revision, playlistId: playlist.id, songIds }), songs)}
             onAdd={addToPlaylist}
-            onCreateFromSelection={(songIds) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds })}
+            onCreateFromSelection={(songIds, songs) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds }, '', songs)}
             onRemove={removeSongs}
             onMenu={(playlist) => void openPlaylistMenu(playlist.parentFolderId, playlist.id)}
             folders={folders}
@@ -1020,7 +1075,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       />}
       <main className="workspace" id="main-content">
         {feedback !== null && (
-          <div className={`app-feedback is-${feedback.tone}`} role="status" ref={feedbackRef}>
+          <div className={`app-feedback is-${feedback.tone}`} role="alert" ref={feedbackRef}>
             <p>{feedback.message}</p>
             <button type="button" onClick={() => setFeedback(null)} aria-label="Dismiss message">×</button>
           </div>
@@ -1031,6 +1086,13 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             <button type="button" onClick={() => setError(null)} aria-label="Dismiss error">×</button>
           </div>
         )}
+        {reloadRequired && <div className="app-alert" role="alert">
+          <p>Reload the library before making another edit.</p>
+          <button type="button" disabled={loading} onClick={() => {
+            setQuery(''); setViewQuery(''); setFilters(DEFAULT_SONG_FILTERS); setViewFilters(DEFAULT_SONG_FILTERS);
+            setSelectedPlaylistId(null); setEditor(null); setLoading(true); setReloadSequence((sequence) => sequence + 1);
+          }}>Reload library</button>
+        </div>}
         {loading ? (
           <div className="loading-state" role="status">
             <span className="loading-mark" aria-hidden />
@@ -1061,7 +1123,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         volume={volume} muted={muted} onMute={() => setMuted(!muted)}
         onVolume={(value) => { setVolume(value); setMuted(false); if (audioRef.current) audioRef.current.volume = value; }} /> }
       {playlistWindow === undefined && exportPlaylist !== null && (
-        <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onClose={() => setExportPlaylistId(null)} />
+        <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onError={reportError} onClose={() => setExportPlaylistId(null)} />
       )}
     </div>
   );

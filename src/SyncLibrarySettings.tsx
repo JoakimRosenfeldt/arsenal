@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
 
 import type { LibraryConnections, LibrarySourceKind, SyncActivity, SyncDirection, SyncFields, SyncMissingFileAction, SyncPreferences, SyncRequest, SyncResult } from './shared/dj-library';
 
@@ -22,11 +22,12 @@ const libraryKinds = [
   { kind: 'serato', label: 'Serato library', key: 'seratoPath' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string; key: 'rekordboxPath' | 'seratoPath' }[];
 
-export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissing, initialResult = null }: Readonly<{
+export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissing, onError, initialResult = null }: Readonly<{
   busy: boolean;
   connections: LibraryConnections | null;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
+  onError?: (message: string) => void;
   initialResult?: Exclude<SyncResult, { kind: 'cancelled' }> | null;
 }>): JSX.Element => {
   const resultRef = useRef<HTMLElement>(null);
@@ -35,6 +36,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const draftChanged = useRef(false);
   const activityResultKey = useRef<string | null>(null);
   const backgroundResult = useRef<SyncActivity['result']>(null);
+  const stoppingSync = useRef(false);
+  const mounted = useRef(true);
   const [preferences, setPreferences] = useState<SyncPreferences | null>(null);
   const [preferencesFor, setPreferencesFor] = useState<LibraryConnections | null | undefined>(undefined);
   const [pending, setPending] = useState(false);
@@ -82,6 +85,19 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const hasMissingFiles = missingFiles !== null && missingFiles.length > 0;
   const hasIssues = result !== null && (result.kind === 'rejected' || hasMissingFiles || result.warnings.length > 0 ||
     result.kind === 'synced' && result.skippedTrackCount > 0);
+  const reportError = useCallback((message: string): void => {
+    if (onError) onError(message);
+    else {
+      setRepairError(message);
+      setResult((current) => current?.kind === 'missing-files' ? current
+        : { kind: 'rejected', warnings: current?.warnings ?? [], backupPaths: current?.backupPaths ?? [], message });
+    }
+  }, [onError]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -101,19 +117,17 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
       if (!active) return;
       const message = `Could not load sync settings. ${error instanceof Error ? error.message : 'Reopen Connections to try again.'}`;
       setPreferences(null);
-      setRepairError(message);
-      setResult((current) => current?.kind === 'missing-files' ? current
-        : { kind: 'rejected', warnings: [], backupPaths: [], message });
+      reportError(message);
     }).finally(() => { if (active) setPreferencesFor(connections); });
     return () => { active = false; };
-  }, [connections]);
+  }, [connections, reportError]);
 
   useEffect(() => {
     let active = true;
     let receivedUpdate = false;
     const updateActivity = (next: SyncActivity): void => {
       if (!active) return;
-      setActivity(next);
+      if (!stoppingSync.current) setActivity(next);
       setActivityError(null);
       const resultKey = JSON.stringify(next.result);
       if (resultKey === activityResultKey.current) return;
@@ -134,13 +148,15 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
       if (!receivedUpdate) updateActivity(next);
     }).catch((error: unknown) => {
       if (!active || receivedUpdate) return;
-      setActivityError(error instanceof Error ? error.message : 'Could not load ongoing sync status. Reopen Connections to try again.');
+      const message = error instanceof Error ? error.message : 'Could not load ongoing sync status. Reopen Connections to try again.';
+      if (onError) onError(message);
+      else setActivityError(message);
     });
     return () => {
       active = false;
       unsubscribe();
     };
-  }, []);
+  }, [onError]);
 
   useEffect(() => {
     if (result !== null && result !== backgroundResult.current) {
@@ -174,47 +190,59 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
       } catch {
         const message = 'Could not load library locations. Reopen Connections before syncing again.';
         setPreferences(null);
-        next = next.kind === 'cancelled' ? { kind: 'rejected', message, warnings: [], backupPaths: [] }
+        if (onError) onError(message);
+        else next = next.kind === 'cancelled' ? { kind: 'rejected', message, warnings: [], backupPaths: [] }
           : { ...next, warnings: [...next.warnings, message] };
       }
+      if (next.kind === 'rejected' && onError) {
+        onError([next.message, ...next.warnings].join(' '));
+        setResult(result?.kind === 'missing-files' ? result : null);
+        return;
+      }
+      if (!mounted.current && next.kind !== 'cancelled' && (next.kind === 'missing-files' || next.warnings.length > 0 ||
+        next.kind === 'synced' && next.skippedTrackCount > 0)) onError?.([next.message, ...next.warnings].join(' '));
       setResult(next.kind === 'cancelled' ? result : result?.kind === 'missing-files'
         ? { ...next, backupPaths: [...new Set([...result.backupPaths, ...next.backupPaths])] } : next);
     } catch (error: unknown) {
-      setResult({ kind: 'rejected', warnings: result?.warnings ?? [], backupPaths: result?.backupPaths ?? [],
-        message: error instanceof Error ? error.message : 'Could not sync the libraries. Try again.',
-      });
+      reportError(error instanceof Error ? error.message : 'Could not sync the libraries. Try again.');
     } finally {
       setPending(false);
     }
   };
 
   const stopOngoingSync = async (): Promise<void> => {
-    if (busy || pending) return;
+    if (busy || pending || stoppingSync.current) return;
+    stoppingSync.current = true;
     setPending(true);
+    setActivity((current) => current === null ? null : { ...current, state: 'off' });
+    setRepairError(null);
     try {
       setActivity(await window.djLibrary.stopOngoingSync());
     } catch (error: unknown) {
+      setActivity(activity);
       const message = error instanceof Error ? error.message : 'Could not stop ongoing sync. Try again.';
-      setRepairError(message);
-      setResult((current) => current?.kind === 'missing-files' ? current
-        : { kind: 'rejected', message, warnings: [], backupPaths: [] });
+      reportError(message);
     } finally {
+      stoppingSync.current = false;
       setPending(false);
     }
   };
 
   const chooseLibrary = async (id: string): Promise<void> => {
-    if (!id || working) return;
+    const connection = nativeConnections.find((entry) => entry.id === id);
+    if (connection === undefined || working || preferences === null) return;
     setPending(true);
+    setPreferences({ ...preferences,
+      [connection.kind === 'rekordbox' ? 'rekordboxPath' : 'seratoPath']: connection.path });
+    setResult((current) => current?.kind === 'missing-files' ? current : null);
+    setRepairError(null);
+    setRemovePaths([]);
     try {
       setPreferences(await window.djLibrary.selectSyncLibrary(id));
-      setResult((current) => current?.kind === 'missing-files' ? current : null);
-      setRepairError(null);
-      setRemovePaths([]);
     } catch (error) {
+      setPreferences(preferences);
       const message = error instanceof Error ? error.message : 'Could not choose the library. Try again.';
-      if (missingFiles !== null) setRepairError(message);
-      else setResult({ kind: 'rejected', warnings: [], backupPaths: [], message });
+      reportError(message);
     } finally {
       setPending(false);
     }
@@ -224,16 +252,36 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     if (working) return;
     setPending(true);
     setRepairError(null);
+    const repairedPaths = new Set(action.kind === 'remove-many' ? action.paths
+      : action.kind === 'relink-many' ? action.replacements.map((replacement) => replacement.path)
+        : action.kind === 'remove' || action.kind === 'relink' ? [action.path] : []);
+    if (result?.kind === 'missing-files' && repairedPaths.size > 0) {
+      setResult({ ...result, files: result.files.filter((file) => !repairedPaths.has(file.path)) });
+      setRemovePaths([]);
+    }
     try {
       const next = await onResolveMissing(action);
-      if (next.kind === 'cancelled') return;
+      if (next.kind === 'cancelled') {
+        if (repairedPaths.size > 0) setResult(result);
+        return;
+      }
       if (next.kind === 'rejected') {
+        if (onError) {
+          onError([next.message, ...next.warnings].join(' '));
+          setResult(result?.kind === 'missing-files' ? result : null);
+          return;
+        }
         setRepairError(next.message);
-        setResult((current) => current?.kind === 'missing-files'
-          ? { ...current, warnings: [...new Set([...current.warnings, ...next.warnings])],
-            backupPaths: [...new Set([...current.backupPaths, ...next.backupPaths])] }
-          : next);
+        setResult((current) => {
+          const previous = repairedPaths.size > 0 ? result : current;
+          return previous?.kind === 'missing-files'
+            ? { ...previous, warnings: [...new Set([...previous.warnings, ...next.warnings])],
+              backupPaths: [...new Set([...previous.backupPaths, ...next.backupPaths])] }
+            : next;
+        });
       } else {
+        if (!mounted.current && (next.kind === 'missing-files' && next.files.length > 0 || next.warnings.length > 0 ||
+          next.kind === 'synced' && next.skippedTrackCount > 0)) onError?.([next.message, ...next.warnings].join(' '));
         setResult((current) => ({ ...next,
           warnings: [...new Set([...(current?.warnings ?? []), ...next.warnings])],
           backupPaths: [...new Set([...(current?.backupPaths ?? []), ...next.backupPaths])],
@@ -243,7 +291,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
         setRemovePaths([]);
       }
     } catch (error: unknown) {
-      setRepairError(error instanceof Error ? error.message : 'Could not update the missing files. Try again.');
+      if (repairedPaths.size > 0) setResult(result);
+      reportError(error instanceof Error ? error.message : 'Could not update the missing files. Try again.');
     } finally {
       setPending(false);
     }
@@ -256,7 +305,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
 
         {activity !== null && (
           <div className="library-sync-activity">
-            <p role="status">{activity.state === 'watching' ? 'Ongoing sync is on. App edits sync automatically.'
+            <p>{activity.state === 'watching' ? 'Ongoing sync is on. App edits sync automatically.'
               : activity.state === 'syncing' ? 'Ongoing sync is updating your libraries…'
               : activity.state === 'attention' ? 'Ongoing sync needs attention. Resolve the issue below, then start it again.'
               : 'Ongoing sync is off.'}
@@ -268,14 +317,15 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
         )}
         {activityError !== null && <p className="library-sync-recovery-error" role="alert">{activityError}</p>}
 
-        {result !== null && (
+        {result !== null && (hasIssues || result.kind === 'missing-files') && (
           <section className={`library-sync-result${hasIssues ? ' library-sync-result-warning' : ''}`} ref={resultRef}
-            tabIndex={-1} role={hasIssues ? 'alert' : 'status'} aria-labelledby="library-sync-result-title">
+            tabIndex={-1} role={hasIssues ? 'alert' : undefined} aria-labelledby="library-sync-result-title">
             <h3 id="library-sync-result-title">{result.kind === 'missing-files'
-              ? hasMissingFiles ? 'Missing audio files' : 'Missing files resolved'
+              ? hasMissingFiles ? 'Missing audio files' : 'Resume sync'
               : result.kind === 'rejected' ? 'Sync stopped'
-              : hasIssues ? 'Sync completed with issues' : 'Sync completed'}</h3>
-            <p>{result.message}</p>
+              : 'Sync needs attention'}</h3>
+            <p>{result.kind === 'missing-files' && !hasIssues
+              ? 'Retry sync to apply these changes to connected libraries.' : result.message}</p>
             {missingFiles !== null && (
               <div className="library-sync-recovery" aria-busy={working}>
                 {repairError !== null && <p className="library-sync-recovery-error" role="alert">{repairError}</p>}
