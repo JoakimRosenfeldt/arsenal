@@ -17,9 +17,9 @@ Each snapshot references music relative to its own directory. Copying the entire
 
 Importing bundled music creates local working copies so syncing audio tags cannot change the backup files. Each connected library reuses its working copies when importing newer snapshots. Existing copies keep their local tag edits. Libraries imported before this protection may need to be imported again before syncing music metadata or performance data.
 
-Arsenal remembers the backup folder and music option for each connection. It checks for changes after library operations and every 30 seconds while the app is open. Unchanged libraries reuse the previous snapshot. Each setup creates a separate output directory, so different computers do not overwrite one another's snapshots. Imports are explicit and create separate local libraries.
+Backup folders appear as connections alongside DJ libraries. Each folder connection has its own source library and music option, independent of the library currently open. Multiple folders can back up the same library. Changing these settings keeps the existing output directory. It checks for changes after library operations and every 30 seconds while the app is open. Unchanged libraries reuse the previous snapshot. Each folder connection creates a separate output directory, so different computers do not overwrite one another's snapshots. Imports are explicit and create separate local libraries.
 
-Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Stopping automatic backup keeps the files already saved.
+Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Disconnecting a folder stops automatic backups and keeps the files already saved. Disconnecting its source library keeps the folder connection visible so another source can be selected.
 
 ## Changes between sessions
 

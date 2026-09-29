@@ -1,9 +1,14 @@
-export type BackupStatus = Readonly<{
-  connectionId: string | null;
-  directory: string | null;
+export type BackupConnection = Readonly<{
+  id: string;
+  sourceConnectionId: string;
+  directory: string;
   manifestPath: string | null;
   includeMusic: boolean;
-  state: 'off' | 'ready' | 'saving' | 'error';
+  state: 'ready' | 'saving' | 'error';
   lastSavedAt: string | null;
   message: string | null;
 }>;
+
+export type BackupConfiguration =
+  | Readonly<{ kind: 'connect'; sourceConnectionId: string; includeMusic: boolean }>
+  | Readonly<{ kind: 'update'; id: string; sourceConnectionId: string; includeMusic: boolean }>;

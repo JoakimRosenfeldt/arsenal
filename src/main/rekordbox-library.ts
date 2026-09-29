@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { dialog, shell, type BrowserWindow } from 'electron';
 import { DEFAULT_SONG_FILTERS, readSyncRequest, songMetadataGapCount } from '../shared/dj-library';
 import { DEFAULT_MINIMUM_SONG_LENGTH_SECONDS, type LibrarySettings } from '../shared/preferences';
-import type { BackupStatus } from '../shared/library-backup';
+import type { BackupConfiguration, BackupConnection } from '../shared/library-backup';
 
 import type {
   DuplicateGroup,
@@ -103,7 +103,8 @@ type StoredLibraryConnection = Readonly<{
 type LibrarySourceSnapshot = Awaited<ReturnType<typeof readLibrarySource>>;
 
 type StoredLibraryBackup = Readonly<{
-  connectionId: string;
+  id: string;
+  sourceConnectionId: string;
   directory: string;
   includeMusic: boolean;
   manifestPath: string | null;
@@ -225,11 +226,15 @@ const readRememberedLibrary = async (
     }
     const backups: StoredLibraryBackup[] = [];
     for (const value of Array.isArray(stored.backups) ? stored.backups : []) {
-      if (!isRecord(value) || typeof value.connectionId !== 'string' ||
-        !connections?.some((connection) => connection.id === value.connectionId) ||
-        typeof value.directory !== 'string' || !isAbsolute(value.directory) || typeof value.includeMusic !== 'boolean' ||
-        backups.some((backup) => backup.connectionId === value.connectionId)) continue;
-      backups.push({ connectionId: value.connectionId, directory: value.directory, includeMusic: value.includeMusic,
+      if (!isRecord(value) || typeof value.directory !== 'string' || !isAbsolute(value.directory) ||
+        typeof value.includeMusic !== 'boolean') continue;
+      const directory = value.directory;
+      const sourceConnectionId = typeof value.sourceConnectionId === 'string' ? value.sourceConnectionId : value.connectionId;
+      if (typeof sourceConnectionId !== 'string' || !sourceConnectionId) continue;
+      const id = typeof value.id === 'string' && value.id ? value.id
+        : `backup-${createHash('sha256').update(normalizePath(directory)).digest('hex')}`;
+      if (backups.some((backup) => backup.id === id || normalizePath(backup.directory) === normalizePath(directory))) continue;
+      backups.push({ id, sourceConnectionId, directory, includeMusic: value.includeMusic,
         manifestPath: typeof value.manifestPath === 'string' && isAbsolute(value.manifestPath) ? value.manifestPath : null,
         lastSavedAt: typeof value.lastSavedAt === 'string' ? value.lastSavedAt : null,
         fingerprint: typeof value.fingerprint === 'string' ? value.fingerprint : null });
@@ -423,7 +428,7 @@ export class RekordboxLibrary {
 
   private backups: readonly StoredLibraryBackup[] = [];
 
-  private backupStates = new Map<string, Pick<BackupStatus, 'state' | 'message'>>();
+  private backupStates = new Map<string, Pick<BackupConnection, 'state' | 'message'>>();
 
   private backupTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -682,59 +687,71 @@ export class RekordboxLibrary {
       : { kind: 'ready', library: summaryFor(this.catalog) };
   }
 
-  backupStatus(): BackupStatus {
-    const backup = this.backups.find((candidate) => candidate.connectionId === this.activeConnectionId);
+  backupStatus(): readonly BackupConnection[] {
+    return this.backups.map((backup) => this.backupConnection(backup));
+  }
+
+  private backupConnection(backup: StoredLibraryBackup): BackupConnection {
+    const sourceConnected = this.connectedLibraries.some((connection) => connection.id === backup.sourceConnectionId);
     return {
-      connectionId: this.activeConnectionId, directory: backup?.directory ?? null,
-      manifestPath: backup?.manifestPath ?? null, includeMusic: backup?.includeMusic ?? false,
-      state: backup ? 'ready' : 'off', lastSavedAt: backup?.lastSavedAt ?? null, message: null,
-      ...(backup ? this.backupStates.get(backup.connectionId) : {}),
+      id: backup.id, sourceConnectionId: backup.sourceConnectionId, directory: backup.directory,
+      manifestPath: backup.manifestPath, includeMusic: backup.includeMusic,
+      state: 'ready', lastSavedAt: backup.lastSavedAt, message: null,
+      ...this.backupStates.get(backup.id),
+      ...(!sourceConnected ? { state: 'error', message: 'The source library is disconnected. Choose another source to resume automatic backups.' } satisfies Pick<BackupConnection, 'state' | 'message'> : {}),
     };
   }
 
-  configureBackup(owner: BrowserWindow, includeMusic: boolean): Promise<BackupStatus | null> {
+  configureBackup(owner: BrowserWindow, request: BackupConfiguration): Promise<BackupConnection | null> {
     return this.enqueue(async () => {
-      const connection = this.connectedLibraries.find((candidate) => candidate.id === this.activeConnectionId);
-      if (!connection) throw new Error('Open a library before choosing its backup folder.');
-      const chosen = await dialog.showOpenDialog(owner, {
-        title: 'Choose a backup folder', buttonLabel: 'Back up here', properties: ['openDirectory', 'createDirectory'],
-      });
-      const directory = chosen.filePaths[0];
-      if (chosen.canceled || !directory) return null;
-      const backup: StoredLibraryBackup = { connectionId: connection.id,
-        directory: join(directory, `Arsenal-${randomUUID()}`), includeMusic,
-        manifestPath: null, lastSavedAt: null, fingerprint: null };
+      const connection = this.connectedLibraries.find((candidate) => candidate.id === request.sourceConnectionId);
+      if (!connection) throw new Error('Choose a connected library to back up.');
+      let backup: StoredLibraryBackup;
+      if (request.kind === 'update') {
+        const current = this.backups.find((candidate) => candidate.id === request.id);
+        if (!current) throw new Error('This folder is no longer connected.');
+        backup = { ...current, sourceConnectionId: connection.id, includeMusic: request.includeMusic, fingerprint: null };
+      } else {
+        const chosen = await dialog.showOpenDialog(owner, {
+          title: 'Connect a backup folder', buttonLabel: 'Connect folder', properties: ['openDirectory', 'createDirectory'],
+        });
+        const directory = chosen.filePaths[0];
+        if (chosen.canceled || !directory) return null;
+        const id = randomUUID();
+        backup = { id, sourceConnectionId: connection.id, directory: join(directory, `Arsenal-${id}`), includeMusic: request.includeMusic,
+          manifestPath: null, lastSavedAt: null, fingerprint: null };
+      }
       const previous = this.backups;
-      this.backups = [...previous.filter((candidate) => candidate.connectionId !== connection.id), backup];
+      this.backups = request.kind === 'update' ? previous.map((candidate) => candidate.id === backup.id ? backup : candidate) : [...previous, backup];
       if (!await this.remember(this.rememberedPath)) {
         this.backups = previous;
         throw new Error('Could not save backup settings. Check disk space and permissions.');
       }
       await this.saveBackup(connection, backup, true);
-      return this.backupStatus();
+      return this.backupConnection(this.backups.find((candidate) => candidate.id === backup.id) ?? backup);
     }, false);
   }
 
-  backupNow(): Promise<BackupStatus> {
+  backupNow(id: string): Promise<BackupConnection> {
     return this.enqueue(async () => {
-      const connection = this.connectedLibraries.find((candidate) => candidate.id === this.activeConnectionId);
-      const backup = this.backups.find((candidate) => candidate.connectionId === connection?.id);
-      if (!connection || !backup) throw new Error('Choose a backup folder first.');
+      const backup = this.backups.find((candidate) => candidate.id === id);
+      if (!backup) throw new Error('This folder is no longer connected.');
+      const connection = this.connectedLibraries.find((candidate) => candidate.id === backup.sourceConnectionId);
+      if (!connection) throw new Error('Choose a connected source library for this folder.');
       await this.saveBackup(connection, backup, true);
-      return this.backupStatus();
+      return this.backupConnection(this.backups.find((candidate) => candidate.id === id) ?? backup);
     }, false);
   }
 
-  stopBackup(): Promise<BackupStatus> {
+  stopBackup(id: string): Promise<void> {
     return this.enqueue(async () => {
       const previous = this.backups;
-      this.backups = previous.filter((backup) => backup.connectionId !== this.activeConnectionId);
+      this.backups = previous.filter((backup) => backup.id !== id);
       if (!await this.remember(this.rememberedPath)) {
         this.backups = previous;
         throw new Error('Could not save backup settings.');
       }
-      if (this.activeConnectionId) this.backupStates.delete(this.activeConnectionId);
-      return this.backupStatus();
+      this.backupStates.delete(id);
     });
   }
 
@@ -824,34 +841,34 @@ export class RekordboxLibrary {
     try {
       const snapshot = await this.backupLibrary(connection);
       if (!force && backup.fingerprint === snapshot.fingerprint && backup.manifestPath !== null &&
-        this.backupStates.get(connection.id)?.state === 'ready') {
+        this.backupStates.get(backup.id)?.state === 'ready') {
         try { if ((await stat(backup.manifestPath)).isFile()) return; } catch (error) {
           if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
         }
       }
-      this.backupStates.set(connection.id, { state: 'saving', message: null });
+      this.backupStates.set(backup.id, { state: 'saving', message: null });
       const verified = await this.backupLibrary(connection);
       if (verified.fingerprint !== snapshot.fingerprint) throw new Error('The library changed while preparing its backup. Arsenal will retry automatically.');
       const saved = await writePortableLibrary({ directory: backup.directory, library: snapshot.library,
         name: connection.displayName ?? (connection.kind === 'serato' ? 'Serato library' : basename(connection.path)),
         includeMusic: backup.includeMusic });
       const previous = this.backups;
-      this.backups = previous.map((candidate) => candidate.connectionId === connection.id
+      this.backups = previous.map((candidate) => candidate.id === backup.id
         ? { ...backup, manifestPath: saved.manifestPath, lastSavedAt: saved.savedAt, fingerprint: snapshot.fingerprint } : candidate);
       if (!await this.remember(this.rememberedPath)) {
         this.backups = previous;
         throw new Error('The backup was saved, but Arsenal could not save its status. Check disk space and permissions.');
       }
       const warnings = [...new Set([...snapshot.warnings, ...saved.warnings])];
-      this.backupStates.set(connection.id, { state: 'ready', message: warnings.length ? warnings.join('\n') : null });
+      this.backupStates.set(backup.id, { state: 'ready', message: warnings.length ? warnings.join('\n') : null });
     } catch (error) {
-      this.backupStates.set(connection.id, { state: 'error', message: error instanceof Error ? error.message : 'Could not save the library backup.' });
+      this.backupStates.set(backup.id, { state: 'error', message: error instanceof Error ? error.message : 'Could not save the library backup.' });
     }
   }
 
   private async updateBackups(): Promise<void> {
     for (const backup of this.backups) {
-      const connection = this.connectedLibraries.find((candidate) => candidate.id === backup.connectionId);
+      const connection = this.connectedLibraries.find((candidate) => candidate.id === backup.sourceConnectionId);
       if (connection) await this.saveBackup(connection, backup);
     }
   }
@@ -867,7 +884,7 @@ export class RekordboxLibrary {
         name: connection.displayName ?? (connection.kind === 'rekordbox' ? basename(connection.path)
           : `Serato (${basename(connection.path.endsWith('.sqlite') ? dirname(connection.path) : connection.path)})`) };
     }));
-    return { connections, activeConnectionId: this.activeConnectionId, sourceOfTruthId: this.sourceOfTruthId };
+    return { connections, backupConnections: this.backupStatus(), activeConnectionId: this.activeConnectionId, sourceOfTruthId: this.sourceOfTruthId };
   }
 
   private async saveConnections({ connections = this.connectedLibraries, activeConnectionId = this.activeConnectionId,
@@ -886,7 +903,7 @@ export class RekordboxLibrary {
     const seratoPath = active?.kind === 'serato' ? active.path : null;
     if (!await this.writeRemembered({ rekordboxXmlPath, seratoPath, syncPreferences: preferences, connections, activeConnectionId, sourceOfTruthId: primaryId,
       ignoredDuplicateGroups: this.ignoredDuplicateGroups, minimumSongLengthSeconds: this.minimumSongLengthSeconds,
-      backups: this.backups.filter((backup) => connections.some((connection) => connection.id === backup.connectionId)),
+      backups: this.backups,
       syncBaseline: this.syncBaseline, ongoingSyncPause: this.ongoingSyncPause })) {
       throw new Error('Could not save library connections. Check disk space and permissions.');
     }
@@ -903,7 +920,6 @@ export class RekordboxLibrary {
     this.rememberedPath = rekordboxXmlPath;
     this.rememberedSeratoPath = seratoPath;
     this.catalog = catalog;
-    this.backups = this.backups.filter((backup) => connections.some((connection) => connection.id === backup.connectionId));
     if (preferences.request?.cadence !== 'ongoing' && this.currentSyncActivity.state !== 'syncing' && this.currentSyncActivity.state !== 'off') {
       this.setSyncActivity('off');
     }

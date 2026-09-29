@@ -1,6 +1,6 @@
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
 import type { SmartPlaylistDefinition } from './smart-playlists';
-import type { BackupStatus } from './library-backup';
+import type { BackupConfiguration, BackupConnection } from './library-backup';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
@@ -218,6 +218,7 @@ export type LibraryConnection = Readonly<{
 
 export type LibraryConnections = Readonly<{
   connections: readonly LibraryConnection[];
+  backupConnections: readonly BackupConnection[];
   activeConnectionId: string | null;
   sourceOfTruthId: string | null;
 }>;
@@ -497,10 +498,10 @@ export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   connections(): Promise<LibraryConnections>;
   checkStartupChanges(): Promise<LibraryStartupResult>;
-  backupStatus(): Promise<BackupStatus>;
-  configureBackup(includeMusic: boolean): Promise<BackupStatus | null>;
-  backupNow(): Promise<BackupStatus>;
-  stopBackup(): Promise<BackupStatus>;
+  backupStatus(): Promise<readonly BackupConnection[]>;
+  configureBackup(request: BackupConfiguration): Promise<BackupConnection | null>;
+  backupNow(id: string): Promise<BackupConnection>;
+  stopBackup(id: string): Promise<void>;
   importBackup(): Promise<LibraryConnectionResult>;
   connectLibrary(kind: LibrarySourceKind): Promise<LibraryConnectionResult>;
   manageLibraryConnection(action: LibraryConnectionAction): Promise<LibraryConnectionResult>;

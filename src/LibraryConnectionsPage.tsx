@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 
 import { UiIcon } from './UiIcon';
 import { SyncLibrarySettings } from './SyncLibrarySettings';
-import { LibraryBackupSettings } from './LibraryBackupSettings';
+import { LibraryBackupConnections } from './LibraryBackupConnections';
 import type { LibraryConnection, LibraryConnectionAction, LibraryConnectionResult, LibraryConnections, LibrarySourceKind, SyncMissingFileAction, SyncRequest, SyncResult } from './shared/dj-library';
 
 const libraryKinds = [
@@ -50,6 +50,36 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
     }
   };
 
+  const connectionCard = (connection: LibraryConnection, label: string): JSX.Element => {
+    const primary = connection.id === state?.sourceOfTruthId;
+    return (
+      <section key={connection.id} className={`library-connection-card${primary ? ' is-primary' : ''}`}
+        aria-label={`${connection.origin === 'portable' ? 'Portable library' : label}: ${connection.name}`}>
+        <div className="library-connection-heading">
+          <h2><button type="button" disabled={working} title="Open library"
+            aria-label={`Open ${connection.name}`}
+            onClick={() => void run(() => onManage({ kind: 'open', id: connection.id }), 'Opening library…')}>{connection.origin === 'portable' ? connection.name : label}</button></h2>
+          <span className={`library-connection-status${connection.available ? ' is-connected' : ' is-unavailable'}`}>
+            {connection.available && <UiIcon name="check" size={14} />}
+            {connection.available ? 'Connected' : 'Unavailable'}
+          </span>
+        </div>
+        {connection.origin === 'portable' && <p className="library-connection-empty-status">Portable library</p>}
+        <p className="library-connection-path">{connection.path}</p>
+        <div className="library-connection-actions">
+          <button className={`quiet-button${primary ? ' is-primary' : ''}`} type="button" disabled={working || primary}
+            aria-pressed={primary} onClick={() => void run(() => onManage({ kind: 'source-of-truth', id: connection.id }),
+              'Saving primary library…')}>
+            {primary && <UiIcon name="check" size={14} />}{primary ? 'Primary' : 'Set as primary'}
+          </button>
+          <button className="quiet-button" type="button" disabled={working} onClick={() => setRemoving(connection)}>
+            <UiIcon name="close" size={14} /> Remove
+          </button>
+        </div>
+      </section>
+    );
+  };
+
   return (
     <section className="workspace-page library-connections-page" aria-labelledby="library-connections-title">
       <header className="page-header">
@@ -59,43 +89,18 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
       <div className="library-connections-content" aria-busy={working}>
         {state === null ? <p role="status">Loading connections…</p> : <div className="library-connection-grid">
           {libraryKinds.flatMap(({ kind, label }) => {
-            const connected = connections.filter((connection) => connection.kind === kind);
+            const connected = connections.filter((connection) => connection.kind === kind && connection.origin !== 'portable');
             return connected.length === 0 ? [
               <button key={kind} className="library-connect-button" type="button" disabled={working}
                 onClick={() => void run(() => onConnect(kind), `Connecting ${label}…`)}>
                 <span><UiIcon name="plus" size={20} /> Connect {label}</span>
                 <span className="library-connection-empty-status">Not connected</span>
               </button>,
-            ] : connected.map((connection) => {
-              const primary = connection.id === state.sourceOfTruthId;
-              return (
-                <section key={connection.id} className={`library-connection-card${primary ? ' is-primary' : ''}`}
-                  aria-label={`${connection.origin === 'portable' ? 'Imported library' : label}: ${connection.name}`}>
-                  <div className="library-connection-heading">
-                    <h2><button type="button" disabled={working} title="Open library"
-                      aria-label={`Open ${connection.name}`}
-                      onClick={() => void run(() => onManage({ kind: 'open', id: connection.id }), 'Opening library…')}>{connection.origin === 'portable' ? connection.name : label}</button></h2>
-                    <span className={`library-connection-status${connection.available ? ' is-connected' : ' is-unavailable'}`}>
-                      {connection.available && <UiIcon name="check" size={14} />}
-                      {connection.available ? 'Connected' : 'Unavailable'}
-                    </span>
-                  </div>
-                  {connection.origin === 'portable' && <p className="library-connection-empty-status">Imported library</p>}
-                  <p className="library-connection-path">{connection.path}</p>
-                  <div className="library-connection-actions">
-                    <button className={`quiet-button${primary ? ' is-primary' : ''}`} type="button" disabled={working || primary}
-                      aria-pressed={primary} onClick={() => void run(() => onManage({ kind: 'source-of-truth', id: connection.id }),
-                        'Saving primary library…')}>
-                      {primary && <UiIcon name="check" size={14} />}{primary ? 'Primary' : 'Set as primary'}
-                    </button>
-                    <button className="quiet-button" type="button" disabled={working} onClick={() => setRemoving(connection)}>
-                      <UiIcon name="close" size={14} /> Remove
-                    </button>
-                  </div>
-                </section>
-              );
-            });
+            ] : connected.map((connection) => connectionCard(connection, label));
           })}
+          {connections.filter((connection) => connection.origin === 'portable').map((connection) => connectionCard(connection, 'Portable library'))}
+          <LibraryBackupConnections busy={working} connections={state} onBusy={setPending}
+            onImport={() => run(onImportBackup, 'Importing backup…')} />
         </div>}
 
         {pending !== null && <p className="library-connection-progress" role="status">{pending}</p>}
@@ -108,9 +113,6 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
           </section>
         )}
 
-        <LibraryBackupSettings busy={working} connectionId={state?.activeConnectionId ?? null}
-          connectionName={connections.find((connection) => connection.id === state?.activeConnectionId)?.name ?? null}
-          onBusy={setPending} onImport={() => run(onImportBackup, 'Importing backup…')} />
         <SyncLibrarySettings busy={working} connections={state} onSync={onSync} onResolveMissing={onResolveMissing}
           initialResult={initialSyncResult ?? null} />
       </div>

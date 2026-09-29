@@ -22,6 +22,7 @@ import { OpenRouterConnection } from './main/openrouter';
 import { PLAYLIST_PROGRESS_CHANNEL } from './shared/playlist-suggestions';
 import { APP_UPDATE_CHANNELS } from './shared/app-updates';
 import { PREFERENCES_CHANNELS } from './shared/preferences';
+import type { BackupConfiguration } from './shared/library-backup';
 import {
   TRACK_ARTWORK_SCHEME,
   TRACK_MEDIA_SCHEME,
@@ -376,26 +377,34 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     try { return await library.checkStartupChanges(owner); } finally { libraryActions -= 1; }
   });
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.configureBackup, async (event, includeMusic: unknown) => {
+  ipc.handle(DJ_LIBRARY_CHANNELS.configureBackup, async (event, request: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Manage backups from the library window');
-    if (typeof includeMusic !== 'boolean') throw new Error('Choose whether to include music');
+    if (!isRecord(request) || (request.kind !== 'connect' && request.kind !== 'update') ||
+      typeof request.sourceConnectionId !== 'string' || !request.sourceConnectionId ||
+      typeof request.includeMusic !== 'boolean') throw new Error('Choose a library and whether to include music');
+    if (request.kind === 'update' && (typeof request.id !== 'string' || !request.id)) throw new Error('Choose a folder connection');
+    const configuration: BackupConfiguration = request.kind === 'update' && typeof request.id === 'string'
+      ? { kind: request.kind, id: request.id, sourceConnectionId: request.sourceConnectionId, includeMusic: request.includeMusic }
+      : { kind: 'connect', sourceConnectionId: request.sourceConnectionId, includeMusic: request.includeMusic };
     libraryActions += 1;
-    try { return await library.configureBackup(owner, includeMusic); } finally { libraryActions -= 1; }
+    try { return await library.configureBackup(owner, configuration); } finally { libraryActions -= 1; }
   });
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.backupNow, async (event) => {
+  ipc.handle(DJ_LIBRARY_CHANNELS.backupNow, async (event, id: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    if (typeof id !== 'string' || !id) throw new Error('Choose a folder connection');
     libraryActions += 1;
-    try { return await library.backupNow(); } finally { libraryActions -= 1; }
+    try { return await library.backupNow(id); } finally { libraryActions -= 1; }
   });
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.stopBackup, async (event) => {
+  ipc.handle(DJ_LIBRARY_CHANNELS.stopBackup, async (event, id: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    if (typeof id !== 'string' || !id) throw new Error('Choose a folder connection');
     libraryActions += 1;
-    try { return await library.stopBackup(); } finally { libraryActions -= 1; }
+    try { return await library.stopBackup(id); } finally { libraryActions -= 1; }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.importBackup, async (event) => {

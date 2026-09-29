@@ -2826,16 +2826,43 @@ button.sidebar-search {
   color: var(--text);
 }
 
-.library-backup-status {
-  margin-top: 16px;
-  padding: 12px 16px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: var(--panel-raised);
+.library-folder-summary {
+  margin: 0;
 }
 
-.library-backup-status p {
-  margin: 4px 0;
+.library-folder-error {
+  grid-column: 1 / -1;
+}
+
+.library-folder-dialog > p,
+.library-folder-import p {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.library-folder-source {
+  display: grid;
+  gap: 8px;
+  margin-top: 20px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.library-folder-source select {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+}
+
+.library-folder-import {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-strong);
 }
 
 .library-sync-settings-grid {
