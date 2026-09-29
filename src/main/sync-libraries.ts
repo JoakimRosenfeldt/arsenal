@@ -191,7 +191,7 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
     return { kind: 'synced', trackCount: selected.tracks.length, playlistCount: selected.playlists.length,
       skippedTrackCount: Math.max(0, library.tracks.length - selected.tracks.length), backupPaths, warnings,
       message: target.kind === 'serato' ? 'Arsenal library synced to Serato. Reopen Serato to load the changes.'
-        : `Arsenal library saved to ${target.path}. Import its tracks and playlists into Rekordbox.` };
+        : 'Rekordbox XML updated. In Rekordbox, refresh the rekordbox xml browser, then import the changed tracks and playlists into your Collection.' };
   } catch (error) {
     return { kind: 'rejected', warnings, backupPaths,
       message: `${error instanceof Error ? error.message : 'Could not sync the Arsenal library.'}${wroteLibrary ? ' Some destination files were already updated. Arsenal edits were kept.' : ''}` };

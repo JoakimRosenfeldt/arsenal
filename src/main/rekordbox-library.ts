@@ -17,6 +17,7 @@ import type {
   LibraryMutationResult,
   LibraryStatus,
   LibraryStartupResult,
+  LibraryStartupPreview,
   LibrarySummary,
   LibrarySourceKind,
   LocalFileAction,
@@ -68,6 +69,7 @@ import { PORTABLE_LIBRARY_FILENAME, readLibraryModel, readPortableLibrary, readP
 import { readLibrarySource, type PortableLibrarySource } from './library-source';
 import { preparePrimaryLibraryEdit } from './apply-primary-library-edit';
 import { loadArsenalLibrary, mergeArsenalLibrary, saveArsenalLibrary } from './arsenal-library';
+import { describeLibraryChanges, portableLibraryPreview } from './library-changes';
 
 type CatalogTrack = ParsedTrack;
 
@@ -440,6 +442,10 @@ export class RekordboxLibrary {
 
   private startupCheck: Promise<LibraryStartupResult> | null = null;
 
+  private startupPreview: Promise<LibraryStartupPreview> | null = null;
+
+  private startupSources = new Map<string, LibrarySourceSnapshot>();
+
   private startupComplete = false;
 
   private syncBaseline: StoredSyncBaseline | null = null;
@@ -494,7 +500,7 @@ export class RekordboxLibrary {
     this.sourceOfTruthId = ARSENAL_LIBRARY_ID;
     this.rememberedPath = this.arsenalWorkspace;
     this.rememberedSeratoPath = null;
-    this.catalog = await this.catalogFor(this.arsenalWorkspace);
+    this.catalog = await this.catalogFor(this.arsenalWorkspace, null, this.arsenalProjection);
     if (this.savedSyncPreferences.rekordboxPath === this.arsenalWorkspace) {
       this.savedSyncPreferences = { ...this.savedSyncPreferences, rekordboxPath: null };
     }
@@ -505,7 +511,10 @@ export class RekordboxLibrary {
         if (connection.sourceFingerprint === undefined) {
           const updated = await this.acceptedSource(connection, source);
           this.connectedLibraries = this.connectedLibraries.map((candidate) => candidate.id === connection.id ? updated : candidate);
-        } else if (connection.sourceFingerprint !== source.fingerprint) this.startupChanges.add(connection.id);
+        } else if (connection.sourceFingerprint !== source.fingerprint) {
+          this.startupChanges.add(connection.id);
+          this.startupSources.set(connection.id, source);
+        }
       } catch (error) {
         this.startupUnreadable.add(connection.id);
         this.startupWarnings.push(`${connection.displayName ?? basename(connection.path)}: ${error instanceof Error ? error.message : 'Could not check this connection.'}`);
@@ -557,7 +566,7 @@ export class RekordboxLibrary {
       await saveArsenalLibrary(this.arsenalPath, library);
       this.arsenalLibrary = library;
       await this.writeArsenalProjection(xml);
-      return await this.catalogFor(this.arsenalWorkspace);
+      return await this.catalogFor(this.arsenalWorkspace, null, this.arsenalProjection);
     } catch (error) {
       if (this.arsenalLibrary !== previous) {
         await saveArsenalLibrary(this.arsenalPath, previous);
@@ -612,18 +621,62 @@ export class RekordboxLibrary {
     this.catalog = await this.saveArsenalState(library);
   }
 
-  checkStartupChanges(owner: BrowserWindow): Promise<LibraryStartupResult> {
-    this.startupCheck ??= this.importStartupChanges(owner).then((result) => {
+  checkStartupChanges(): Promise<LibraryStartupPreview> {
+    if (this.startupComplete) return Promise.resolve({ libraries: [], syncAfterImport: false, warnings: [] });
+    this.startupPreview ??= this.enqueue(async () => {
+      const libraries: LibraryStartupPreview['libraries'][number][] = [];
+      for (const connection of this.connectedLibraries) {
+        if (!this.startupChanges.has(connection.id)) continue;
+        const name = connection.portableSource ? 'Portable library' : connection.kind === 'rekordbox' ? 'Rekordbox' : 'Serato';
+        try {
+          const source = this.startupSources.get(connection.id) ?? await readLibrarySource(connection);
+          this.startupSources.set(connection.id, source);
+          const incoming = source.library ?? (source.portableManifestPath === null ? null
+            : portableLibraryPreview(this.arsenalLibrary, await readPortableLibrary(source.portableManifestPath)));
+          libraries.push({ id: connection.id, name, changes: incoming === null
+            ? ['Library changes are ready to import.'] : describeLibraryChanges(this.arsenalLibrary, mergeArsenalLibrary(this.arsenalLibrary, incoming)) });
+        } catch {
+          libraries.push({ id: connection.id, name, changes: ['Changes could not be read. Try importing again once the library is available.'] });
+        }
+      }
+      for (const backup of this.backups) {
+        if (!this.startupBackupChanges.has(backup.id)) continue;
+        try {
+          const manifest = await readPortableLibrary(join(backup.directory, PORTABLE_LIBRARY_FILENAME));
+          const incoming = portableLibraryPreview(this.arsenalLibrary, manifest);
+          const importedById = new Map(manifest.tracks.map((track, index) => [track.id, incoming.tracks[index]]));
+          const local = { ...this.arsenalLibrary, tracks: this.arsenalLibrary.tracks.map((track) =>
+            importedById.get(`track-${createHash('sha256').update(normalizePath(track.path)).digest('hex')}`) ?? track) };
+          libraries.push({ id: backup.id, name: 'Arsenal backup',
+            changes: describeLibraryChanges(this.arsenalLibrary, mergeArsenalLibrary(local, incoming)) });
+        } catch {
+          libraries.push({ id: backup.id, name: 'Arsenal backup', changes: ['Changes could not be read. Try importing again once the backup is available.'] });
+        }
+      }
+      const targets = this.selectedSyncConnections();
+      return { libraries, warnings: this.startupWarnings,
+        syncAfterImport: targets.length > 0 && !targets.some((connection) => this.startupUnreadable.has(connection.id)) };
+    }, false);
+    return this.startupPreview;
+  }
+
+  resolveStartupChanges(owner: BrowserWindow, action: 'import' | 'skip'): Promise<LibraryStartupResult> {
+    this.startupCheck ??= this.importStartupChanges(owner, action).then((result) => {
       this.startupComplete = true;
+      this.startupSources.clear();
       return result;
+    }).catch((error: unknown) => {
+      this.startupCheck = null;
+      throw error;
     });
     return this.startupCheck;
   }
 
-  private async importStartupChanges(owner: BrowserWindow): Promise<LibraryStartupResult> {
+  private async importStartupChanges(owner: BrowserWindow, action: 'import' | 'skip'): Promise<LibraryStartupResult> {
     const warnings = [...this.startupWarnings];
     let imported = 0;
     const request = await this.enqueue(async (): Promise<SyncRequest | null> => {
+      if (action === 'skip') return null;
       const changed = this.connectedLibraries.filter((connection) => this.startupChanges.has(connection.id));
       const changedBackups = this.backups.filter((backup) => this.startupBackupChanges.has(backup.id));
       const changedCount = changed.length + changedBackups.length;
@@ -632,17 +685,6 @@ export class RekordboxLibrary {
       const targets = this.selectedSyncConnections();
       const unreadableSync = targets.some((connection) => this.startupUnreadable.has(connection.id));
       const savedRequest = !unreadableSync && targets.length ? preferences.request : null;
-      const detail = [...changed.map((connection) => `${connection.displayName ?? basename(connection.path)}\n${connection.portableSource?.manifestPath ?? connection.path}`),
-        ...changedBackups.map((backup) => join(backup.directory, PORTABLE_LIBRARY_FILENAME))].join('\n\n');
-      const syncDetail = savedRequest === null ? '\n\nImport changes into your Arsenal library.'
-        : `\n\nThen sync Arsenal to your saved destinations using the saved categories and settings.\n${targets.map((target) => target.path).join('\n')}`;
-      const choice = await dialog.showMessageBox(owner, {
-        type: 'question', title: 'Connected libraries changed',
-        message: `${changedCount} connected ${changedCount === 1 ? 'library has' : 'libraries have'} changed since your last session.`,
-        detail: `${detail}${syncDetail}`,
-        buttons: [savedRequest === null ? 'Import changes' : 'Import and sync', 'Not now'], defaultId: 0, cancelId: 1,
-      });
-      if (choice.response !== 0) return null;
       if (unreadableSync) warnings.push('Automatic sync was skipped because a selected sync library could not be checked.');
       let failed = false;
       for (const connection of changed) {
@@ -657,7 +699,7 @@ export class RekordboxLibrary {
             const choice = await dialog.showMessageBox(owner, {
               type: 'warning', title: 'Local library edits conflict',
               message: `${connection.displayName ?? basename(connection.path)} has unsynced Arsenal edits.`,
-              detail: `${localPath ?? connection.path}\n\nImporting the external version will replace these local edits. Arsenal will save a backup of the local library first.`,
+              detail: 'Importing the external version will replace these local edits. Arsenal will save a backup of the local library first.',
               buttons: ['Keep local edits', 'Import external version'], defaultId: 0, cancelId: 0,
             });
             if (choice.response !== 1) {
@@ -906,8 +948,7 @@ export class RekordboxLibrary {
           portableSource: { manifestPath, searchRoots, resolvedPaths: resolved.library.tracks.filter((track) => track.song.source === 'local')
             .map((track) => track.location ?? track.path).filter(isAbsolute) } };
         const connection = await this.acceptedSource(pending, await readLibrarySource({ ...pending, followLatest: false }), manifest);
-        const catalog = { ...await this.catalogFor(workspacePath), sourceName: manifest.name };
-        await this.saveConnections({ connections: [...this.connectedLibraries, connection], catalog, library: resolved.library });
+        await this.saveConnections({ connections: [...this.connectedLibraries, connection], library: resolved.library });
         workspacePath = null;
         mediaDirectory = null;
         this.cancelSuggestions();
@@ -1006,8 +1047,10 @@ export class RekordboxLibrary {
     }>): Promise<void> {
     const previousLibrary = this.arsenalLibrary;
     const previousCatalog = this.catalog;
-    if (catalog !== null && catalog.sourcePath !== this.arsenalWorkspace) {
-      await this.importIntoArsenal(library ?? rekordboxSyncLibrary(await parseRekordboxXml(catalog.sourcePath), { includeNonLocal: true }));
+    if (library !== undefined && library !== null) {
+      await this.importIntoArsenal(library);
+    } else if (catalog !== null && catalog.sourcePath !== this.arsenalWorkspace) {
+      await this.importIntoArsenal(rekordboxSyncLibrary(await parseRekordboxXml(catalog.sourcePath), { includeNonLocal: true }));
     }
     const preferences = syncPreferences;
     if (!connections.some((connection) => connection.id === ARSENAL_LIBRARY_ID)) throw new Error('Arsenal is the primary library and cannot be disconnected.');
@@ -1061,13 +1104,14 @@ export class RekordboxLibrary {
       const backup = await saveLibraryXml(connection.path, mergeRekordboxXml(resolved.library), previous);
       const updated = { ...connection, portableSource: { ...connection.portableSource,
         resolvedPaths: resolved.library.tracks.filter((track) => track.song.source === 'local').map((track) => track.location ?? track.path).filter(isAbsolute) } };
-      return { connection: await this.acceptedSource(updated, incoming, manifest), catalog: await this.catalogFor(connection.path), library: resolved.library,
+      return { connection: await this.acceptedSource(updated, incoming, manifest), catalog: null, library: resolved.library,
         warnings: [...incoming.warnings, ...resolved.warnings, ...(resolved.missingFiles.length ? [`${resolved.missingFiles.length} audio files could not be located.`] : []),
           ...(backup === null ? [] : [`Previous local library saved to ${backup}`])] };
     }
     if (connection.kind === 'rekordbox') {
       const incoming = source ?? await readLibrarySource(connection);
-      return { connection: await this.acceptedSource(connection, incoming), catalog: await this.catalogFor(connection.path), library: incoming.library, warnings: incoming.warnings };
+      if (incoming.library === null) throw new Error('The Rekordbox library could not be read.');
+      return { connection: await this.acceptedSource(connection, incoming), catalog: null, library: incoming.library, warnings: incoming.warnings };
     }
     if (connection.dirty && connection.workspacePath !== null) {
       return { connection, catalog: await this.catalogFor(connection.workspacePath, connection.path), library: null,
@@ -1091,7 +1135,7 @@ export class RekordboxLibrary {
     const backup = await saveLibraryXml(workspacePath, mergeRekordboxXml(incoming.library), previous, backupWorkspace);
     const updated = { ...connection, path: await resolveSeratoMediaPath(native.path), workspacePath, dirty: false };
     return { connection: await this.acceptedSource(updated, incoming),
-      catalog: await this.catalogFor(workspacePath, native.path), library: incoming.library, warnings: [...incoming.warnings, ...(backup === null ? [] : [`Previous local library saved to ${backup}`])] };
+      catalog: null, library: incoming.library, warnings: [...incoming.warnings, ...(backup === null ? [] : [`Previous local library saved to ${backup}`])] };
   }
 
   connectLibrary(owner: BrowserWindow, kind: LibrarySourceKind): Promise<LibraryConnectionResult> {
@@ -1576,7 +1620,7 @@ export class RekordboxLibrary {
         await this.acknowledgeWrites([target.id], true);
       }
       return { kind: 'synced', trackCount, playlistCount, skippedTrackCount, warnings, backupPaths,
-        message: `Synced Arsenal to ${synced} ${synced === 1 ? 'DJ library' : 'DJ libraries'}. Reopen your DJ app to load its library, or import the updated Rekordbox XML.${skippedTrackCount ? ` Up to ${skippedTrackCount} tracks were skipped because they are not local files or adding tracks is disabled.` : ''}` };
+        message: `Saved Arsenal changes to ${synced} ${synced === 1 ? 'DJ library' : 'DJ libraries'}.${targets.some((target) => target.kind === 'rekordbox') ? ' In Rekordbox, refresh the rekordbox xml browser, then import the changed tracks and playlists into your Collection.' : ''}${targets.some((target) => target.kind === 'serato') ? ' Reopen Serato to load the changes.' : ''}${skippedTrackCount ? ` Up to ${skippedTrackCount} tracks were skipped because they are not local files or adding tracks is disabled.` : ''}` };
     } catch (error) {
       return { kind: 'rejected', warnings, backupPaths, message: `${error instanceof Error ? error.message : 'Could not sync the library.'}${synced ? ' Some destinations were already updated.' : ''}` };
     }
@@ -2052,8 +2096,8 @@ export class RekordboxLibrary {
     return { kind: 'ready', catalog: reloaded };
   }
 
-  private async catalogFor(filePath: string, seratoPath: string | null = null): Promise<CurrentCatalog> {
-    const parsed = await parseRekordboxXml(filePath);
+  private async catalogFor(filePath: string, seratoPath: string | null = null, snapshot: ParsedRekordboxLibrary | null = null): Promise<CurrentCatalog> {
+    const parsed = snapshot ?? await parseRekordboxXml(filePath);
     const revision = randomUUID();
     const mediaPathBySongId = new Map<string, string>();
     for (const track of parsed.tracks) {

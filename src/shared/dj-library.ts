@@ -8,6 +8,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   connections: 'dj-library:connections',
   checkStartupChanges: 'dj-library:check-startup-changes',
+  resolveStartupChanges: 'dj-library:resolve-startup-changes',
   backupStatus: 'dj-library:backup-status',
   configureBackup: 'dj-library:configure-backup',
   backupNow: 'dj-library:backup-now',
@@ -235,6 +236,12 @@ export type LibraryConnectionResult =
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{ kind: 'rejected'; message: string }>
   | Readonly<{ kind: 'updated'; connections: LibraryConnections; status: LibraryStatus; warnings: readonly string[] }>;
+
+export type LibraryStartupPreview = Readonly<{
+  libraries: readonly Readonly<{ id: string; name: string; changes: readonly string[] }>[];
+  syncAfterImport: boolean;
+  warnings: readonly string[];
+}>;
 
 export type LibraryStartupResult = Readonly<{
   connections: LibraryConnections;
@@ -500,7 +507,8 @@ export type LibraryMutationResult = (
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   connections(): Promise<LibraryConnections>;
-  checkStartupChanges(): Promise<LibraryStartupResult>;
+  checkStartupChanges(): Promise<LibraryStartupPreview>;
+  resolveStartupChanges(action: 'import' | 'skip'): Promise<LibraryStartupResult>;
   backupStatus(): Promise<readonly BackupConnection[]>;
   configureBackup(request: BackupConfiguration): Promise<BackupConnection | null>;
   backupNow(id: string): Promise<BackupConnection>;

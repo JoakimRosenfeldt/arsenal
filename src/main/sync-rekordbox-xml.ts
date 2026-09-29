@@ -233,11 +233,14 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
       node.attributes.TrackID = String(nextId++);
       ids.add(node.attributes.TrackID);
     }
+    const updateMetadata = fields?.metadata !== false || !node.attributes.Name;
     for (const field of Object.keys(metadataFields)) {
       if (!(field in metadataFields)) continue;
       const key = field as keyof typeof metadataFields;
       const value = track.song[key];
-      if ((fields?.metadata !== false || !node.attributes.Name) && value !== null && value !== '') node.attributes[metadataFields[key]] = String(value);
+      if (!updateMetadata) continue;
+      if (value === null || value === '') delete node.attributes[metadataFields[key]];
+      else node.attributes[metadataFields[key]] = String(value);
     }
     if (track.performance) {
       node.parts = node.parts.filter((part) => typeof part === 'string' ||

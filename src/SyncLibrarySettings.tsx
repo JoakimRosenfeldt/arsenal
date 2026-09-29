@@ -317,13 +317,13 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
         )}
         {activityError !== null && <p className="library-sync-recovery-error" role="alert">{activityError}</p>}
 
-        {result !== null && (hasIssues || result.kind === 'missing-files') && (
+        {result !== null && (
           <section className={`library-sync-result${hasIssues ? ' library-sync-result-warning' : ''}`} ref={resultRef}
-            tabIndex={-1} role={hasIssues ? 'alert' : undefined} aria-labelledby="library-sync-result-title">
+            tabIndex={-1} role={hasIssues ? 'alert' : 'status'} aria-labelledby="library-sync-result-title">
             <h3 id="library-sync-result-title">{result.kind === 'missing-files'
               ? hasMissingFiles ? 'Missing audio files' : 'Resume sync'
               : result.kind === 'rejected' ? 'Sync stopped'
-              : 'Sync needs attention'}</h3>
+              : hasIssues ? 'Sync needs attention' : 'Sync complete'}</h3>
             <p>{result.kind === 'missing-files' && !hasIssues
               ? 'Retry sync to apply these changes to connected libraries.' : result.message}</p>
             {missingFiles !== null && (
@@ -547,6 +547,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
           <p>Smart playlists sync with their current matching tracks. Their rules stay in Arsenal.</p>
           {mode === 'replace' && <p>Overwrite replaces checked categories in {destinationName}. Absent tracks and playlists are removed when checked. Audio files stay on disk.</p>}
           {includesSerato && <p>{cadence === 'ongoing' ? 'Keep Serato closed while ongoing sync is on.' : 'Close Serato before syncing.'}</p>}
+          {destinations.some((entry) => entry.kind === 'rekordbox') && <p>Rekordbox reads changes when you refresh its rekordbox xml browser and import the updated tracks or playlists into Collection.</p>}
           {ongoing && <p>Changed settings take effect when you sync.</p>}
         </div>
 

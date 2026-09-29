@@ -26,6 +26,8 @@ import {
   type LibraryConnectionResult,
   type LibrarySummary,
   type LibraryStatus,
+  type LibraryStartupPreview,
+  type LibraryStartupResult,
   type LibraryMutation,
   type LibraryMutationResult,
   type MutationFailure,
@@ -40,6 +42,7 @@ import {
 
 import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
 import { TracklistExportDialog } from './TracklistExportDialog';
+import { LibraryChangesDialog } from './LibraryChangesDialog';
 import { LibraryConnectionsPage } from './LibraryConnectionsPage';
 import { Preferences } from './Preferences';
 import type { SmartPlaylistDefinition } from './shared/smart-playlists';
@@ -205,7 +208,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const busy = operationBusy || backgroundSyncing || reloadRequired;
   const [view, setView] = useState<LibraryView | null>(null);
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
-  const startupChecked = useRef(false);
+  const startupCheck = useRef<Promise<LibraryStartupPreview> | null>(null);
+  const [startupPreview, setStartupPreview] = useState<LibraryStartupPreview | null>(null);
   const initialStateLoaded = useRef(false);
   const [startupSyncResult, setStartupSyncResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
@@ -254,28 +258,46 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     return () => document.removeEventListener('click', dismissOutside, true);
   }, [error, feedback]);
 
+  const showStartupResult = useCallback((startup: LibraryStartupResult): void => {
+    setConnections(startup.connections);
+    const syncResult = startup.syncResult?.kind === 'cancelled' ? null : startup.syncResult;
+    setStartupSyncResult(syncResult);
+    if (startup.warnings.length > 0) {
+      setFeedback({ tone: 'warning', message: startup.warnings.join(' ') });
+    }
+    if (syncResult !== null || startup.warnings.length > 0) {
+      setActivePage('connections');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (playlistWindow) return;
+    let active = true;
+    startupCheck.current ??= window.djLibrary.checkStartupChanges();
+    void startupCheck.current.then(async (preview) => {
+      if (!active) return;
+      if (preview.libraries.length > 0) {
+        setStartupPreview(preview);
+        return;
+      }
+      const startup = await window.djLibrary.resolveStartupChanges('skip');
+      if (active) {
+        showStartupResult(startup);
+        setBackgroundLibrary(startup.status);
+      }
+    }).catch(() => {
+      if (!active) return;
+      setFeedback({ tone: 'warning', message: 'Could not check for changed libraries. Try reopening Arsenal.' });
+      setActivePage('connections');
+    });
+    return () => { active = false; };
+  }, [playlistWindow, showStartupResult]);
+
   useEffect(() => {
     let active = true;
 
     const loadInitialState = async (): Promise<void> => {
       try {
-        if (!playlistWindow && !startupChecked.current) {
-          try {
-            const startup = await window.djLibrary.checkStartupChanges();
-            if (!active) return;
-            const syncResult = startup.syncResult?.kind === 'cancelled' ? null : startup.syncResult;
-            setStartupSyncResult(syncResult);
-            if (startup.warnings.length > 0) {
-              setFeedback({ tone: 'warning', message: startup.warnings.join(' ') });
-            }
-            if ((syncResult !== null && (syncResult.kind !== 'synced' || syncResult.warnings.length > 0)) || startup.warnings.length > 0) setActivePage('connections');
-          } catch (cause) {
-            if (!active) return;
-            setFeedback({ tone: 'warning', message: `Could not check for changed libraries. ${cause instanceof Error ? cause.message : 'Try reopening Arsenal.'}` });
-            setActivePage('connections');
-          }
-          startupChecked.current = true;
-        }
         await pendingMutation.current;
         if (!active) return;
         const [status, settings, connected] = await Promise.all([
@@ -538,6 +560,38 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       return selected ? tree.playlists.find((playlist) =>
         JSON.stringify(playlistPath(playlist)) === JSON.stringify(playlistPath(selected)))?.id ?? null : null;
     });
+  };
+
+  const resolveStartupChanges = async (action: 'import' | 'skip'): Promise<void> => {
+    if (operationPending.current) throw new Error('Another library action is still running.');
+    operationPending.current = true;
+    setBusy(true);
+    searchSequence.current += 1;
+    setSearching(false);
+    setError(null);
+    setFeedback(null);
+    try {
+      const startup = await window.djLibrary.resolveStartupChanges(action);
+      showStartupResult(startup);
+      try {
+        if (startup.status.kind === 'ready') {
+          if (startup.status.library.revision !== view?.library.revision) await refreshLibrary(startup.status.library);
+        } else {
+          stopPlayback();
+          setView(null);
+          setPlaylists(null);
+          setFolders([]);
+          setSelectedPlaylistId(null);
+          setDuplicateState({ kind: 'empty' });
+        }
+      } catch {
+        setReloadRequired(true);
+      }
+      setStartupPreview(null);
+    } finally {
+      operationPending.current = false;
+      setBusy(false);
+    }
   };
 
   const manageConnection = async (
@@ -1124,6 +1178,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         onVolume={(value) => { setVolume(value); setMuted(false); if (audioRef.current) audioRef.current.volume = value; }} /> }
       {playlistWindow === undefined && exportPlaylist !== null && (
         <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onError={reportError} onClose={() => setExportPlaylistId(null)} />
+      )}
+      {playlistWindow === undefined && !loading && startupPreview !== null && (
+        <LibraryChangesDialog preview={startupPreview} busy={busy} onResolve={resolveStartupChanges} />
       )}
     </div>
   );
