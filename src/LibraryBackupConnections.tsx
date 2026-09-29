@@ -6,37 +6,53 @@ import { MUSIC_ORGANIZATION_OPTIONS, readMusicOrganization, type BackupConfigura
 
 const folderName = (directory: string): string => directory.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Backup folder';
 
-export const LibraryBackupConnections = ({ busy, connections, onBusy }: Readonly<{
+export const LibraryBackupConnections = ({ busy, connections, onError }: Readonly<{
   busy: boolean;
   connections: LibraryConnections;
-  onBusy: (message: string | null) => void;
+  onError?: (message: string) => void;
 }>): JSX.Element => {
   const [backups, setBackups] = useState(connections.backupConnections);
   const [editing, setEditing] = useState<BackupConfiguration | null>(null);
   const [removing, setRemoving] = useState<BackupConnection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
   const settingsDialog = useRef<HTMLDialogElement>(null);
   const removeDialog = useRef<HTMLDialogElement>(null);
   const statusSequence = useRef(0);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
+    let reportedFailure = false;
     const refresh = async (): Promise<void> => {
+      if (pendingRef.current) return;
       const sequence = ++statusSequence.current;
       try {
         const next = await window.djLibrary.backupStatus();
         if (!active || sequence !== statusSequence.current) return;
         setBackups(next);
         setStatusError(null);
+        reportedFailure = false;
       } catch {
-        if (active && sequence === statusSequence.current) setStatusError('Could not read folder connections. Reopen Connections to retry.');
+        if (!active || sequence !== statusSequence.current) return;
+        const message = 'Could not read folder connections. Reopen Connections to retry.';
+        if (onError) {
+          if (!reportedFailure) onError(message);
+          reportedFailure = true;
+        } else setStatusError(message);
       }
     };
     void refresh();
     const interval = window.setInterval(() => { void refresh(); }, 2000);
     return () => { active = false; window.clearInterval(interval); };
-  }, [connections]);
+  }, [connections, onError]);
 
   useEffect(() => {
     if (editing !== null && settingsDialog.current && !settingsDialog.current.open) settingsDialog.current.showModal();
@@ -45,23 +61,38 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy }: Readonly
     if (removing !== null && removeDialog.current && !removeDialog.current.open) removeDialog.current.showModal();
   }, [removing]);
 
-  const working = busy || backups.some((backup) => backup.state === 'saving');
-  const run = async (operation: () => Promise<unknown>, message: string): Promise<void> => {
-    if (working) return;
-    onBusy(message);
+  const working = busy || pending;
+  const run = async (operation: () => Promise<BackupConnection | null | void>, optimisticBackups?: readonly BackupConnection[]): Promise<void> => {
+    if (working || pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(true);
     setError(null);
     ++statusSequence.current;
+    if (optimisticBackups !== undefined) setBackups(optimisticBackups);
     try {
-      await operation();
+      const result = await operation();
+      if (!mounted.current && result?.message) onError?.(result.message);
+    } catch (cause) {
+      if (optimisticBackups !== undefined) setBackups(backups);
+      const message = cause instanceof Error ? cause.message : 'Could not update the folder connection. Try again.';
+      if (onError) onError(message);
+      else setError(message);
+    }
+    try {
       const sequence = ++statusSequence.current;
       const next = await window.djLibrary.backupStatus();
       if (sequence === statusSequence.current) {
         setBackups(next);
         setStatusError(null);
       }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not update the folder connection. Try again.');
-    } finally { onBusy(null); }
+    } catch {
+      const message = 'Could not read folder connections. Reopen Connections to retry.';
+      if (onError) onError(message);
+      else setStatusError(message);
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
   };
   const hasLibrary = connections.sourceOfTruthId !== null;
 
@@ -104,7 +135,7 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy }: Readonly
       aria-labelledby="folder-settings-title" onClose={() => setEditing(null)}>
       <div className="tracklist-export-heading">
         <h2 id="folder-settings-title">{editing.kind === 'connect' ? 'Connect folder' : 'Folder connection settings'}</h2>
-        <button className="inspector-close" type="button" disabled={busy} onClick={() => settingsDialog.current?.close()} aria-label="Close folder settings"><UiIcon name="close" size={16} /></button>
+        <button className="inspector-close" type="button" onClick={() => settingsDialog.current?.close()} aria-label="Close folder settings"><UiIcon name="close" size={16} /></button>
       </div>
       <p>Save your Arsenal library to a local folder, an external drive, or a folder synced by your cloud app.
         Arsenal updates one <strong>Arsenal Library.json</strong> file automatically while it is open.</p>
@@ -129,12 +160,15 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy }: Readonly
       </div>}
       {error && <p className="tracklist-export-note" role="alert">{error}</p>}
       <div className="library-connection-remove-actions">
-        <button className="quiet-button" type="button" disabled={busy} onClick={() => settingsDialog.current?.close()}>Cancel</button>
+        <button className="quiet-button" type="button" onClick={() => settingsDialog.current?.close()}>Cancel</button>
         <button className="accent-button" type="button" disabled={working || !hasLibrary}
-          onClick={() => void run(async () => {
-            const saved = await window.djLibrary.configureBackup(editing);
-            if (saved !== null) settingsDialog.current?.close();
-          }, editing.kind === 'connect' ? 'Connecting backup folder…' : 'Saving folder settings…')}>
+          onClick={() => {
+            settingsDialog.current?.close();
+            void run(() => window.djLibrary.configureBackup(editing), editing.kind === 'update'
+              ? backups.map((backup) => backup.id === editing.id
+                ? { ...backup, includeMusic: editing.includeMusic, musicOrganization: editing.musicOrganization, state: 'saving', message: null }
+                : backup) : undefined);
+          }}>
           {editing.kind === 'connect' ? 'Choose folder…' : 'Save settings'}
         </button>
       </div>
@@ -152,7 +186,7 @@ export const LibraryBackupConnections = ({ busy, connections, onBusy }: Readonly
         <button className="quiet-button" type="button" autoFocus onClick={() => removeDialog.current?.close()}>Cancel</button>
         <button className="accent-button" type="button" disabled={working} onClick={() => {
           removeDialog.current?.close();
-          void run(() => window.djLibrary.stopBackup(removing.id), 'Disconnecting backup folder…');
+          void run(() => window.djLibrary.stopBackup(removing.id), backups.filter((backup) => backup.id !== removing.id));
         }}>Disconnect</button>
       </div>
     </dialog>}

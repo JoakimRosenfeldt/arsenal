@@ -10,8 +10,9 @@ const libraryKinds = [
   { kind: 'serato', label: 'Serato library' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string }[];
 
-export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSync, onResolveMissing, onImportBackup, initialSyncResult }: Readonly<{
+export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSync, onResolveMissing, onImportBackup, initialSyncResult, onError }: Readonly<{
   busy: boolean;
+  onError: (message: string) => void;
   state: LibraryConnections | null;
   onConnect: (kind: LibrarySourceKind) => Promise<LibraryConnectionResult>;
   onManage: (action: LibraryConnectionAction) => Promise<LibraryConnectionResult>;
@@ -23,10 +24,6 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
   const [pending, setPending] = useState<string | null>(null);
   const [removing, setRemoving] = useState<LibraryConnection | null>(null);
   const removeDialogRef = useRef<HTMLDialogElement>(null);
-  const [feedback, setFeedback] = useState<Readonly<{
-    message: string;
-    warnings: readonly string[];
-  }> | null>(null);
   const working = busy || pending !== null;
   const connections = state?.connections ?? [];
   useEffect(() => {
@@ -39,12 +36,10 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
     try {
       const result = await operation();
       if (result.kind === 'cancelled') return;
-      setFeedback(result.kind === 'rejected'
-        ? { message: result.message, warnings: feedback?.warnings ?? [] }
-        : result.warnings.length > 0 ? { message: '', warnings: result.warnings } : null);
+      if (result.kind === 'rejected') onError(result.message);
+      else if (result.warnings.length > 0) onError(result.warnings.join(' '));
     } catch (error: unknown) {
-      setFeedback({ message: error instanceof Error ? error.message : 'Could not update the library connection. Try again.',
-        warnings: feedback?.warnings ?? [] });
+      onError(error instanceof Error ? error.message : 'Could not update the library connection. Try again.');
     } finally {
       setPending(null);
     }
@@ -101,21 +96,12 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
             ] : connected.map((connection) => connectionCard(connection, label));
           })}
           {connections.filter((connection) => connection.origin === 'portable').map((connection) => connectionCard(connection, 'Arsenal library'))}
-          <LibraryBackupConnections busy={working} connections={state} onBusy={setPending} />
+          <LibraryBackupConnections busy={working} connections={state} onError={onError} />
         </div>}
 
         {pending !== null && <p className="library-connection-progress" role="status">{pending}</p>}
-        {feedback !== null && (
-          <section className="library-connections-feedback has-warning" role="alert" aria-label="Library connection result">
-            {feedback.message && <p>{feedback.message}</p>}
-            {feedback.warnings.length > 0 && <ul aria-label="Library connection warnings">
-              {feedback.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
-            </ul>}
-          </section>
-        )}
-
         <SyncLibrarySettings busy={working} connections={state} onSync={onSync} onResolveMissing={onResolveMissing}
-          initialResult={initialSyncResult ?? null} />
+          initialResult={initialSyncResult ?? null} onError={onError} />
       </div>
 
       {removing !== null && <dialog className="tracklist-export-dialog library-connection-remove-dialog" ref={removeDialogRef}

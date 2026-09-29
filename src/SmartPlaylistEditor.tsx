@@ -3,7 +3,7 @@ import { useEffect, useState, type JSX } from 'react';
 import type { PlaybackController } from './CueboxPlayer';
 import { HelpTooltip } from './HelpTooltip';
 import './SmartPlaylistEditor.css';
-import { SONG_SOURCE_LABELS, type PlaylistFolder, type SmartPlaylistPreview } from './shared/dj-library';
+import { SONG_SOURCE_LABELS, type PlaylistFolder, type SmartPlaylistPreview, type SongRow } from './shared/dj-library';
 import {
   SMART_FIELDS, SMART_OPERATORS, newSmartCondition, newSmartDefinition, operatorsFor, smartDefinitionError,
   type SmartCondition, type SmartGroup, type SmartPlaylistDefinition, type SmartRule,
@@ -115,11 +115,11 @@ const RuleGroupEditor = ({ group, onChange, depth = 0 }: Readonly<{
   );
 };
 
-export const FolderCreator = ({ busy, folders, initialParentFolderId, onCancel, onCreate }: Readonly<{
-  busy: boolean; folders: readonly PlaylistFolder[]; initialParentFolderId: string | null;
+export const FolderCreator = ({ busy, folders, initialParentFolderId, initialName = '', onCancel, onCreate }: Readonly<{
+  busy: boolean; folders: readonly PlaylistFolder[]; initialParentFolderId: string | null; initialName?: string;
   onCancel: () => void; onCreate: (name: string, parentFolderId: string | null) => Promise<boolean>;
 }>): JSX.Element => {
-  const [name, setName] = useState('');
+  const [name, setName] = useState(initialName);
   const [parentFolderId, setParentFolderId] = useState(initialParentFolderId);
   return (
     <section className="workspace-page playlists-page" aria-labelledby="folder-title">
@@ -143,7 +143,7 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
   initialDefinition?: SmartPlaylistDefinition; editing?: boolean; revision: string; minimumSongLengthSeconds: number; playback: PlaybackController;
   onCancel: () => void;
   onManual?: (name: string, parentFolderId: string | null, definition: SmartPlaylistDefinition) => void;
-  onSave: (name: string, parentFolderId: string | null, definition: SmartPlaylistDefinition) => Promise<boolean>;
+  onSave: (name: string, parentFolderId: string | null, definition: SmartPlaylistDefinition, tracks: readonly SongRow[]) => Promise<boolean>;
 }>): JSX.Element => {
   const [name, setName] = useState(initialName);
   const [parentFolderId, setParentFolderId] = useState(initialParentFolderId);
@@ -174,7 +174,7 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
       </header>
       <form className="focused-smart-form smart-playlist-editor" onSubmit={(event) => {
         event.preventDefault();
-        if (canSave) void onSave(name, parentFolderId, definition);
+        if (canSave && currentPreview) void onSave(name, parentFolderId, definition, currentPreview.tracks);
       }}>
         <div className="focused-smart-content">
           <fieldset disabled={busy} className="smart-editor-fields">

@@ -156,7 +156,7 @@ const NoLibrary = ({
     </div>
     <h1 id="empty-page-title">Build your Arsenal library</h1>
     <p className="library-connect-description">Import tracks from a DJ app or open an Arsenal backup folder. Your library is saved locally in Arsenal.</p>
-    <button className="accent-button" type="button" onClick={onManageLibraries} disabled={busy}>Connections</button>
+    <button className="accent-button" type="button" onClick={onManageLibraries}>Connections</button>
     <button className="quiet-button library-empty-sync" type="button" onClick={onSync} disabled={busy}>
       <UiIcon name="refresh" size={16} /> Sync libraries
     </button>
@@ -182,8 +182,8 @@ export const LibraryPage = ({
 }: CommonPageProps &
   Readonly<{
     onPage: (offset: number) => void;
-    onCreate: (songIds: readonly string[]) => void;
-    onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
+    onCreate: (songIds: readonly string[], songs?: readonly SongRow[]) => void;
+    onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[], songs?: readonly SongRow[]) => Promise<boolean>;
     onRemove: RemoveSongs;
     onSearch: (query: string, filters: SongFilters) => void;
     filters: SongFilters;
@@ -283,7 +283,7 @@ export const LibraryPage = ({
       });
       if (choice === 'play') playback.play(song);
       if (choice === 'inspect') setInspectorOpen(true);
-      if (choice === 'create-playlist') onCreate(songs.map((selected) => selected.id));
+      if (choice === 'create-playlist') onCreate(songs.map((selected) => selected.id), songs);
       if (choice === 'add-playlist') setAction('add');
       if (choice === 'remove-songs') setAction('remove');
       if (choice === 'clear-selection') setSelection(new Map());
@@ -303,7 +303,7 @@ export const LibraryPage = ({
           <button className="quiet-button" type="button" onClick={onSync} disabled={busy}>
             <UiIcon name="refresh" size={16} /> Sync libraries
           </button>
-          <button className="accent-button" type="button" onClick={onManageLibraries} disabled={busy}>
+          <button className="accent-button" type="button" onClick={onManageLibraries}>
             <UiIcon name="folder" size={16} /> Connections
           </button>
         </div>
@@ -318,7 +318,7 @@ export const LibraryPage = ({
           <span className="search-icon" aria-hidden />
           <span className="visually-hidden">Search tracks</span>
           <input id="library-search" type="search" placeholder="Search tracks, artists or albums"
-            value={query} maxLength={200} disabled={busy || action !== null}
+            value={query} maxLength={200} disabled={action !== null}
             onChange={(event) => onSearch(event.currentTarget.value, filters)} />
           <kbd aria-hidden>⌘F</kbd>
         </label>
@@ -326,7 +326,7 @@ export const LibraryPage = ({
           <summary className={filtered ? 'quiet-button is-filtered' : 'quiet-button'}><UiIcon name="filters" size={16} /> Filters</summary>
           <div className="focused-popover-panel focused-filter-panel">
             <label>Source
-              <select aria-label="Filter by source" value={filters.source} disabled={busy || action !== null}
+              <select aria-label="Filter by source" value={filters.source} disabled={action !== null}
                 onChange={(event) => {
                   const value = event.currentTarget.value;
                   const source = value === 'all' ? 'all' : Object.keys(SONG_SOURCE_LABELS)
@@ -338,7 +338,7 @@ export const LibraryPage = ({
               </select>
             </label>
             <label>Metadata
-              <select aria-label="Filter by metadata" value={filters.metadata} disabled={busy || action !== null}
+              <select aria-label="Filter by metadata" value={filters.metadata} disabled={action !== null}
                 onChange={(event) => {
                   const metadata = Object.keys(SONG_METADATA_FILTERS)
                     .find((key): key is keyof typeof SONG_METADATA_FILTERS => key === event.currentTarget.value);
@@ -347,7 +347,7 @@ export const LibraryPage = ({
                 {Object.entries(SONG_METADATA_FILTERS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
               </select>
             </label>
-            {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
+            {filtered && <button className="quiet-button" type="button" disabled={action !== null}
               onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Clear filters</button>}
           </div>
         </details>
@@ -389,7 +389,7 @@ export const LibraryPage = ({
             ) : visibleSongs.length === 0 ? (
               <div className="inline-empty">
                 <strong>{view.library.songCount === 0 ? 'No tracks' : 'No matching tracks'}</strong>
-                {filtered && <button className="quiet-button" type="button" disabled={busy || action !== null}
+                {filtered && <button className="quiet-button" type="button" disabled={action !== null}
                   onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Clear search and filters</button>}
               </div>
             ) : (
@@ -509,10 +509,10 @@ export const LibraryPage = ({
           {pageCount > 1 && <span>Page <strong>{pageNumber}</strong> of {pageCount}</span>}
         </p>
         {pageCount > 1 && <div>
-          <button type="button" onClick={() => onPage(view.page.offset - view.page.limit)} disabled={busy || searching || view.page.offset === 0}>
+          <button type="button" onClick={() => onPage(view.page.offset - view.page.limit)} disabled={searching || view.page.offset === 0}>
             ← Previous
           </button>
-          <button type="button" onClick={() => onPage(view.page.offset + view.page.limit)} disabled={busy || searching || !view.page.hasNext}>
+          <button type="button" onClick={() => onPage(view.page.offset + view.page.limit)} disabled={searching || !view.page.hasNext}>
             Next →
           </button>
         </div>}
@@ -557,7 +557,7 @@ const variantSummaryFor = (group: DuplicateGroup): string => {
   return labels.length > 3 ? `${visible} +${labels.length - 3}` : visible;
 };
 
-type RemoveSongs = (songIds: readonly string[], removeLocalFile: boolean) => Promise<boolean>;
+type RemoveSongs = (songIds: readonly string[], removeLocalFile: boolean, songs?: readonly SongRow[]) => Promise<boolean>;
 
 const FileRemovalOption = ({
   busy,
@@ -605,7 +605,7 @@ const SelectionActionMenu = ({
   hiddenCount: number;
   onAction: (action: SelectionAction) => void;
   onClear: () => void;
-  onCreate: (songIds: readonly string[]) => void;
+  onCreate: (songIds: readonly string[], songs?: readonly SongRow[]) => void;
   canRemoveFromPlaylist?: boolean;
   playlists: readonly RekordboxPlaylist[];
   songs: readonly SongRow[];
@@ -625,7 +625,7 @@ const SelectionActionMenu = ({
       <div className="focused-popover-panel">
         <button type="button" disabled={busy || tooMany || !playlists.some((item) => item.kind === 'regular')}
           onClick={() => choose('add')}>Add to playlist</button>
-        <button type="button" disabled={busy || tooMany} onClick={() => { close(); onCreate(songs.map((song) => song.id)); }}>Create new playlist</button>
+        <button type="button" disabled={busy || tooMany} onClick={() => { close(); onCreate(songs.map((song) => song.id), songs); }}>Create new playlist</button>
         {canRemoveFromPlaylist && <button type="button" disabled={busy || tooMany} onClick={() => choose('remove-playlist')}>Remove from playlist</button>}
         <button type="button" disabled={busy || tooMany} onClick={() => choose('remove')}>Remove from library</button>
         <button type="button" disabled={busy} onClick={() => { close(); onClear(); }}>Clear selection</button>
@@ -641,7 +641,7 @@ const LibrarySelectionActions = ({
   busy: boolean;
   hiddenCount: number;
   onAction: (action: SelectionAction) => void;
-  onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
+  onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[], songs?: readonly SongRow[]) => Promise<boolean>;
   onClear: () => void;
   onRemove: RemoveSongs;
   onRemoveFromPlaylist?: (songIds: readonly string[]) => Promise<boolean>;
@@ -659,20 +659,28 @@ const LibrarySelectionActions = ({
   const regularPlaylists = playlists.filter((item) => item.kind === 'regular');
   const target = regularPlaylists.find((item) => item.id === targetId);
   const existingIds = new Set(target?.tracks.map((song) => song.id) ?? []);
-  const availableIds = target === undefined ? [] : songs.filter((song) => !existingIds.has(song.id)).map((song) => song.id);
+  const availableSongs = target === undefined ? [] : songs.filter((song) => !existingIds.has(song.id));
+  const availableIds = availableSongs.map((song) => song.id);
   const targetTooLarge = existingIds.size + availableIds.length > 10_000;
 
-  const submit = async (event: FormEvent): Promise<void> => {
+  const submit = (event: FormEvent): void => {
     event.preventDefault();
     if (busy || tooMany) return;
     const ids = songs.map((song) => song.id);
-    if (action === 'remove' && await onRemove(ids, removeLocalFile)) onClear();
-    if (action === 'remove-playlist' && onRemoveFromPlaylist && await onRemoveFromPlaylist(ids)) onClear();
-    if (action === 'add' && target && availableIds.length > 0 && !targetTooLarge && await onAdd(target, availableIds)) onClear();
+    if (action === 'remove') {
+      void onRemove(ids, removeLocalFile, songs);
+    } else if (action === 'remove-playlist' && onRemoveFromPlaylist) {
+      void onRemoveFromPlaylist(ids);
+    } else if (action === 'add' && target && availableIds.length > 0 && !targetTooLarge) {
+      void onAdd(target, availableIds, availableSongs);
+    } else {
+      return;
+    }
+    onClear();
   };
 
   return (
-    <form className="library-selection-actions" onSubmit={(event) => void submit(event)} aria-label="Selected track actions">
+    <form className="library-selection-actions" onSubmit={submit} aria-label="Selected track actions">
       {action === 'remove' && (
         <div className="duplicate-selection-review" ref={actionRef} tabIndex={-1}>
           <div className="help-label">
@@ -774,11 +782,10 @@ const DuplicateSelectionActions = ({
               type="button"
               disabled={busy}
               onClick={() => {
-                void onRemove(removalSongs.map((song) => song.id), removeLocalFile).then((removed) => {
-                  if (removed) {
-                    onClear();
-                  }
-                });
+                void onRemove(removalSongs.map((song) => song.id), removeLocalFile, removalSongs);
+                setRemovalSongs(null);
+                setRemoveLocalFile(false);
+                onClear();
               }}
             >
               {busy ? 'Removing' : `Remove ${removalSongs.length} ${removalSongs.length === 1 ? 'track' : 'tracks'}`}
@@ -1021,7 +1028,7 @@ export const DuplicatesPage = ({
       </header>
       <div className="focused-duplicate-controls">
         <label htmlFor="duplicate-match-mode">Match by</label>
-        <select id="duplicate-match-mode" value={mode} disabled={busy} onChange={(event) => {
+        <select id="duplicate-match-mode" value={mode} onChange={(event) => {
           const next = DUPLICATE_MATCH_MODES.find((option) => option === event.currentTarget.value);
           if (next) {
             setSelection({ key: null, index: 0, groups: [] });
@@ -1112,7 +1119,7 @@ export const DuplicatesPage = ({
                 navigation={
                   <div className="focused-comparison-actions">
                     <span>{selectedIndex + 1} of {groups.length}</span>
-                    <button className="accent-button" type="button" disabled={busy || nextGroup === undefined}
+                    <button className="accent-button" type="button" disabled={nextGroup === undefined}
                       onClick={() => {
                         if (nextGroup) setSelection({ key: nextGroup.key, index: selectedIndex + 1, groups });
                       }}>
@@ -1145,15 +1152,15 @@ export const PlaylistsPage = ({
   initialName?: string;
   initialSongs: readonly SongRow[];
   folders: readonly PlaylistFolder[];
-  onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
+  onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[], songs?: readonly SongRow[]) => Promise<boolean>;
   onCancel: () => void;
-  onCreateFromSelection: (songIds: readonly string[]) => void;
+  onCreateFromSelection: (songIds: readonly string[], songs?: readonly SongRow[]) => void;
   onEditSmart: (playlist: RekordboxPlaylist) => void;
   onExport: (playlist: RekordboxPlaylist) => void;
-  onCreate: (name: string, songIds: readonly string[], parentFolderId: string | null) => Promise<boolean>;
+  onCreate: (name: string, songIds: readonly string[], parentFolderId: string | null, songs?: readonly SongRow[]) => Promise<boolean>;
   onRemove: RemoveSongs;
   onSmart?: (name: string, parentFolderId: string | null, songs: readonly SongRow[]) => void;
-  onUpdateTracks?: (playlist: RekordboxPlaylist, songIds: readonly string[]) => Promise<boolean>;
+  onUpdateTracks?: (playlist: RekordboxPlaylist, songIds: readonly string[], songs?: readonly SongRow[]) => Promise<boolean>;
   onMenu?: (playlist: RekordboxPlaylist) => void;
   playlists: readonly RekordboxPlaylist[] | null;
   selectedPlaylistId: string | null;
@@ -1244,14 +1251,19 @@ export const PlaylistsPage = ({
     if (index < 0 || destination < 0 || destination >= ids.length || index === destination) return;
     ids.splice(index, 1);
     ids.splice(destination, 0, songId);
-    void onUpdateTracks(selectedPlaylist, ids);
+    void onUpdateTracks(selectedPlaylist, ids, selectedPlaylist.tracks);
   };
   const closePicker = (): void => {
     if (creating) onCancel(); else { setAdding(false); setQuery(''); setChosenSongs(new Map()); }
   };
-  const save = async (): Promise<void> => {
-    if (creating) { await onCreate(name, [...chosenSongs.keys()], parentFolderId); return; }
-    if (selectedPlaylist && onUpdateTracks && await onUpdateTracks(selectedPlaylist, [...selectedPlaylist.tracks.map((song) => song.id), ...chosenSongs.keys()])) closePicker();
+  const save = (): void => {
+    if (busy) return;
+    if (creating) { void onCreate(name, [...chosenSongs.keys()], parentFolderId, chosen); return; }
+    if (selectedPlaylist && onUpdateTracks) {
+      const tracks = [...selectedPlaylist.tracks, ...chosen];
+      void onUpdateTracks(selectedPlaylist, tracks.map((song) => song.id), tracks);
+      closePicker();
+    }
   };
 
   return (
@@ -1287,7 +1299,7 @@ export const PlaylistsPage = ({
             <div className="library-tools">
               <label className="library-search"><span className="search-icon" aria-hidden /><span className="visually-hidden">{picking ? 'Search tracks' : 'Search this playlist'}</span>
                 <input id="playlist-track-search" type="search" value={query} onChange={(event) => setQuery(event.currentTarget.value)} maxLength={200}
-                  placeholder={picking ? 'Search tracks, artists or albums' : 'Search this playlist'} disabled={busy} />
+                  placeholder={picking ? 'Search tracks, artists or albums' : 'Search this playlist'} />
               </label>
               {picking ? <button className="quiet-button" type="button" aria-expanded={suggestionsOpen} onClick={() => setSuggestionsOpen(!suggestionsOpen)}>
                 <UiIcon name="chevron-down" size={16} /> Suggestions</button> : <>
@@ -1388,13 +1400,15 @@ export const PlaylistsPage = ({
             onAction={setSelectionAction} onAdd={onAdd}
             onClear={() => { setSelectedSongs(new Map()); setSelectionAction(null); }}
             onRemove={onRemove}
-            {...(selectedPlaylist.kind === 'regular' && onUpdateTracks ? { onRemoveFromPlaylist: (songIds: readonly string[]) =>
-              onUpdateTracks(selectedPlaylist, selectedPlaylist.tracks.filter((song) => !songIds.includes(song.id)).map((song) => song.id)) } : {})}
+            {...(selectedPlaylist.kind === 'regular' && onUpdateTracks ? { onRemoveFromPlaylist: (songIds: readonly string[]) => {
+              const tracks = selectedPlaylist.tracks.filter((song) => !songIds.includes(song.id));
+              return onUpdateTracks(selectedPlaylist, tracks.map((song) => song.id), tracks);
+            } } : {})}
             playlist={selectedPlaylist} playlists={playlists ?? []} songs={[...selectedSongs.values()]} />}
           {picking ? <footer className="focused-playlist-footer">
             <span aria-live="polite">{chosenSongs.size} tracks selected{chosen.length > 0 ? ` · ${totalTime(chosen)}` : ''}</span>
             <button className="quiet-button" type="button" onClick={closePicker} disabled={busy}>Cancel</button>
-            <button className="accent-button" type="button" onClick={() => void save()} disabled={busy || (creating ? name.trim().length === 0 : chosenSongs.size === 0)}>
+            <button className="accent-button" type="button" onClick={save} disabled={busy || (creating ? name.trim().length === 0 : chosenSongs.size === 0)}>
               {busy ? 'Saving…' : creating ? 'Create playlist' : 'Add tracks'}
             </button>
           </footer> : <footer className="focused-playlist-note">{selectedPlaylist?.kind === 'smart' ? 'Tracks update automatically when they match the playlist rules.' : 'Drag tracks to change the play order.'}</footer>}

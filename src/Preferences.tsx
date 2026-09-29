@@ -1,4 +1,4 @@
-import { useEffect, useState, type JSX } from 'react';
+import { useEffect, useRef, useState, type JSX } from 'react';
 
 import { AppUpdates } from './AppUpdates';
 import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
@@ -18,9 +18,10 @@ export const PreferencesButton = (): JSX.Element => {
   );
 };
 
-export const Preferences = ({ onCancel, onSaved }: Readonly<{
+export const Preferences = ({ onCancel, onSaved, onError }: Readonly<{
   onCancel?: () => void;
   onSaved?: () => void;
+  onError?: (message: string) => void;
 }> = {}): JSX.Element => {
   const [library, setLibrary] = useState<LibrarySettings | null>(null);
   const [settings, setSettings] = useState<OpenRouterSettings | null>(null);
@@ -29,8 +30,8 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
   const [removeKey, setRemoveKey] = useState(false);
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [errors, setErrors] = useState<readonly string[]>([]);
+  const keyRevision = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -51,10 +52,11 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
       } else {
         failures.push('Could not load OpenRouter settings. Reopen Preferences to try again.');
       }
-      setErrors(failures);
+      if (onError && failures.length > 0) onError(failures.join(' '));
+      else setErrors(failures);
     });
     return () => { active = false; };
-  }, []);
+  }, [onError]);
 
   const valid = seconds.trim() !== '' && Number.isSafeInteger(Number(seconds)) && Number(seconds) >= 0;
   const ready = library !== null && settings !== null;
@@ -62,35 +64,41 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
   const save = async (): Promise<void> => {
     if (saving || !ready || !valid) return;
     setSaving(true);
-    setMessage(null);
     setErrors([]);
+    const submittedKeyRevision = keyRevision.current;
+    const keyChanged = removeKey || apiKey.trim() !== '';
+    if (keyChanged) setSettings({ ...settings, hasApiKey: !removeKey });
+    setApiKey('');
+    setRemoveKey(false);
+    setShowKey(false);
     const [libraryResult, keyResult] = await Promise.allSettled([
       Number(seconds) === library.minimumSongLengthSeconds
         ? Promise.resolve(library)
         : window.preferences.saveMinimumSongLength(Number(seconds)),
-      removeKey || apiKey.trim() !== ''
+      keyChanged
         ? window.preferences.saveOpenRouterKey(removeKey ? '' : apiKey)
         : Promise.resolve(settings),
     ]);
     const failures: string[] = [];
     if (libraryResult.status === 'fulfilled') {
       setLibrary(libraryResult.value);
-      setSeconds(String(libraryResult.value.minimumSongLengthSeconds));
     } else {
       failures.push('Could not save the minimum track length. Try again.');
     }
     if (keyResult.status === 'fulfilled') {
       setSettings(keyResult.value);
-      setApiKey('');
-      setRemoveKey(false);
-      setShowKey(false);
     } else {
+      setSettings(settings);
+      if (keyRevision.current === submittedKeyRevision) {
+        setApiKey(apiKey);
+        setRemoveKey(removeKey);
+      }
       failures.push('Could not save the API key. Check the key and try again.');
     }
     setSaving(false);
-    setErrors(failures);
+    if (onError && failures.length > 0) onError(failures.join(' '));
+    else setErrors(failures);
     if (failures.length === 0) {
-      setMessage('Changes saved.');
       onSaved?.();
     }
   };
@@ -122,8 +130,8 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
             <div className="preferences-length-input">
               <input id="minimum-song-length" type="number" min="0" step="1" required value={seconds}
                 aria-describedby="minimum-song-length-help minimum-song-length-unit"
-                disabled={library === null || saving}
-                onChange={(event) => { setSeconds(event.currentTarget.value); setMessage(null); }} />
+                disabled={library === null}
+                onChange={(event) => setSeconds(event.currentTarget.value)} />
               <span id="minimum-song-length-unit">seconds</span>
             </div>
           </div>
@@ -140,10 +148,10 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
                 <input id="playlist-api-key" type={showKey ? 'text' : 'password'} autoComplete="off" spellCheck={false}
                   value={apiKey} maxLength={4_096} aria-describedby="playlist-api-key-help playlist-api-key-status"
                   placeholder={settings?.hasApiKey && !removeKey ? 'Replace saved API key' : 'Paste your API key'}
-                  disabled={settings === null || saving || removeKey}
-                  onChange={(event) => { setApiKey(event.currentTarget.value); setMessage(null); }} />
+                  disabled={settings === null || removeKey}
+                  onChange={(event) => { keyRevision.current += 1; setApiKey(event.currentTarget.value); }} />
                 <button className="preferences-key-visibility" type="button" aria-label={showKey ? 'Hide API key' : 'Show API key'}
-                  aria-pressed={showKey} disabled={settings === null || saving || removeKey} onClick={() => setShowKey(!showKey)}>
+                  aria-pressed={showKey} disabled={settings === null || removeKey} onClick={() => setShowKey(!showKey)}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true">
                     <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" />
                     <circle cx="12" cy="12" r="3" />
@@ -152,16 +160,16 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
                 </button>
               </div>
               <div className="preferences-key-status">
-                <p id="playlist-api-key-status" role="status">{keyStatus}</p>
-                {settings?.hasApiKey && <button type="button" className="preferences-remove-key" disabled={saving}
-                  onClick={() => { setRemoveKey(!removeKey); setMessage(null); }}>{removeKey ? 'Keep key' : 'Remove key'}</button>}
+                <p id="playlist-api-key-status">{keyStatus}</p>
+                {settings?.hasApiKey && <button type="button" className="preferences-remove-key"
+                  onClick={() => { keyRevision.current += 1; setRemoveKey(!removeKey); }}>{removeKey ? 'Keep key' : 'Remove key'}</button>}
               </div>
             </div>
           </div>
         </section>
         <section className="preferences-section" aria-labelledby="update-preferences-title">
           <h2 id="update-preferences-title">App updates</h2>
-          <AppUpdates />
+          <AppUpdates {...(onError ? { onError } : {})} />
         </section>
         <section className="preferences-section" aria-labelledby="support-preferences-title">
           <h2 id="support-preferences-title">Support Arsenal</h2>
@@ -174,8 +182,8 @@ export const Preferences = ({ onCancel, onSaved }: Readonly<{
         {errors.length > 0 && <div className="preferences-errors" role="alert">{errors.map((error) => <p key={error}>{error}</p>)}</div>}
       </div>
       <footer className="preferences-page-actions">
-        {message !== null && <p role="status">{message}</p>}
-        <button className="preferences-secondary-button" type="button" disabled={saving} onClick={onCancel ?? (() => window.close())}>Cancel</button>
+        <button className="preferences-secondary-button" type="button" disabled={saving && onError === undefined}
+          onClick={onCancel ?? (() => window.close())}>Cancel</button>
         <button className="preferences-save-button" type="submit" disabled={!ready || saving || !valid}>{saving ? 'Saving...' : 'Save changes'}</button>
       </footer>
     </form>
