@@ -15,11 +15,15 @@ My library/
 
 Each snapshot references music relative to its own directory. Copying the entire backup directory preserves those references. Cloud services can synchronize the directory as ordinary files. JSON snapshots are published after their music copies finish. Previous snapshots and music files remain available.
 
-Importing bundled music creates local working copies so syncing audio tags cannot change the backup files. Each connected library reuses its working copies when importing newer snapshots. Existing copies keep their local tag edits. Libraries imported before this protection may need to be imported again before syncing music metadata or performance data.
+Opening a backup folder selects its newest snapshot and opens the restored library in Arsenal. A snapshot file can also be opened directly. Arsenal rejects an unreadable newest snapshot instead of silently restoring an older one. Bundled music needs no manual relinking.
 
-Backup folders appear as connections alongside DJ libraries. Each folder connection has its own source library and music option, independent of the library currently open. Multiple folders can back up the same library. Changing these settings keeps the existing output directory. It checks for changes after library operations and every 30 seconds while the app is open. Unchanged libraries reuse the previous snapshot. Each folder connection creates a separate output directory, so different computers do not overwrite one another's snapshots. Imports are explicit and create separate local libraries.
+Importing bundled music creates local working copies so syncing audio tags cannot change the backup files. Arsenal uses independent copy-on-write clones where the filesystem supports them and verifies each new working copy. Initial transfer and verification time depends on the collection size and storage speed. Each connected library reuses its working copies when importing newer snapshots. Existing copies keep their local tag edits. Libraries imported before this protection may need to be imported again before syncing music metadata or performance data.
 
-Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Disconnecting a folder stops automatic backups and keeps the files already saved. Disconnecting its source library keeps the folder connection visible so another source can be selected.
+Backup folders appear as connections alongside DJ libraries. Every folder backs up the primary collection, which receives all edits made in Arsenal, as an app-independent Arsenal library. Folder settings do not select a DJ application or source connection. Changing the primary library changes the collection saved to all connected folders. Each folder keeps its own music option, and new connections include music by default.
+
+Arsenal checks for backup changes after library operations and every 30 seconds while it is open. Unchanged libraries reuse the previous snapshot. Each folder connection creates a separate output directory, so different computers do not overwrite one another's snapshots. Existing output directories and snapshots survive migration. Imports are explicit and create separate local libraries.
+
+Snapshots and media are retained without automatic deletion. Identical music files share a copy within each backup directory. Disconnecting a folder stops automatic backups and keeps the files already saved. If no primary library is available, Arsenal reports the problem and keeps the existing snapshots.
 
 ## Changes between sessions
 
@@ -98,7 +102,7 @@ Metadata preserves the source library's rating scale. In particular, Rekordbox e
 
 `relativePath` is `null` when music is excluded or unavailable. A present path must have the form `media/<sha256>` with an optional lowercase alphanumeric extension. `sha256` is `null` when the original file cannot be read. Its size can also be `null`.
 
-The importer verifies the size and hash of bundled music, then checks original paths. It searches a selected music folder recursively for unresolved tracks. File sizes narrow the search before hashing. A different filename does not prevent an exact match. Search does not follow symbolic links in the selected music folders.
+The importer makes independent working copies of bundled music and verifies their sizes and hashes. It checks original paths for tracks without a usable bundled copy. It searches a selected music folder recursively for unresolved tracks. File sizes narrow the search before hashing. A different filename does not prevent an exact match. Search does not follow symbolic links in the selected music folders.
 
 Bundled paths cannot escape the backup directory, including through symbolic links. Files with missing or mismatched fingerprints remain unresolved. Choosing to import without them creates unavailable references, so an unrelated file at an old path cannot play. Re-importing the original snapshot allows another search after the music becomes available.
 

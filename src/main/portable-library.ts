@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, open, opendir, readFile, realpath, rename, stat, unlink } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, open, opendir, readdir, readFile, realpath, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { SONG_SOURCE_LABELS, type SongRow } from '../shared/dj-library';
@@ -312,6 +312,38 @@ export const readPortableLibrary = async (manifestPath: string): Promise<Portabl
   return readManifest(value);
 };
 
+export const portableSnapshotDate = (name: string): number | null => {
+  const match = /^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2}\.\d{3}Z)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json$/i.exec(name);
+  if (match === null) return null;
+  const date = Date.parse(`${match[1]}${match[2]}:${match[3]}:${match[4]}`);
+  return Number.isFinite(date) ? date : null;
+};
+
+export const readPortableLibraryFolder = async (directory: string) => {
+  let root = directory;
+  let entries = await readdir(root, { withFileTypes: true });
+  if (!entries.some((entry) => portableSnapshotDate(entry.name) !== null)) {
+    const children = entries.filter((entry) => entry.isDirectory() && /^Arsenal-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(entry.name));
+    if (children.length > 1) throw new Error('This folder contains several Arsenal libraries. Choose the backup folder for the library you want to open.');
+    const child = children[0];
+    if (child !== undefined) {
+      root = join(root, child.name);
+      entries = await readdir(root, { withFileTypes: true });
+    }
+  }
+  const newest = entries.flatMap((entry) => {
+    const date = portableSnapshotDate(entry.name);
+    return date === null ? [] : [{ name: entry.name, date }];
+  }).sort((left, right) => right.date - left.date || right.name.localeCompare(left.name))[0];
+  if (newest === undefined) throw new Error('No library snapshot was found. Choose the Arsenal backup folder after it has finished syncing.');
+  const manifestPath = join(root, newest.name);
+  try {
+    return { manifest: await readPortableLibrary(manifestPath), manifestPath };
+  } catch (error) {
+    throw new Error(`The latest library snapshot could not be read: ${newest.name}. Wait for the backup folder to finish syncing, then try again. ${error instanceof Error ? error.message : ''}`);
+  }
+};
+
 export const resolvePortableLibrary = async (
   manifest: PortableLibraryManifest, manifestPath: string, searchRoots: readonly string[],
   managedMediaDirectory?: string,
@@ -341,8 +373,16 @@ export const resolvePortableLibrary = async (
       let contained = false;
       try { contained = within(root, await realpath(candidate)); } catch (error) { if (!missing(error)) throw error; }
       if (!contained) warnings.push(`${track.metadata.title}: bundled music is unavailable or points outside the backup folder.`);
-      else if (await matches(candidate, media)) { resolved.set(track.id, candidate); bundled.set(candidate, media); continue; }
-      else warnings.push(`${track.metadata.title}: bundled music did not match its saved fingerprint.`);
+      else {
+        let valid: boolean;
+        if (managedMediaDirectory === undefined) valid = await matches(candidate, media);
+        else {
+          const info = await stat(candidate);
+          valid = info.isFile() && info.size === media.sizeBytes;
+        }
+        if (valid) { resolved.set(track.id, candidate); bundled.set(candidate, media); continue; }
+        warnings.push(`${track.metadata.title}: bundled music did not match its saved fingerprint.`);
+      }
     }
     if (isAbsolute(media.originalPath) && await matches(media.originalPath, media)) { resolved.set(track.id, media.originalPath); continue; }
     if (media.sha256 !== null && media.sizeBytes !== null) {
@@ -394,7 +434,7 @@ export const resolvePortableLibrary = async (
         const copiedPath = join(directory, basename(path));
         let created = false;
         try {
-          await copyFile(path, copiedPath, constants.COPYFILE_EXCL);
+          await copyFile(path, copiedPath, constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE);
           created = true;
           createdPaths.push(copiedPath);
         } catch (error) {

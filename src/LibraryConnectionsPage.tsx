@@ -17,7 +17,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
   onManage: (action: LibraryConnectionAction) => Promise<LibraryConnectionResult>;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
-  onImportBackup: () => Promise<LibraryConnectionResult>;
+  onImportBackup: (mode: 'folder' | 'snapshot') => Promise<LibraryConnectionResult>;
   initialSyncResult?: Exclude<SyncResult, { kind: 'cancelled' }> | null;
 }>): JSX.Element => {
   const [pending, setPending] = useState<string | null>(null);
@@ -100,7 +100,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
           })}
           {connections.filter((connection) => connection.origin === 'portable').map((connection) => connectionCard(connection, 'Portable library'))}
           <LibraryBackupConnections busy={working} connections={state} onBusy={setPending}
-            onImport={() => run(onImportBackup, 'Importing backup…')} />
+            onImport={(mode) => run(() => onImportBackup(mode), 'Opening Arsenal library…')} />
         </div>}
 
         {pending !== null && <p className="library-connection-progress" role="status">{pending}</p>}
@@ -121,7 +121,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
         aria-labelledby="library-remove-title" aria-describedby="library-remove-description" onClose={() => setRemoving(null)}>
         <div className="tracklist-export-heading">
           <h2 id="library-remove-title">Remove connection?</h2>
-          <button className="inspector-close" type="button" onClick={() => removeDialogRef.current?.close()} aria-label="Cancel removal">×</button>
+          <button className="inspector-close" type="button" onClick={() => removeDialogRef.current?.close()} aria-label="Cancel removal"><UiIcon name="close" size={16} /></button>
         </div>
         <p className="library-connection-path">{removing.path}</p>
         <p id="library-remove-description">Library and music files stay on disk.</p>

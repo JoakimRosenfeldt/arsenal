@@ -1,6 +1,5 @@
 export type BackupConnection = Readonly<{
   id: string;
-  sourceConnectionId: string;
   directory: string;
   manifestPath: string | null;
   includeMusic: boolean;
@@ -10,5 +9,5 @@ export type BackupConnection = Readonly<{
 }>;
 
 export type BackupConfiguration =
-  | Readonly<{ kind: 'connect'; sourceConnectionId: string; includeMusic: boolean }>
-  | Readonly<{ kind: 'update'; id: string; sourceConnectionId: string; includeMusic: boolean }>;
+  | Readonly<{ kind: 'connect'; includeMusic: boolean }>
+  | Readonly<{ kind: 'update'; id: string; includeMusic: boolean }>;

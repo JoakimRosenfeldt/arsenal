@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import type { LibrarySourceKind } from '../shared/dj-library';
 import type { SyncLibrary } from './library-sync-model';
 import { parseRekordboxXml } from './parse-rekordbox-xml';
-import { readPortableLibrary } from './portable-library';
+import { portableSnapshotDate, readPortableLibrary } from './portable-library';
 import { findSeratoSource } from './serato-library';
 import { readSeratoWithPerformance } from './sync-libraries';
 import { rekordboxSyncLibrary } from './sync-rekordbox-xml';
@@ -16,20 +16,13 @@ export type PortableLibrarySource = Readonly<{
   resolvedPaths?: readonly string[];
 }>;
 
-const snapshotDate = (name: string): number | null => {
-  const match = /^(\d{4}-\d{2}-\d{2}T)(\d{2})-(\d{2})-(\d{2}\.\d{3}Z)-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\.json$/i.exec(name);
-  if (match === null) return null;
-  const date = Date.parse(`${match[1]}${match[2]}:${match[3]}:${match[4]}`);
-  return Number.isFinite(date) ? date : null;
-};
-
 const newestPortableLibrary = async (source: PortableLibrarySource, followLatest: boolean) => {
   let manifestPath = source.manifestPath;
   let manifest = await readPortableLibrary(manifestPath);
   if (!followLatest) return { manifest, manifestPath };
   const directory = dirname(manifestPath);
   const candidates = (await readdir(directory)).flatMap((name) => {
-    const date = snapshotDate(name);
+    const date = portableSnapshotDate(name);
     return date !== null && date >= Date.parse(manifest.savedAt) && name !== basename(manifestPath)
       ? [{ path: join(directory, name), date }] : [];
   }).sort((left, right) => right.date - left.date || right.path.localeCompare(left.path));
@@ -41,7 +34,7 @@ const newestPortableLibrary = async (source: PortableLibrarySource, followLatest
     } catch (error) {
       throw new Error(`A newer library snapshot could not be read: ${basename(candidate.path)}. Wait for the cloud folder to finish syncing, then try again. ${error instanceof Error ? error.message : ''}`);
     }
-    if (next.name !== manifest.name) continue;
+    if (next.name !== manifest.name && next.name !== 'Arsenal library') continue;
     const date = Date.parse(next.savedAt);
     const previousDate = Date.parse(manifest.savedAt);
     if (date > previousDate || date === previousDate && candidate.path.localeCompare(manifestPath) > 0) {

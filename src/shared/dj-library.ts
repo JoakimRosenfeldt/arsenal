@@ -502,7 +502,7 @@ export type DjLibraryApi = Readonly<{
   configureBackup(request: BackupConfiguration): Promise<BackupConnection | null>;
   backupNow(id: string): Promise<BackupConnection>;
   stopBackup(id: string): Promise<void>;
-  importBackup(): Promise<LibraryConnectionResult>;
+  importBackup(mode?: 'folder' | 'snapshot'): Promise<LibraryConnectionResult>;
   connectLibrary(kind: LibrarySourceKind): Promise<LibraryConnectionResult>;
   manageLibraryConnection(action: LibraryConnectionAction): Promise<LibraryConnectionResult>;
   selectSyncLibrary(id: string): Promise<SyncPreferences>;

@@ -1698,6 +1698,8 @@ button.sidebar-search {
   display: none;
   width: 26px;
   height: 26px;
+  padding: 0;
+  place-items: center;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   color: var(--muted);
@@ -2699,7 +2701,7 @@ button.sidebar-search {
 
 .tracklist-export-heading .inspector-close {
   position: static;
-  display: block;
+  display: grid;
   flex: none;
 }
 
@@ -2841,25 +2843,10 @@ button.sidebar-search {
   line-height: 1.6;
 }
 
-.library-folder-source {
-  display: grid;
-  gap: 8px;
-  margin-top: 20px;
-  color: var(--text);
-  font-size: 13px;
-}
-
-.library-folder-source select {
-  width: 100%;
-  padding: 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 4px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-}
-
 .library-folder-import {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 24px;
   padding-top: 12px;
   border-top: 1px solid var(--line-strong);

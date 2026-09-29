@@ -381,12 +381,11 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Manage backups from the library window');
     if (!isRecord(request) || (request.kind !== 'connect' && request.kind !== 'update') ||
-      typeof request.sourceConnectionId !== 'string' || !request.sourceConnectionId ||
-      typeof request.includeMusic !== 'boolean') throw new Error('Choose a library and whether to include music');
+      typeof request.includeMusic !== 'boolean') throw new Error('Choose whether to include music');
     if (request.kind === 'update' && (typeof request.id !== 'string' || !request.id)) throw new Error('Choose a folder connection');
     const configuration: BackupConfiguration = request.kind === 'update' && typeof request.id === 'string'
-      ? { kind: request.kind, id: request.id, sourceConnectionId: request.sourceConnectionId, includeMusic: request.includeMusic }
-      : { kind: 'connect', sourceConnectionId: request.sourceConnectionId, includeMusic: request.includeMusic };
+      ? { kind: request.kind, id: request.id, includeMusic: request.includeMusic }
+      : { kind: 'connect', includeMusic: request.includeMusic };
     libraryActions += 1;
     try { return await library.configureBackup(owner, configuration); } finally { libraryActions -= 1; }
   });
@@ -407,11 +406,12 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     try { return await library.stopBackup(id); } finally { libraryActions -= 1; }
   });
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.importBackup, async (event) => {
+  ipc.handle(DJ_LIBRARY_CHANNELS.importBackup, async (event, mode: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Import backups from the library window');
+    if (mode !== undefined && mode !== 'folder' && mode !== 'snapshot') throw new Error('Choose a library folder or snapshot file');
     libraryActions += 1;
-    try { return await library.importBackup(owner); } finally { libraryActions -= 1; }
+    try { return await library.importBackup(owner, mode); } finally { libraryActions -= 1; }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.connectLibrary, async (event, kind: unknown) => {
