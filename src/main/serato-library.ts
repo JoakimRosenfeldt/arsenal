@@ -9,6 +9,16 @@ import { moveSeratoSqliteNode, readSeratoSqlite, repairSeratoSqliteMissingFile, 
 
 export type SeratoSource = Readonly<{ kind: 'legacy' | 'sqlite'; path: string }>;
 
+export type SeratoLibraryWriteOptions = Readonly<{
+  metadata: boolean;
+  replaceTracks?: boolean;
+  replacePlaylists?: boolean;
+  removeTrackPaths?: readonly string[];
+  removePlaylistTrackPaths?: readonly string[];
+  replacePlaylistPaths?: readonly (readonly string[])[];
+  removePlaylistPaths?: readonly (readonly string[])[];
+}>;
+
 const isFile = async (path: string): Promise<boolean> => {
   try { return (await stat(path)).isFile(); } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return false;
@@ -56,9 +66,7 @@ export const repairSeratoMissingFile = (source: SeratoSource, missingPath: strin
   source.kind === 'sqlite' ? repairSeratoSqliteMissingFile(source.path, missingPath, replacementPath)
     : repairSeratoLegacyMissingFile(source.path, missingPath, replacementPath, assertSeratoClosed);
 
-export const writeSeratoLibrary = async (source: SeratoSource, incoming: SyncLibrary, options: Readonly<{
-  metadata: boolean; replaceTracks?: boolean; replacePlaylists?: boolean;
-}>) => {
+export const writeSeratoLibrary = async (source: SeratoSource, incoming: SyncLibrary, options: SeratoLibraryWriteOptions) => {
   await assertSeratoClosed();
   if (source.kind === 'sqlite') return writeSeratoSqlite(source.path, incoming, options);
   return { ...await writeSeratoLegacy(source.path, incoming, options), warnings: [] };

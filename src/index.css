@@ -1698,6 +1698,8 @@ button.sidebar-search {
   display: none;
   width: 26px;
   height: 26px;
+  padding: 0;
+  place-items: center;
   border: 1px solid var(--line-strong);
   border-radius: 4px;
   color: var(--muted);
@@ -2699,7 +2701,7 @@ button.sidebar-search {
 
 .tracklist-export-heading .inspector-close {
   position: static;
-  display: block;
+  display: grid;
   flex: none;
 }
 
@@ -2795,6 +2797,49 @@ button.sidebar-search {
   color: var(--text);
   font-size: 16px;
   font-weight: 600;
+}
+
+.library-sync-activity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--panel-raised);
+}
+
+.library-sync-activity p {
+  flex: 1 1 260px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.library-backup-music {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  color: var(--text);
+}
+
+.library-folder-summary {
+  margin: 0;
+}
+
+.library-folder-error {
+  grid-column: 1 / -1;
+}
+
+.library-folder-dialog > p {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .library-sync-settings-grid {

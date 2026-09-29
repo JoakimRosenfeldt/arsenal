@@ -11,6 +11,7 @@ import type { PlaylistNodeMove, SyncLibrary, SyncPlaylist, SyncTrack } from './l
 import { seratoSmartRules } from './serato-smart-crates';
 import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { assertMissingFileRepair, type LibraryFileRepairResult } from './repair-library-files';
+import type { SeratoLibraryWriteOptions } from './serato-library';
 
 // Serato 4.0.9 schema 202: root.sqlite is authoritative; master.sqlite is rebuilt by Serato.
 // https://github.com/Venut-Technologies/serato-dj-mcp/blob/main/tests/fixtures/schema/root-202.sql
@@ -397,7 +398,7 @@ export const repairSeratoSqliteMissingFile = async (
 export const writeSeratoSqlite = async (
   rootPath: string,
   incoming: SyncLibrary,
-  options: Readonly<{ metadata?: boolean; replaceTracks?: boolean; replacePlaylists?: boolean }> = {},
+  options: Partial<SeratoLibraryWriteOptions> = {},
 ): Promise<{ trackCount: number; playlistCount: number; backupPaths: string[]; warnings: string[] }> => {
   await assertSeratoClosed();
   incoming = await resolveSeratoLibraryPaths(incoming);
@@ -462,6 +463,22 @@ export const writeSeratoSqlite = async (
       retainedSpaceAssets.add(spaceAssetId);
     }
     const findCrate = db.prepare('SELECT id, type FROM container WHERE parent_id = ? AND name = ? COLLATE NOCASE');
+    for (const path of options.removePlaylistPaths ?? []) {
+      let containerId = rootId;
+      let found = true;
+      for (const name of path) {
+        const matches = findCrate.all(containerId, name);
+        if (matches.length > 1) throw new Error(`Multiple Serato crates share ${path.join(' / ')}.`);
+        if (!matches[0]) { found = false; break; }
+        containerId = id(matches[0].id);
+      }
+      if (found && containerId !== rootId) {
+        if (db.prepare('SELECT id FROM container WHERE parent_id = ? LIMIT 1').get(containerId)) {
+          db.prepare('DELETE FROM container_asset WHERE container_id = ?').run(containerId);
+        } else db.prepare('DELETE FROM container WHERE id = ?').run(containerId);
+      }
+    }
+    const replacedPlaylistPaths = new Set((options.replacePlaylistPaths ?? []).map((path) => JSON.stringify(path)));
     const addCrate = db.prepare(`INSERT INTO container (revision, parent_id, name, type, list_order, space_id)
       VALUES (?, ?, ?, ?, (SELECT COALESCE(MAX(list_order), 0) + 1 FROM container WHERE parent_id = ?), ?)`);
     const saveSmartRules = db.prepare(`INSERT INTO smart_crate_rules (container_id, revision, version, rules, needs_refresh)
@@ -475,6 +492,7 @@ export const writeSeratoSqlite = async (
     const crateOrder = new Map<number, number>();
     for (const playlist of incoming.playlists) {
       const smart = smartCrates.get(playlist);
+      const replaceMembers = options.replacePlaylists || replacedPlaylistPaths.has(JSON.stringify(playlist.path));
       let containerId = rootId;
       for (const [index, name] of playlist.path.entries()) {
         const type = smart && index === playlist.path.length - 1 ? 2 : 1;
@@ -506,8 +524,8 @@ export const writeSeratoSqlite = async (
         if (spaceAssetId === undefined) throw new Error(`A playlist track is missing from the library: ${path}`);
         desired.add(spaceAssetId);
       }
-      if (!smart && !options.replacePlaylists) for (const row of members) desired.add(id(row.space_asset_id));
-      if (options.replacePlaylists) {
+      if (!smart && !replaceMembers) for (const row of members) desired.add(id(row.space_asset_id));
+      if (replaceMembers) {
         const removeMember = db.prepare('DELETE FROM container_asset WHERE id = ?');
         for (const row of members) if (!desired.has(id(row.space_asset_id))) removeMember.run(id(row.id));
       }
@@ -527,7 +545,7 @@ export const writeSeratoSqlite = async (
         if (!retainedCrates.has(id(row.id))) removeCrate.run(id(row.id));
       }
     }
-    if (incoming.playlists.length > 0) {
+    if (incoming.playlists.length > 0 && options.replacePlaylistPaths === undefined) {
       const siblings = new Map<number, Row[]>();
       for (const row of db.prepare('SELECT id, parent_id FROM container WHERE space_id = ? AND id != ? ORDER BY list_order, id').all(spaceId, rootId)) {
         const parentId = id(row.parent_id);
@@ -541,13 +559,17 @@ export const writeSeratoSqlite = async (
         for (const [position, row] of group.entries()) setOrder.run(position + 1, revision, id(row.id));
       }
     }
-    if (options.replaceTracks) {
+    const removedTrackKeys = new Set(await Promise.all((options.removeTrackPaths ?? []).map(seratoMediaPathKey)));
+    const removedMemberKeys = new Set(await Promise.all((options.removePlaylistTrackPaths ?? []).map(seratoMediaPathKey)));
+    if (options.replaceTracks || removedTrackKeys.size || removedMemberKeys.size) {
       const removeSpaceAsset = db.prepare('DELETE FROM space_asset WHERE id = ?');
       const removeUnusedAsset = db.prepare('DELETE FROM asset WHERE id = ? AND NOT EXISTS (SELECT 1 FROM space_asset WHERE asset_id = ?)');
-      for (const row of db.prepare('SELECT id, asset_id FROM space_asset WHERE space_id = ?').all(spaceId)) {
-        if (retainedSpaceAssets.has(id(row.id))) continue;
-        removeSpaceAsset.run(id(row.id));
-        removeUnusedAsset.run(id(row.asset_id), id(row.asset_id));
+      for (const row of db.prepare('SELECT sa.id, sa.asset_id, a.portable_id, a.third_party_type FROM space_asset sa JOIN asset a ON a.id = sa.asset_id WHERE sa.space_id = ?').all(spaceId)) {
+        const key = await seratoMediaPathKey(assetPath(rootPath, row));
+        if (options.replaceTracks && !retainedSpaceAssets.has(id(row.id)) || removedTrackKeys.has(key)) {
+          removeSpaceAsset.run(id(row.id));
+          removeUnusedAsset.run(id(row.asset_id), id(row.asset_id));
+        } else if (removedMemberKeys.has(key)) db.prepare('DELETE FROM container_asset WHERE space_asset_id = ?').run(id(row.id));
       }
     }
     db.prepare('UPDATE space SET revision = ? WHERE id = ?').run(revision, spaceId);

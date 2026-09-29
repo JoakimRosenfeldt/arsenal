@@ -6,6 +6,7 @@ import {
   app,
   BrowserWindow,
   clipboard,
+  dialog,
   Menu,
   type IpcMainInvokeEvent,
   net,
@@ -22,6 +23,7 @@ import { OpenRouterConnection } from './main/openrouter';
 import { PLAYLIST_PROGRESS_CHANNEL } from './shared/playlist-suggestions';
 import { APP_UPDATE_CHANNELS } from './shared/app-updates';
 import { PREFERENCES_CHANNELS } from './shared/preferences';
+import { readMusicOrganization, type BackupConfiguration } from './shared/library-backup';
 import {
   TRACK_ARTWORK_SCHEME,
   TRACK_MEDIA_SCHEME,
@@ -333,7 +335,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   });
   ipc.handle(APP_UPDATE_CHANNELS.install, (event) => {
     assertTrustedSender(event, owner);
-    if (libraryActions > 0) {
+    if (libraryActions > 0 || library.syncActivity().state === 'syncing') {
       throw new Error('Wait for library actions to finish before restarting.');
     }
     updates.install();
@@ -361,6 +363,57 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Manage connections from the library window');
     return library.connections();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.backupStatus, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    return library.backupStatus();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.checkStartupChanges, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Check changed libraries from the library window');
+    libraryActions += 1;
+    try { return await library.checkStartupChanges(owner); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.configureBackup, async (event, request: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    if (!isRecord(request) || (request.kind !== 'connect' && request.kind !== 'update') ||
+      typeof request.includeMusic !== 'boolean') throw new Error('Choose whether to include music');
+    if (request.kind === 'update' && (typeof request.id !== 'string' || !request.id)) throw new Error('Choose a folder connection');
+    const musicOrganization = readMusicOrganization(request.musicOrganization);
+    const configuration: BackupConfiguration = request.kind === 'update' && typeof request.id === 'string'
+      ? { kind: request.kind, id: request.id, includeMusic: request.includeMusic, musicOrganization }
+      : { kind: 'connect', includeMusic: request.includeMusic, musicOrganization };
+    libraryActions += 1;
+    try { return await library.configureBackup(owner, configuration); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.backupNow, async (event, id: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    if (typeof id !== 'string' || !id) throw new Error('Choose a folder connection');
+    libraryActions += 1;
+    try { return await library.backupNow(id); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.stopBackup, async (event, id: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage backups from the library window');
+    if (typeof id !== 'string' || !id) throw new Error('Choose a folder connection');
+    libraryActions += 1;
+    try { return await library.stopBackup(id); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.importBackup, async (event, mode: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Import backups from the library window');
+    if (mode !== undefined && mode !== 'folder' && mode !== 'snapshot') throw new Error('Choose a library folder or snapshot file');
+    libraryActions += 1;
+    try { return await library.importBackup(owner, mode); } finally { libraryActions -= 1; }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.connectLibrary, async (event, kind: unknown) => {
@@ -420,6 +473,18 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Choose sync libraries from the library window');
     return library.syncPreferences();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.syncActivity, (event) => {
+    assertTrustedSender(event, owner);
+    return library.syncActivity();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.stopOngoingSync, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage ongoing sync from the library window');
+    libraryActions += 1;
+    try { return await library.stopOngoingSync(); } finally { libraryActions -= 1; }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.chooseSyncLibrary, async (event, kind: unknown, direction: unknown) => {
@@ -921,9 +986,20 @@ const openPreferences = (updates: AppUpdates): void => {
 void app.whenReady().then(async () => {
   app.dock?.setIcon(APP_ICON_PATH);
   await openRouter.initialize(join(app.getPath('userData'), 'ai-settings.json'));
-  await library.initialize(
-    join(app.getPath('userData'), 'last-library.json'),
-  );
+  try {
+    await library.initialize(join(app.getPath('userData'), 'last-library.json'));
+  } catch (error) {
+    dialog.showErrorBox('Could not open the Arsenal library',
+      `${error instanceof Error ? error.message : 'The saved library could not be read.'}\n\nYour library files have been kept. Resolve the error and reopen Arsenal.`);
+    app.quit();
+    return;
+  }
+  library.onSyncActivity = (activity) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      window.webContents.send(DJ_LIBRARY_CHANNELS.syncActivityChanged, activity);
+      if (activity.state !== 'syncing') window.webContents.send(DJ_LIBRARY_CHANNELS.libraryChanged, library.status());
+    }
+  };
   const appSession = session.fromPartition(APP_SESSION_PARTITION);
   configureSession(appSession);
   configureProtocols(appSession);
@@ -964,4 +1040,11 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => library.cancelSuggestions());
+let libraryReadyToQuit = false;
+app.on('before-quit', (event) => {
+  if (libraryReadyToQuit) return;
+  event.preventDefault();
+  library.cancelSuggestions();
+  library.disposeBackups();
+  void library.whenIdle().then(() => { libraryReadyToQuit = true; app.quit(); });
+});

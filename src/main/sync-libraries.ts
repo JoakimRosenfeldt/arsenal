@@ -1,13 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { copyFile, mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import type { SyncFields, SyncRequest, SyncResult } from '../shared/dj-library';
-import { mergeLibraries, normalizePath, type SyncLibrary, type SyncTrack } from './library-sync-model';
+import type { LibrarySourceKind, SyncFields, SyncRequest, SyncResult } from '../shared/dj-library';
+import { evaluateArsenalSmartPlaylist } from '../shared/smart-playlists';
+import { normalizePath, type SyncLibrary, type SyncTrack } from './library-sync-model';
 import { parseRekordboxXml } from './parse-rekordbox-xml';
 import { mergeRekordboxXml, rekordboxSyncLibrary } from './sync-rekordbox-xml';
-import { assertSeratoClosed, readSeratoLibrary, writeSeratoLibrary, type SeratoSource } from './serato-library';
+import { assertSeratoClosed, findSeratoSource, readSeratoLibrary, writeSeratoLibrary, type SeratoSource } from './serato-library';
 import { readSeratoPerformance, writeSeratoPerformance } from './serato-performance';
-import { resolveSeratoLibraryPaths, seratoMediaPathKey } from './serato-paths';
+import { resolveSeratoLibraryPaths, resolveSeratoMediaPath } from './serato-paths';
 import { automaticSyncSearchRoots, findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
 
 export const readSeratoWithPerformance = async (source: SeratoSource, includePerformance = true) => {
@@ -68,7 +69,9 @@ const selectedSource = (source: SyncLibrary, target: SyncLibrary, fields: SyncFi
     return [{ ...track,
       song: fields.metadata || !previous ? track.song : previous.song,
       ...(performance ? { performance: {
+        ...performance,
         hotCues: fields.hotCues ? performance.hotCues : previous?.performance?.hotCues ?? [],
+        memoryCues: fields.hotCues ? performance.memoryCues ?? previous?.performance?.memoryCues ?? [] : previous?.performance?.memoryCues ?? [],
         loops: fields.loops ? performance.loops : previous?.performance?.loops ?? [],
         beatgrids: fields.beatgrids ? performance.beatgrids : previous?.performance?.beatgrids ?? [],
       } } : {}),
@@ -88,144 +91,109 @@ const shiftPerformance = (library: SyncLibrary, seconds: number, fields: SyncFie
     return value;
   };
   return { ...library, tracks: library.tracks.map((track) => track.performance ? { ...track, performance: {
+    ...track.performance,
     hotCues: fields.hotCues ? track.performance.hotCues.map((cue) => ({ ...cue, start: shift(cue.start) })) : track.performance.hotCues,
+    ...(track.performance.memoryCues === undefined ? {} : { memoryCues: fields.hotCues
+      ? track.performance.memoryCues.map((cue) => ({ ...cue, start: shift(cue.start) })) : track.performance.memoryCues }),
     loops: fields.loops ? track.performance.loops.map((loop) => ({ ...loop, start: shift(loop.start), end: shift(loop.end) })) : track.performance.loops,
     beatgrids: fields.beatgrids ? track.performance.beatgrids.map((grid) => ({ ...grid, start: shift(grid.start, true) })) : track.performance.beatgrids,
   } } : track) };
 };
 
-export const syncLibraryFiles = async ({ rekordboxPath, serato, request, workspace }: Readonly<{
-  rekordboxPath: string;
-  serato: SeratoSource;
-  request: SyncRequest;
-  workspace: SyncLibrary | null;
+export const libraryForDjApp = (library: SyncLibrary, kind: LibrarySourceKind): SyncLibrary => {
+  const paths = new Map(library.tracks.map((track) => [track.song.id, track.path]));
+  const songs = library.tracks.map((track) => track.song);
+  return { ...library, playlists: library.playlists.map((playlist) => {
+    if (playlist.smart?.kind !== 'arsenal') return playlist;
+    const trackPaths = evaluateArsenalSmartPlaylist(playlist.smart.definition, songs)
+      .tracks.flatMap((song) => { const path = paths.get(song.id); return path === undefined ? [] : [path]; });
+    return kind === 'rekordbox' ? { ...playlist, trackPaths } : { path: playlist.path, kind: 'playlist', trackPaths };
+  }) };
+};
+
+export const syncArsenalLibraryToConnection = async ({ library, target, request, protectedMediaRoots = [] }: Readonly<{
+  library: SyncLibrary;
+  target: Readonly<{ kind: LibrarySourceKind; path: string }>;
+  request: Pick<SyncRequest, 'fields' | 'mode' | 'timingOffsetMs'>;
+  protectedMediaRoots?: readonly string[];
 }>): Promise<SyncResult> => {
   const backupPaths: string[] = [];
   const warnings: string[] = [];
   let wroteLibrary = false;
-  let checkMissingFiles: (() => Promise<Extract<SyncResult, { kind: 'missing-files' }> | null>) | null = null;
-  let missingDuringSync = false;
   try {
-    if (request.mode === 'replace' && request.direction === 'both') throw new Error('Overwrite is only available for one-way sync.');
-    await assertSeratoClosed();
+    const serato = target.kind === 'serato' ? await findSeratoSource(target.path) : null;
+    if (serato !== null) await assertSeratoClosed();
     let xml: string | null = null;
-    try { xml = await readFile(rekordboxPath, 'utf8'); } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT') || request.direction !== 'serato-to-rekordbox') throw error;
-    }
-    const parsed = xml === null ? null : await parseRekordboxXml(rekordboxPath);
-    const originalRekordbox = parsed === null ? { tracks: [], playlists: [] } : rekordboxSyncLibrary(parsed);
-    const nativeLibrary = await readSeratoLibrary(serato);
-    const missingReport = async (rekordboxLibrary: SyncLibrary, seratoLibrary: SyncLibrary): Promise<Extract<SyncResult, { kind: 'missing-files' }> | null> => {
-      const missing = await findMissingSyncFiles([
-        { kind: 'rekordbox', library: rekordboxLibrary }, { kind: 'serato', library: seratoLibrary },
-        ...(workspace === null ? [] : [{ kind: 'serato' as const, library: workspace }]),
-      ]);
-      if (!missing.length) return null;
-      const found = await searchSyncMissingFiles(missing, automaticSyncSearchRoots(
-        [rekordboxLibrary, seratoLibrary, ...(workspace === null ? [] : [workspace])], [rekordboxPath, serato.path],
-      ));
-      return { kind: 'missing-files', files: found.files, warnings: [...warnings, ...found.warnings], backupPaths,
-        message: `Locate or remove ${missing.length} missing audio ${missing.length === 1 ? 'file' : 'files'}, then retry sync. ${wroteLibrary ? 'Some files were already updated.' : 'No library changes were made.'}` };
-    };
-    checkMissingFiles = async () => {
-      let currentRekordbox = originalRekordbox;
-      try { currentRekordbox = rekordboxSyncLibrary(await parseRekordboxXml(rekordboxPath)); } catch (error) {
-        if (!(xml === null && error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+    if (serato === null) {
+      try { xml = await readFile(target.path, 'utf8'); } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
       }
-      return missingReport(currentRekordbox, await readSeratoLibrary(serato));
-    };
-    const missing = await missingReport(originalRekordbox, nativeLibrary);
-    if (missing !== null) return missing;
+    }
     const hasPerformance = request.fields.hotCues || request.fields.loops || request.fields.beatgrids;
-    const read = hasPerformance && request.direction !== 'rekordbox-to-serato'
-      ? await readSeratoWithPerformance(serato) : { library: nativeLibrary, warnings: [], missingFiles: false };
-    warnings.push(...read.warnings);
-    if (read.missingFiles) {
-      const missing = await checkMissingFiles();
-      if (missing !== null) return missing;
+    const native = serato === null ? null : await readSeratoWithPerformance(serato, hasPerformance);
+    const destination = native?.library ?? (xml === null ? { tracks: [], playlists: [] } : rekordboxSyncLibrary(await parseRekordboxXml(target.path)));
+    warnings.push(...native?.warnings ?? []);
+    const projected = libraryForDjApp(library, target.kind);
+    const locations = new Map(projected.tracks.map((track) => [track.path, track.location ?? track.path]));
+    const local = { tracks: projected.tracks.filter((track) => track.song.source === 'local')
+      .map((track) => ({ ...track, path: track.location ?? track.path })),
+    playlists: projected.playlists.map((playlist) => ({ ...playlist,
+      trackPaths: playlist.trackPaths.map((path) => locations.get(path) ?? path) })) };
+    const source = await resolveSeratoLibraryPaths(local, destination);
+    const selected = selectedSource(source, destination, request.fields);
+    const missing = await findMissingSyncFiles([{ kind: target.kind, library: selected }, { kind: target.kind, library: destination }]);
+    if (missing.length) {
+      const found = await searchSyncMissingFiles(missing, automaticSyncSearchRoots([selected, destination], [target.path]));
+      return { kind: 'missing-files', files: found.files, warnings: [...warnings, ...found.warnings], backupPaths,
+        message: `Locate or remove ${missing.length} missing audio ${missing.length === 1 ? 'file' : 'files'}, then retry sync. No library changes were made.` };
     }
-    if (workspace !== null) workspace = await resolveSeratoLibraryPaths(workspace, read.library);
-    const native = workspace === null ? read.library : mergeLibraries(
-      { ...read.library, playlists: workspace.playlists }, { ...workspace, playlists: read.library.playlists },
-    );
-    const rekordbox = await resolveSeratoLibraryPaths(originalRekordbox, native);
-    const canonicalPaths = new Map(await Promise.all(rekordbox.tracks.map(async (track) =>
-      [await seratoMediaPathKey(track.path), normalizePath(track.path)] as const)));
-    const resolvedPaths = new Map(await Promise.all(originalRekordbox.tracks.map(async (track) =>
-      [normalizePath(track.path), canonicalPaths.get(await seratoMediaPathKey(track.path)) ?? normalizePath(track.path)] as const)));
-    const localSerato = shiftPerformance({ ...native, tracks: native.tracks.filter((track) => track.song.source === 'local') }, -(request.timingOffsetMs ?? 0) / 1000, request.fields);
-    const source = request.direction === 'both'
-      ? request.conflictSource === 'rekordbox' ? mergeLibraries(rekordbox, localSerato) : mergeLibraries(localSerato, rekordbox)
-      : request.direction === 'rekordbox-to-serato' ? rekordbox : localSerato;
-    const toRekordbox = selectedSource(source, rekordbox, request.fields);
-    const toSerato = shiftPerformance(selectedSource(source, localSerato, request.fields), (request.timingOffsetMs ?? 0) / 1000, request.fields);
-    const nextXml = request.direction === 'rekordbox-to-serato' ? null : mergeRekordboxXml(toRekordbox, xml ?? undefined, request.fields, resolvedPaths, request.mode === 'replace');
-    if (request.direction !== 'serato-to-rekordbox') {
-      if (request.fields.tracks || request.fields.metadata || request.fields.playlists) {
-        const result = await writeSeratoLibrary(serato, toSerato, {
-          metadata: request.fields.metadata,
-          replaceTracks: request.mode === 'replace' && request.fields.tracks,
-          replacePlaylists: request.mode === 'replace' && request.fields.playlists,
-        });
-        backupPaths.push(...result.backupPaths);
-        warnings.push(...result.warnings);
-        wroteLibrary = true;
-      }
+    if (serato === null) {
+      const next = mergeRekordboxXml(selected, xml ?? undefined, request.fields, undefined, request.mode === 'replace');
+      const backup = await saveLibraryXml(target.path, next, xml);
+      if (backup !== null) backupPaths.push(backup);
+      wroteLibrary = true;
+    } else {
+      const outgoing = shiftPerformance(selected, request.timingOffsetMs / 1000, request.fields);
       if (hasPerformance || request.fields.metadata) {
-        for (const track of toSerato.tracks) {
-          if (!track.performance && !request.fields.metadata) continue;
-          try {
-            const backup = await writeSeratoPerformance(track.path,
-              track.performance ?? { hotCues: [], loops: [], beatgrids: [] }, {
-                hotCues: track.performance !== undefined && request.fields.hotCues,
-                loops: track.performance !== undefined && request.fields.loops,
-                beatgrids: track.performance !== undefined && request.fields.beatgrids,
-              }, request.fields.metadata ? track.song : undefined);
-            if (backup !== null) { backupPaths.push(backup); wroteLibrary = true; }
-          } catch (error) {
-            if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) missingDuringSync = true;
-            warnings.push(`${basename(track.path)}: ${error instanceof Error ? error.message : 'Could not write audio tags.'}`);
+        const roots = await Promise.all(protectedMediaRoots.map(async (root) => normalizePath(await resolveSeratoMediaPath(root))));
+        for (const track of outgoing.tracks) {
+          const path = normalizePath(await resolveSeratoMediaPath(track.path));
+          if (roots.some((root) => path === root || path.startsWith(`${root}/`))) {
+            throw new Error('This library still uses music inside a backup folder. Import the backup again to create local working copies before syncing audio tags.');
           }
         }
       }
+      if (request.fields.tracks || request.fields.metadata || request.fields.playlists) {
+        const smartPaths = request.fields.playlists ? library.playlists.filter((playlist) => playlist.smart?.kind === 'arsenal').map((playlist) => playlist.path) : [];
+        const saved = await writeSeratoLibrary(serato, outgoing, {
+          metadata: request.fields.metadata,
+          replaceTracks: request.mode === 'replace' && request.fields.tracks,
+          replacePlaylists: request.mode === 'replace' && request.fields.playlists,
+          ...(smartPaths.length ? { replacePlaylistPaths: smartPaths } : {}),
+        });
+        backupPaths.push(...saved.backupPaths);
+        warnings.push(...saved.warnings);
+        if (smartPaths.length) warnings.push('Arsenal smart playlists were saved as regular Serato crates. Their rules stay in Arsenal.');
+        wroteLibrary = true;
+      }
+      if (hasPerformance || request.fields.metadata) {
+        for (const track of outgoing.tracks) {
+          if (!track.performance && !request.fields.metadata) continue;
+          const backup = await writeSeratoPerformance(track.path, track.performance ?? { hotCues: [], loops: [], beatgrids: [] }, {
+            hotCues: track.performance !== undefined && request.fields.hotCues,
+            loops: track.performance !== undefined && request.fields.loops,
+            beatgrids: track.performance !== undefined && request.fields.beatgrids,
+          }, request.fields.metadata ? track.song : undefined);
+          if (backup !== null) { backupPaths.push(backup); wroteLibrary = true; }
+        }
+      }
     }
-    if (nextXml !== null) {
-      const backup = await saveLibraryXml(rekordboxPath, nextXml, xml);
-      if (backup !== null) backupPaths.push(backup);
-      wroteLibrary = true;
-    }
-    if (missingDuringSync) {
-      const missing = await checkMissingFiles();
-      if (missing !== null) return missing;
-    }
-    const sourceCount = source.tracks.length;
-    const selectedCount = request.direction === 'serato-to-rekordbox' ? toRekordbox.tracks.length : toSerato.tracks.length;
-    const nonlocalCount = (parsed?.tracks.length ?? 0) - rekordbox.tracks.length + native.tracks.length - localSerato.tracks.length;
-    const skippedTrackCount = Math.max(0, nonlocalCount + sourceCount - selectedCount);
-    const playlistCount = request.fields.playlists ? source.playlists.length : 0;
-    const message = [
-      `Synced ${selectedCount} tracks and ${playlistCount} playlists/crates.`,
-      request.mode === 'replace' ? 'Replaced the selected destination library data. Audio files were kept.' : '',
-      nextXml === null ? 'Reopen Serato to load the changes.' : `Rekordbox XML saved to ${rekordboxPath}. Import its tracks and playlists into Rekordbox.`,
-      skippedTrackCount ? `${skippedTrackCount} tracks were skipped because they are not local files or adding tracks was disabled.` : '',
-    ].filter(Boolean).join(' ');
-    const reportPath = `${rekordboxPath}.arsenal-sync-report.json`;
-    const report = { completedAt: new Date().toISOString(), direction: request.direction, mode: request.mode ?? 'merge', fields: request.fields, timingOffsetMs: request.timingOffsetMs, backupPaths, warnings, skippedTrackCount };
-    try {
-      const reportFile = await open(reportPath, 'w', 0o600);
-      try { await reportFile.writeFile(JSON.stringify(report, null, 2) + '\n'); } finally { await reportFile.close(); }
-    } catch {
-      return { kind: 'synced', trackCount: selectedCount, playlistCount, skippedTrackCount, backupPaths, warnings: [...warnings, 'Could not save the sync report.'],
-        message };
-    }
-    return { kind: 'synced', trackCount: selectedCount, playlistCount, skippedTrackCount, backupPaths, warnings, message: `${message} Report and backup locations: ${reportPath}` };
+    return { kind: 'synced', trackCount: selected.tracks.length, playlistCount: selected.playlists.length,
+      skippedTrackCount: Math.max(0, library.tracks.length - selected.tracks.length), backupPaths, warnings,
+      message: target.kind === 'serato' ? 'Arsenal library synced to Serato. Reopen Serato to load the changes.'
+        : `Arsenal library saved to ${target.path}. Import its tracks and playlists into Rekordbox.` };
   } catch (error) {
-    try {
-      const missing = await checkMissingFiles?.();
-      if (missing) return { ...missing, warnings: [...missing.warnings,
-        error instanceof Error ? error.message : 'Could not sync the libraries.'] };
-    } catch { /* Keep the original error if the libraries cannot be reread. */ }
     return { kind: 'rejected', warnings, backupPaths,
-      message: `${error instanceof Error ? error.message : 'Could not sync the libraries.'}${wroteLibrary ? ' Some files were already updated.' : ''}` };
+      message: `${error instanceof Error ? error.message : 'Could not sync the Arsenal library.'}${wroteLibrary ? ' Some destination files were already updated. Arsenal edits were kept.' : ''}` };
   }
 };

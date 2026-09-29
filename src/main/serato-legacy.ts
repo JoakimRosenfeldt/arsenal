@@ -7,6 +7,7 @@ import type { SongRow } from '../shared/dj-library';
 import { mergeLibraries, normalizePath, type PlaylistNodeMove, type SyncLibrary, type SyncPlaylist, type SyncTrack } from './library-sync-model';
 import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { assertMissingFileRepair, saveRepairedLibraryFiles, type LibraryFileRepairResult } from './repair-library-files';
+import type { SeratoLibraryWriteOptions } from './serato-library';
 
 type RecordField = Readonly<{ tag: string; data: Buffer }>;
 type NativeFile = Readonly<{ path: string; bytes: Buffer | null; records: readonly RecordField[] }>;
@@ -372,7 +373,7 @@ export const moveSeratoLegacyNode = async (directory: string, move: PlaylistNode
 export const writeSeratoLegacy = async (
   directory: string,
   incoming: SyncLibrary,
-  options: Readonly<{ metadata?: boolean; replaceTracks?: boolean; replacePlaylists?: boolean }> = {},
+  options: Partial<SeratoLibraryWriteOptions> = {},
 ): Promise<{ trackCount: number; playlistCount: number; backupPaths: string[] }> => {
   const smart = incoming.playlists.find((playlist) => playlist.kind === 'smart' || playlist.smart !== undefined);
   if (smart) throw new Error(`Smart playlist "${smart.path.join(' / ')}" needs a Serato 4 library. Choose Serato 4's Library folder to sync it as a smart crate.`);
@@ -382,12 +383,27 @@ export const writeSeratoLegacy = async (
     if (!native.trackRecords.has(normalizePath(track.path))) await assertSeratoMediaFile(track.path);
   }
   const combined = mergeLibraries(incoming, native.library);
-  const tracks = options.replaceTracks ? incoming.tracks : combined.tracks;
+  const removedTracks = new Set(await Promise.all((options.removeTrackPaths ?? []).map(seratoMediaPathKey)));
+  const removedMembers = new Set(await Promise.all((options.removePlaylistTrackPaths ?? []).map(seratoMediaPathKey)));
+  const removedMemberPaths = new Set((await Promise.all(combined.tracks.map(async (track) =>
+    removedMembers.has(await seratoMediaPathKey(track.path)) ? normalizePath(track.path) : null))).filter((path) => path !== null));
+  const removedTrackPaths = new Set((await Promise.all(combined.tracks.map(async (track) =>
+    removedTracks.has(await seratoMediaPathKey(track.path)) ? normalizePath(track.path) : null))).filter((path) => path !== null));
+  const tracks = (options.replaceTracks ? incoming.tracks : combined.tracks).filter((track) => !removedTrackPaths.has(normalizePath(track.path)));
   const availablePaths = new Set(tracks.map((track) => normalizePath(track.path)));
+  const replacedPlaylists = new Set((options.replacePlaylistPaths ?? []).map((path) => JSON.stringify(path)));
+  const removedPlaylists = new Set((options.removePlaylistPaths ?? []).map((path) => JSON.stringify(path)));
+  const incomingByPath = new Map(incoming.playlists.map((playlist) => [JSON.stringify(playlist.path), playlist]));
+  const playlistOrder = new Map(native.library.playlists.map((playlist, index) => [JSON.stringify(playlist.path), index]));
+  const combinedPlaylists = options.replacePlaylistPaths === undefined ? combined.playlists : [...combined.playlists].sort((left, right) =>
+    (playlistOrder.get(JSON.stringify(left.path)) ?? Infinity) - (playlistOrder.get(JSON.stringify(right.path)) ?? Infinity));
   const merged: SyncLibrary = {
     tracks,
-    playlists: (options.replacePlaylists ? incoming.playlists : combined.playlists).map((playlist) => ({
-      ...playlist, trackPaths: playlist.trackPaths.filter((path) => availablePaths.has(normalizePath(path))),
+    playlists: (options.replacePlaylists ? incoming.playlists : combinedPlaylists)
+      .filter((playlist) => !removedPlaylists.has(JSON.stringify(playlist.path)))
+      .map((playlist) => replacedPlaylists.has(JSON.stringify(playlist.path)) ? incomingByPath.get(JSON.stringify(playlist.path)) ?? playlist : playlist)
+      .map((playlist) => ({
+      ...playlist, trackPaths: playlist.trackPaths.filter((path) => availablePaths.has(normalizePath(path)) && !removedMemberPaths.has(normalizePath(path))),
     })),
   };
   const updates = new Map<string, { before: Buffer | null; after: Buffer | null }>();
@@ -419,7 +435,7 @@ export const writeSeratoLegacy = async (
     const filenameKey = basename(path).toLowerCase();
     if (filenames.has(filenameKey)) throw new Error(`Serato crate names differ only by letter case: ${playlist.path.join(' / ')}`);
     filenames.add(filenameKey);
-    if (crate && !incomingCrates.has(JSON.stringify(playlist.path)) && !options.replaceTracks) continue;
+    if (crate && !incomingCrates.has(JSON.stringify(playlist.path)) && !options.replaceTracks && !removedTracks.size && !removedMembers.size) continue;
     const contents = (crate?.records ?? defaultCrateRecords()).filter((record) => record.tag !== 'otrk');
     for (const path of playlist.trackPaths) {
       contents.push(crate?.members.get(normalizePath(path)) ?? { tag: 'otrk', data: encodeRecords([textField('ptrk', relativeMediaPath(path, native.root))]) });
@@ -427,6 +443,9 @@ export const writeSeratoLegacy = async (
     updates.set(path, { before: crate?.bytes ?? null, after: encodeRecords(contents) });
   }
   const smartDirectory = join(directory, 'SmartCrates');
+  for (const crate of native.crates) {
+    if (removedPlaylists.has(JSON.stringify(crate.playlist.path))) updates.set(crate.path, { before: crate.bytes, after: null });
+  }
   const smartNames = options.replacePlaylists ? await crateNames(smartDirectory, '.scrate') : [];
   if (options.replacePlaylists) {
     for (const crate of native.crates) {
@@ -437,15 +456,17 @@ export const writeSeratoLegacy = async (
       updates.set(path, { before: await readFile(path), after: null });
     }
   }
-  if (merged.playlists.length > 0) {
+  if (merged.playlists.length > 0 || removedPlaylists.size > 0) {
     const preferencePath = await readOptional(join(directory, 'neworder.pref')) !== null
       ? join(directory, 'neworder.pref') : await readOptional(join(directory, 'Neworder.pref')) !== null
         ? join(directory, 'Neworder.pref') : join(directory, 'neworder.pref');
     const before = await readOptional(preferencePath);
-    const otherLines = before === null ? [] : new TextDecoder('utf-16be').decode(before).split(/\r?\n/)
-      .filter((line) => line && !line.startsWith('[crate]'));
-    const after = Buffer.from([...otherLines, ...merged.playlists.map((playlist) =>
-      `[crate]${crateFilename(playlist.path).slice(0, -6)}`)].join('\r\n') + '\r\n', 'utf16le').swap16();
+    const lines = before === null ? [] : new TextDecoder('utf-16be').decode(before).split(/\r?\n/).filter(Boolean);
+    const desired = merged.playlists.map((playlist) => `[crate]${crateFilename(playlist.path).slice(0, -6)}`);
+    const previous = new Set(native.library.playlists.map((playlist) => `[crate]${crateFilename(playlist.path).slice(0, -6)}`));
+    const retained = options.replacePlaylistPaths === undefined ? lines.filter((line) => !line.startsWith('[crate]'))
+      : lines.filter((line) => !previous.has(line) || desired.includes(line));
+    const after = Buffer.from([...retained, ...desired.filter((line) => !retained.includes(line))].join('\r\n') + '\r\n', 'utf16le').swap16();
     updates.set(preferencePath, { before, after });
   }
   for (const [path, { before, after }] of updates) if (after !== null && before?.equals(after)) updates.delete(path);

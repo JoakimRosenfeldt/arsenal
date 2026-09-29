@@ -199,7 +199,7 @@ const makeSong = ({
     mediaPath: source === 'local' ? parseMediaPath(attributes.Location) : null,
     rekordboxId: cleanText(attributes.TrackID),
     rawLocation: cleanText(attributes.Location),
-    performance: { hotCues: [], loops: [], beatgrids: [] },
+    performance: { hotCues: [], memoryCues: [], loops: [], beatgrids: [] },
   };
 };
 
@@ -346,6 +346,7 @@ export const parseRekordboxXml = async (
       const type = cleanText(tag.attributes.Type);
       const num = cleanText(tag.attributes.Num);
       const slot = num !== null && /^-?\d+$/.test(num) ? Number(num) : NaN;
+      const savedLoopSlot = parseNumber({ value: tag.attributes.ArsenalLoopIndex, allowZero: true });
       const start = parseNumber({ value: tag.attributes.Start, allowZero: true });
       const end = parseNumber({ value: tag.attributes.End, allowZero: true });
       if (
@@ -362,8 +363,13 @@ export const parseRekordboxXml = async (
               index: slot, name: tag.attributes.Name ?? '', start,
               color: [Number(tag.attributes.Red ?? 255), Number(tag.attributes.Green ?? 0), Number(tag.attributes.Blue ?? 0)] as const,
             }] } : {}),
+            ...(type === '0' && slot === -1 ? { memoryCues: [...track.performance.memoryCues ?? [], {
+              index: -1, name: tag.attributes.Name ?? '', start,
+              color: [Number(tag.attributes.Red ?? 255), Number(tag.attributes.Green ?? 0), Number(tag.attributes.Blue ?? 0)] as const,
+            }] } : {}),
             ...(type === '4' && end !== null ? { loops: [...track.performance.loops, {
-              index: slot, name: tag.attributes.Name ?? '', start, end, locked: false, hotCue: slot >= 0,
+              index: slot === -1 && savedLoopSlot !== null && Number.isInteger(savedLoopSlot) && savedLoopSlot <= 2147483647 ? savedLoopSlot : slot,
+              name: tag.attributes.Name ?? '', start, end, locked: isEnabledMarker(tag.attributes.ArsenalLocked), hotCue: slot >= 0,
               color: [Number(tag.attributes.Red ?? 39), Number(tag.attributes.Green ?? 170), Number(tag.attributes.Blue ?? 225)] as const,
             }] } : {}),
           },

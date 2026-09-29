@@ -1,9 +1,18 @@
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
 import type { SmartPlaylistDefinition } from './smart-playlists';
+import type { BackupConfiguration, BackupConnection } from './library-backup';
+
+export const ARSENAL_LIBRARY_ID = 'arsenal';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   connections: 'dj-library:connections',
+  checkStartupChanges: 'dj-library:check-startup-changes',
+  backupStatus: 'dj-library:backup-status',
+  configureBackup: 'dj-library:configure-backup',
+  backupNow: 'dj-library:backup-now',
+  stopBackup: 'dj-library:stop-backup',
+  importBackup: 'dj-library:import-backup',
   connectLibrary: 'dj-library:connect-library',
   manageLibraryConnection: 'dj-library:manage-library-connection',
   selectSyncLibrary: 'dj-library:select-sync-library',
@@ -12,6 +21,10 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   syncLibraries: 'dj-library:sync-libraries',
   resolveSyncMissingFile: 'dj-library:resolve-sync-missing-file',
   syncPreferences: 'dj-library:sync-preferences',
+  syncActivity: 'dj-library:sync-activity',
+  syncActivityChanged: 'dj-library:sync-activity-changed',
+  stopOngoingSync: 'dj-library:stop-ongoing-sync',
+  libraryChanged: 'dj-library:library-changed',
   chooseSyncLibrary: 'dj-library:choose-sync-library',
   listSongs: 'dj-library:list-songs',
   findDuplicates: 'dj-library:find-duplicates',
@@ -149,6 +162,7 @@ export type LibrarySummary = Readonly<{
   sourceName: string;
   importedAt: string;
   songCount: number;
+  totalSongCount: number;
   playlistCount: number;
 }>;
 
@@ -202,10 +216,12 @@ export type LibraryConnection = Readonly<{
   name: string;
   path: string;
   available: boolean;
+  origin?: 'portable' | 'arsenal';
 }>;
 
 export type LibraryConnections = Readonly<{
   connections: readonly LibraryConnection[];
+  backupConnections: readonly BackupConnection[];
   activeConnectionId: string | null;
   sourceOfTruthId: string | null;
 }>;
@@ -219,6 +235,14 @@ export type LibraryConnectionResult =
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{ kind: 'rejected'; message: string }>
   | Readonly<{ kind: 'updated'; connections: LibraryConnections; status: LibraryStatus; warnings: readonly string[] }>;
+
+export type LibraryStartupResult = Readonly<{
+  connections: LibraryConnections;
+  status: LibraryStatus;
+  message: string | null;
+  warnings: readonly string[];
+  syncResult: SyncResult | null;
+}>;
 
 export type ImportFailure =
   | 'cannot-read'
@@ -245,6 +269,7 @@ export type SyncFields = Readonly<{
 
 export type SyncRequest = Readonly<{
   direction: SyncDirection;
+  cadence?: 'once' | 'ongoing';
   mode?: 'merge' | 'replace';
   conflictSource: LibrarySourceKind;
   fields: SyncFields;
@@ -265,6 +290,8 @@ export const readSyncRequest = (request: unknown): SyncRequest => {
     throw new Error('Invalid library sync request');
   }
   const mode = request.mode === undefined ? 'merge' : request.mode;
+  const cadence = request.cadence === undefined ? 'once' : request.cadence;
+  if (cadence !== 'once' && cadence !== 'ongoing') throw new Error('Choose one-time or ongoing sync');
   if (mode !== 'merge' && mode !== 'replace' || mode === 'replace' && request.direction === 'both') {
     throw new Error('Overwrite is available only when syncing in one direction');
   }
@@ -279,7 +306,7 @@ export const readSyncRequest = (request: unknown): SyncRequest => {
     request.timingOffsetMs < -1000 || request.timingOffsetMs > 1000) {
     throw new Error('Timing correction must be a whole number between -1000 and 1000 milliseconds');
   }
-  return { direction: request.direction, mode, conflictSource: request.conflictSource, timingOffsetMs: request.timingOffsetMs,
+  return { direction: request.direction, mode, cadence, conflictSource: request.conflictSource, timingOffsetMs: request.timingOffsetMs,
     fields: { tracks: fields.tracks, metadata: fields.metadata, playlists: fields.playlists,
       hotCues: fields.hotCues, loops: fields.loops, beatgrids: fields.beatgrids } };
 };
@@ -323,6 +350,12 @@ export type SyncResult =
       warnings: readonly string[];
       backupPaths: readonly string[];
     }>;
+
+export type SyncActivity = Readonly<{
+  state: 'off' | 'watching' | 'syncing' | 'attention';
+  lastSyncedAt: string | null;
+  result: Exclude<SyncResult, { kind: 'cancelled' }> | null;
+}>;
 
 export type PageRequest = Readonly<{
   offset: number;
@@ -416,7 +449,7 @@ export type MutationFailure =
   | 'serato-open'
   | 'cannot-write';
 
-export type LibraryMutationResult =
+export type LibraryMutationResult = (
   | Readonly<{
       kind: 'duplicate-ignored';
       library: LibrarySummary;
@@ -461,11 +494,18 @@ export type LibraryMutationResult =
   | Readonly<{
       kind: 'rejected';
       reason: MutationFailure;
-    }>;
+      message?: string;
+    }>) & Readonly<{ warning?: string }>;
 
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   connections(): Promise<LibraryConnections>;
+  checkStartupChanges(): Promise<LibraryStartupResult>;
+  backupStatus(): Promise<readonly BackupConnection[]>;
+  configureBackup(request: BackupConfiguration): Promise<BackupConnection | null>;
+  backupNow(id: string): Promise<BackupConnection>;
+  stopBackup(id: string): Promise<void>;
+  importBackup(mode?: 'folder' | 'snapshot'): Promise<LibraryConnectionResult>;
   connectLibrary(kind: LibrarySourceKind): Promise<LibraryConnectionResult>;
   manageLibraryConnection(action: LibraryConnectionAction): Promise<LibraryConnectionResult>;
   selectSyncLibrary(id: string): Promise<SyncPreferences>;
@@ -474,6 +514,10 @@ export type DjLibraryApi = Readonly<{
   syncLibraries(request: SyncRequest): Promise<SyncResult>;
   resolveSyncMissingFile(action: SyncMissingFileAction): Promise<SyncResult>;
   syncPreferences(): Promise<SyncPreferences>;
+  syncActivity(): Promise<SyncActivity>;
+  stopOngoingSync(): Promise<SyncActivity>;
+  onSyncActivity(listener: (activity: SyncActivity) => void): () => void;
+  onLibraryChanged(listener: (status: LibraryStatus) => void): () => void;
   chooseSyncLibrary(kind: LibrarySourceKind, direction: SyncDirection): Promise<SyncPreferences | null>;
   listSongs(page: PageRequest): Promise<SongPage>;
   findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan>;

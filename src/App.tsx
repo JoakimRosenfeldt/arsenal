@@ -24,6 +24,7 @@ import {
   type LibraryConnections,
   type LibraryConnectionResult,
   type LibrarySummary,
+  type LibraryStatus,
   type LibraryMutation,
   type LibraryMutationResult,
   type MutationFailure,
@@ -201,9 +202,16 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [activePage, setActivePage] = useState<PageId>(playlistWindow ? 'playlists' : 'library');
   const [loading, setLoading] = useState(true);
   const [minimumSongLengthSeconds, setMinimumSongLengthSeconds] = useState(DEFAULT_MINIMUM_SONG_LENGTH_SECONDS);
-  const [busy, setBusy] = useState(false);
+  const [operationBusy, setBusy] = useState(false);
+  const [backgroundSyncing, setBackgroundSyncing] = useState(false);
+  const [backgroundLibrary, setBackgroundLibrary] = useState<LibraryStatus | null>(null);
+  const handledBackgroundLibrary = useRef<LibraryStatus | null>(null);
+  const busy = operationBusy || backgroundSyncing;
   const [view, setView] = useState<LibraryView | null>(null);
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
+  const startupChecked = useRef(false);
+  const initialStateLoaded = useRef(false);
+  const [startupSyncResult, setStartupSyncResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
   const [folders, setFolders] = useState<readonly PlaylistFolder[]>([]);
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string | null>(null);
@@ -252,6 +260,24 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
 
     const loadInitialState = async (): Promise<void> => {
       try {
+        if (!playlistWindow && !startupChecked.current) {
+          try {
+            const startup = await window.djLibrary.checkStartupChanges();
+            if (!active) return;
+            const syncResult = startup.syncResult?.kind === 'cancelled' ? null : startup.syncResult;
+            setStartupSyncResult(syncResult);
+            if (startup.message !== null || startup.warnings.length > 0) {
+              setFeedback({ tone: startup.warnings.length ? 'warning' : 'success',
+                message: [startup.message, ...startup.warnings].filter(Boolean).join(' ') });
+            }
+            if (syncResult !== null || startup.warnings.length > 0) setActivePage('connections');
+          } catch (cause) {
+            if (!active) return;
+            setFeedback({ tone: 'warning', message: `Could not check for changed libraries. ${cause instanceof Error ? cause.message : 'Try reopening Arsenal.'}` });
+            setActivePage('connections');
+          }
+          startupChecked.current = true;
+        }
         const [status, settings, connected] = await Promise.all([
           window.djLibrary.status(), window.preferences.library(),
           playlistWindow ? Promise.resolve(null) : window.djLibrary.connections(),
@@ -265,6 +291,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         }
         if (status.kind === 'empty') {
           if (!playlistWindow) setActivePage('connections');
+          initialStateLoaded.current = true;
           return;
         }
 
@@ -276,6 +303,12 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           loadPlaylistTree(),
         ]);
         if (active) {
+          if (!initialStateLoaded.current && !playlistWindow && connected !== null &&
+            !connected.connections.some((connection) => connection.origin !== 'arsenal') &&
+            status.library.totalSongCount === 0 && tree.playlists.length === 0 && tree.folders.length === 0) {
+            setActivePage('connections');
+          }
+          initialStateLoaded.current = true;
           setView({ library: status.library, page });
           setPlaylists(tree.playlists);
           setFolders(tree.folders);
@@ -371,6 +404,67 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setMinimumSongLengthSeconds(settings.minimumSongLengthSeconds);
   }), [minimumSongLengthSeconds, stopPlayback]);
 
+  useEffect(() => {
+    let active = true;
+    let receivedActivity = false;
+    const attentionMessage = 'Ongoing sync needs attention. Open Connections to review it. Edits still save to your Arsenal library.';
+    const stopActivity = window.djLibrary.onSyncActivity((activity) => {
+      receivedActivity = true;
+      setBackgroundSyncing(activity.state === 'syncing');
+      if (activity.state === 'attention') setFeedback({ tone: 'warning', message: attentionMessage });
+      else setFeedback((current) => current?.message === attentionMessage ? null : current);
+    });
+    const stopChanges = window.djLibrary.onLibraryChanged((status) => {
+      setBackgroundLibrary(status);
+      if (playlistWindow && (status.kind === 'empty' || status.library.revision !== playlistWindow.request.revision)) {
+        setError('stale-library');
+      }
+    });
+    void window.djLibrary.syncActivity().then((activity) => {
+      if (active && !receivedActivity) setBackgroundSyncing(activity.state === 'syncing');
+    }).catch(() => undefined);
+    return () => { active = false; stopActivity(); stopChanges(); };
+  }, [playlistWindow]);
+
+  useEffect(() => {
+    if (playlistWindow || backgroundLibrary?.kind !== 'ready' || backgroundLibrary === handledBackgroundLibrary.current ||
+      operationBusy || backgroundSyncing || loading) return;
+    if (backgroundLibrary.library.revision === view?.library.revision) {
+      handledBackgroundLibrary.current = backgroundLibrary;
+      return;
+    }
+    let active = true;
+    const sequence = ++searchSequence.current;
+    void window.djLibrary.status().then(async (status) => {
+      if (!active || sequence !== searchSequence.current || status.kind !== 'ready') return;
+      const library = status.library;
+      if (library.revision === view?.library.revision) {
+        handledBackgroundLibrary.current = backgroundLibrary;
+        return;
+      }
+      const [page, tree] = await Promise.all([
+        window.djLibrary.searchSongs({ offset: Math.min(view?.page.offset ?? 0,
+          Math.max(0, Math.floor(Math.max(0, library.songCount - 1) / SONG_PAGE_SIZE) * SONG_PAGE_SIZE)),
+        limit: SONG_PAGE_SIZE, query, filters }),
+        loadPlaylistTree(),
+      ]);
+      if (!active || sequence !== searchSequence.current) return;
+      handledBackgroundLibrary.current = backgroundLibrary;
+      setSearching(false);
+      stopPlayback();
+      setView({ library, page });
+      setPlaylists(tree.playlists);
+      setFolders(tree.folders);
+      setSelectedPlaylistId((current) => tree.playlists.some((playlist) => playlist.id === current) ? current : null);
+      setViewQuery(query);
+      setViewFilters(filters);
+      setDuplicateRefresh((current) => current + 1);
+    }).catch(() => {
+      if (active) setFeedback({ tone: 'warning', message: 'Sync finished, but the library view could not refresh. Reopen the connection.' });
+    });
+    return () => { active = false; };
+  }, [backgroundLibrary, operationBusy, backgroundSyncing, loading, view?.library.revision, view?.page.offset, playlistWindow, query, filters, stopPlayback]);
+
   const playSong = (song: SongRow, preserveQueue = false): void => {
     const audio = audioRef.current;
     if (audio === null || song.audioUrl === null) {
@@ -444,6 +538,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   ): Promise<LibraryConnectionResult> => {
     if (busy) return { kind: 'cancelled' };
     setBusy(true);
+    setStartupSyncResult(null);
     searchSequence.current += 1;
     setSearching(false);
     setQuery(viewQuery);
@@ -487,6 +582,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const runSync = async (operation: () => Promise<SyncResult>): Promise<SyncResult> => {
     if (busy) return { kind: 'cancelled' };
     setBusy(true);
+    setStartupSyncResult(null);
     searchSequence.current += 1;
     setSearching(false);
     setError(null);
@@ -528,7 +624,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       const result = await operation();
       if (result === null) return false;
       if (result.kind === 'rejected') {
-        setError(result.reason);
+        if (result.message) setFeedback({ tone: 'warning', message: result.message });
+        else setError(result.reason);
         return false;
       }
 
@@ -595,7 +692,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         libraryVersion: result.library.revision,
         scan,
       });
-      setFeedback(result.kind === 'songs-removed'
+      setFeedback(result.warning ? { tone: 'warning', message: result.warning } : result.kind === 'songs-removed'
           ? feedbackForRemoval(result)
           : { tone: 'success', message: result.kind === 'folder-created' ? 'Folder created.' : result.kind === 'smart-playlist-saved' ? 'Smart playlist saved.' : result.kind === 'playlist-updated' ? 'Playlist saved.' : result.kind === 'playlist-removed' ? 'Playlist removed.' : 'Playlist created.' });
       if (result.kind === 'playlist-created' || result.kind === 'smart-playlist-saved' || result.kind === 'playlist-updated') {
@@ -787,7 +884,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     switch (activePage) {
       case 'connections':
         return <LibraryConnectionsPage busy={busy} state={connections}
-          onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind))}
+          initialSyncResult={startupSyncResult}
+          onImportBackup={(mode) => manageConnection(() => window.djLibrary.importBackup(mode), true)}
+          onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind), true)}
           onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open')}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
           onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />;
