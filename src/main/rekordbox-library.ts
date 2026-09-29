@@ -64,7 +64,7 @@ import { readSeratoWithPerformance, saveLibraryXml, syncArsenalLibraryToConnecti
 import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
 import { resolveSeratoMediaPath } from './serato-paths';
 import { findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
-import { PORTABLE_LIBRARY_FILENAME, readPortableLibrary, readPortableLibraryFingerprint, readPortableLibraryFolder, resolvePortableLibrary, writePortableLibrary } from './portable-library';
+import { PORTABLE_LIBRARY_FILENAME, readLibraryModel, readPortableLibrary, readPortableLibraryFingerprint, readPortableLibraryFolder, resolvePortableLibrary, writePortableLibrary } from './portable-library';
 import { readLibrarySource, type PortableLibrarySource } from './library-source';
 import { preparePrimaryLibraryEdit } from './apply-primary-library-edit';
 import { loadArsenalLibrary, mergeArsenalLibrary, saveArsenalLibrary } from './arsenal-library';
@@ -520,7 +520,9 @@ export class RekordboxLibrary {
         }
       } catch (error) {
         if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
-          this.startupWarnings.push(`${backup.directory}: ${error instanceof Error ? error.message : 'Could not check this backup file.'}`);
+          const message = error instanceof Error ? error.message : 'Could not check this backup file.';
+          this.startupWarnings.push(`${backup.directory}: ${message}`);
+          this.backupStates.set(backup.id, { state: 'error', message });
         }
       }
     }
@@ -722,9 +724,10 @@ export class RekordboxLibrary {
         }
       }
       this.cancelSuggestions();
+      if (imported > 0) await this.updateBackups();
       if (failed && savedRequest !== null) warnings.push('Automatic sync was skipped because some changed libraries could not be imported.');
       return failed ? null : savedRequest;
-    });
+    }, false);
     const syncResult = request === null ? null : await this.syncLibraries(owner, request);
     return { connections: await this.connections(), status: this.status(), warnings, syncResult,
       message: imported ? `Imported changes from ${imported} ${imported === 1 ? 'library' : 'libraries'}.` : null };
@@ -928,7 +931,7 @@ export class RekordboxLibrary {
     const snapshot = connection.origin === 'arsenal' ? { library: this.arsenalLibrary, warnings: [] }
       : native ? await readSeratoWithPerformance(await findSeratoSource(connection.path))
       : { library: rekordboxSyncLibrary(await parseRekordboxXml(connection.workspacePath ?? connection.path), { includeNonLocal: true }), warnings: [] };
-    const fingerprint = createHash('sha256').update(JSON.stringify(snapshot.library));
+    const fingerprint = createHash('sha256').update(JSON.stringify(readLibraryModel(snapshot.library)));
     for (const track of snapshot.library.tracks) {
       if (track.song.source !== 'local') continue;
       try {
@@ -949,7 +952,7 @@ export class RekordboxLibrary {
       if (!connection) throw new Error('Connect or open your Arsenal library to resume automatic backups. Existing backups are kept.');
       const snapshot = await this.backupLibrary(connection);
       if (!force && backup.fingerprint === snapshot.fingerprint && backup.manifestPath !== null &&
-        this.backupStates.get(backup.id)?.state === 'ready') {
+        (this.backupStates.get(backup.id)?.state ?? 'ready') === 'ready') {
         try {
           const current = await readPortableLibraryFingerprint(backup.manifestPath);
           if (current !== null && current === backup.manifestFingerprint) return;
