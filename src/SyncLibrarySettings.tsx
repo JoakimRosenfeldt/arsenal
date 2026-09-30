@@ -66,11 +66,8 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const includesRekordboxXml = destinations.some((entry) => entry.kind === 'rekordbox' && entry.format !== 'rekordbox-database');
   const destinationName = direction === 'rekordbox-to-serato' ? 'Serato'
     : includesNativeRekordbox ? 'Rekordbox Collection' : 'Rekordbox XML';
-  const supportsPerformance = !includesNativeRekordbox || includesSerato;
-  const supportsTracks = !includesNativeRekordbox || includesSerato;
-  const syncFields = { ...fields, tracks: fields.tracks && supportsTracks,
-    hotCues: fields.hotCues && supportsPerformance, loops: fields.loops && supportsPerformance,
-    beatgrids: fields.beatgrids && supportsPerformance };
+  const supportsBeatgrids = !includesNativeRekordbox || includesSerato;
+  const syncFields = { ...fields, beatgrids: fields.beatgrids && supportsBeatgrids };
   const libraryChoices = destinationKinds.flatMap(({ kind, label, key }) => {
     const options = nativeConnections.filter((entry) => entry.kind === kind);
     const selected = options.find((entry) => entry.path === preferences?.[key]);
@@ -527,14 +524,13 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
               {fieldOptions.map((option) => (
                 <label key={option.value}>
                   <input type="checkbox" checked={syncFields[option.value]}
-                    disabled={option.value === 'tracks' ? !supportsTracks
-                      : (option.value === 'hotCues' || option.value === 'loops' || option.value === 'beatgrids') && !supportsPerformance}
+                    disabled={option.value === 'beatgrids' && !supportsBeatgrids}
                     onChange={(event) => { draftChanged.current = true; setFields({ ...fields, [option.value]: event.currentTarget.checked }); }} />
                   <span>{option.label}</span>
                 </label>
               ))}
             </div>
-            {includesNativeRekordbox && <p className="tracklist-export-note">Rekordbox Collection sync skips tracks, hot cues, loops, and beatgrids{includesSerato ? '. Serato still gets them.' : '.'}</p>}
+            {includesNativeRekordbox && <p className="tracklist-export-note">Rekordbox Collection sync skips beatgrids{includesSerato ? '. Serato still gets them.' : '.'}</p>}
           </fieldset>
 
         </div>

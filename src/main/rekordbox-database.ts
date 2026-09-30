@@ -3,7 +3,7 @@ import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
-import { normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPlaylist } from './library-sync-model';
+import { normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
 type Row = Record<string, unknown>;
@@ -134,8 +134,8 @@ export const readRekordboxDatabase = async (path: string): Promise<{ library: Sy
       const kind = number(cue.Kind) ?? 0;
       const start = (number(cue.InMsec) ?? 0) / 1000;
       const end = (number(cue.OutMsec) ?? -1) / 1000;
-      // Hot cue kinds are 1-3 for A-C and 5-9 for D-H.
-      const index = kind === 0 ? -1 : kind <= 3 ? kind - 1 : kind - 2;
+      // Kind is 0 for memory cues, otherwise the hot cue number (1 = A).
+      const index = kind - 1;
       const name = text(cue.Comment) ?? '';
       if (end > start) performance.loops.push({ index, name, start, end, locked: false, hotCue: kind > 0, color: loopColor });
       else (kind > 0 ? performance.hotCues : performance.memoryCues).push({ index, name, start, color: cueColor });
@@ -158,6 +158,7 @@ export const readRekordboxDatabase = async (path: string): Promise<{ library: Sy
       const trackId = id(row.ID);
       if (encrypted(row.FolderPath) || !text(row.FolderPath) && Object.values(row).some(encrypted)) { encryptedTracks++; return []; }
       const path = text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
+      const title = text(row.Title) ?? basename(path);
       const linked = (field: keyof typeof links): string | null => {
         const [table, column] = links[field];
         const key = text(row[column]);
@@ -167,7 +168,7 @@ export const readRekordboxDatabase = async (path: string): Promise<{ library: Sy
       const rating = number(row.Rating);
       const performance = performances.get(trackId);
       const song: SongRow = {
-        id: `rekordbox-${trackId}`, title: text(row.Title) ?? basename(path), artist: linked('artist'), composer: linked('composer'),
+        id: `rekordbox-${trackId}`, title: title.startsWith('spotify:track:') ? `Spotify track ${title.slice('spotify:track:'.length)}` : title, artist: linked('artist'), composer: linked('composer'),
         remixer: linked('remixer'), album: linked('album'), mixName: text(row.Subtitle), label: linked('label'), genre: linked('genre'),
         year: number(row.ReleaseYear), bpm: bpm === null ? null : bpm / 100, musicalKey: linked('musicalKey'),
         durationSeconds: number(row.Length), fileKind: fileTypes[number(row.FileType) ?? 0] ?? null, fileSizeBytes: number(row.FileSize),
@@ -271,8 +272,9 @@ export const writeRekordboxDatabase = async (
   incoming: SyncLibrary,
   options: Readonly<{ fields: SyncFields; mode: 'merge' | 'replace'; removePlaylistPaths?: readonly (readonly string[])[] }>,
 ): Promise<{ trackCount: number; playlistCount: number; skippedTrackCount: number; backupPaths: string[]; warnings: string[] }> => {
-  if (!options.fields.tracks && !options.fields.metadata && !options.fields.playlists) throw new Error('Native Rekordbox sync supports tracks, track metadata and regular playlists. Select at least one of those categories.');
-  if (options.mode === 'replace' && options.fields.tracks) throw new Error('Native Rekordbox sync does not delete Collection tracks. Use Merge or turn off Tracks.');
+  if (!options.fields.tracks && !options.fields.metadata && !options.fields.playlists && !options.fields.hotCues && !options.fields.loops) {
+    throw new Error('Native Rekordbox sync supports tracks, track metadata, playlists, hot cues and loops. Select at least one of those categories.');
+  }
   await assertRekordboxClosed();
   const db = await openRekordboxDatabase(path, { readonly: false });
   const sidecarPath = join(dirname(path), 'masterPlaylists6.xml');
@@ -291,7 +293,7 @@ export const writeRekordboxDatabase = async (
     const changedPlaylists = new Map<string, Row>();
     const removedPlaylists = new Set<string>();
     const warnings: string[] = [];
-    if (options.fields.hotCues || options.fields.loops || options.fields.beatgrids) warnings.push('Native Rekordbox sync leaves cues, loops and beat grids unchanged.');
+    if (options.fields.beatgrids) warnings.push('Native Rekordbox sync leaves beat grids unchanged.');
     const nextRevision = (): number => {
       revision++;
       if (!Number.isSafeInteger(revision)) throw new Error('The Rekordbox update counter is too large.');
@@ -379,6 +381,52 @@ export const writeRekordboxDatabase = async (
         FolderPath: location, FileNameL: basename(location), FileType: fileType, DateCreated: today, StockDate: today };
       return insert('djmdContent', Object.fromEntries(Object.entries(values).filter(([column]) => contentColumns.has(column))));
     };
+    const cueColumns = new Set(rows(db, 'PRAGMA table_info("djmdCue")').map((row) => row.name));
+    const cuesByContent = new Map<string, Row[]>();
+    for (const cue of rows(db, 'SELECT * FROM djmdCue WHERE COALESCE(rb_local_deleted, 0) = 0')) {
+      const group = cuesByContent.get(id(cue.ContentID)) ?? [];
+      group.push(cue);
+      cuesByContent.set(id(cue.ContentID), group);
+    }
+    // Replaces the selected cue kinds of one track. Frames are 1/150 s; MPEG seek fields stay 0 as for non-VBR files.
+    const syncCues = (content: Row, performance: SyncPerformance): void => {
+      const loop = (cue: Row): boolean => (number(cue.OutMsec) ?? -1) > (number(cue.InMsec) ?? 0);
+      const managed = (cue: Row): boolean => loop(cue) ? options.fields.loops
+        : options.fields.hotCues && ((number(cue.Kind) ?? 0) > 0 || performance.memoryCues !== undefined);
+      const current = cuesByContent.get(id(content.ID)) ?? [];
+      const existing = current.filter(managed);
+      const occupied = new Set(current.filter((cue) => !managed(cue)).map((cue) => number(cue.Kind) ?? 0));
+      const kind = (index: number, hotCue: boolean): number | null => {
+        const slot = hotCue && index >= 0 && index < 8 ? index + 1 : 0;
+        if (slot === 0) return 0;
+        if (occupied.has(slot)) return null;
+        occupied.add(slot);
+        return slot;
+      };
+      const ms = (seconds: number): number => Math.max(0, Math.round(seconds * 1000));
+      const desired: Values[] = [];
+      if (options.fields.hotCues) for (const cue of [...performance.hotCues, ...performance.memoryCues ?? []]) {
+        const Kind = kind(cue.index, cue.index >= 0);
+        if (Kind !== null && (Kind > 0 || cue.index < 0)) desired.push({ Kind, InMsec: ms(cue.start), OutMsec: -1, Comment: cue.name || null });
+      }
+      if (options.fields.loops) for (const cue of performance.loops) {
+        desired.push({ Kind: kind(cue.index, cue.hotCue === true) ?? 0, InMsec: ms(cue.start), OutMsec: ms(cue.end), Comment: cue.name || null });
+      }
+      const signature = (cues: readonly Row[]): string => JSON.stringify(cues.map((cue) =>
+        [number(cue.Kind) ?? 0, number(cue.InMsec) ?? 0, number(cue.OutMsec) ?? -1, text(cue.Comment) ?? ''].join('\0')).sort());
+      if (signature(existing) === signature(desired)) return;
+      for (const cue of existing) remove('djmdCue', cue);
+      for (const cue of desired) {
+        const inMsec = number(cue.InMsec) ?? 0;
+        const outMsec = number(cue.OutMsec) ?? -1;
+        const values: Values = { ...cue, ID: unusedId('djmdCue'), ContentID: id(content.ID), ContentUUID: text(content.UUID),
+          InFrame: Math.round(inMsec * 0.15), InMpegFrame: 0, InMpegAbs: 0, OutFrame: outMsec < 0 ? 0 : Math.round(outMsec * 0.15),
+          OutMpegFrame: 0, OutMpegAbs: 0, Color: -1, ActiveLoop: 0, BeatLoopSize: 0 };
+        insert('djmdCue', Object.fromEntries(Object.entries(values).filter(([column]) => cueColumns.has(column))));
+      }
+      changedCueTracks++;
+    };
+    let changedCueTracks = 0;
     const syncedTracks = new Set<string>();
     const skippedTracks = new Set<string>();
     let addedTracks = 0;
@@ -398,11 +446,14 @@ export const writeRekordboxDatabase = async (
       if (syncedTracks.has(id(row.ID))) throw new Error(`Arsenal contains multiple entries for ${track.song.title}. Resolve them before syncing to Rekordbox.`);
       byPath.set(normalizePath(track.path), row);
       syncedTracks.add(id(row.ID));
-      if (!options.fields.metadata && !added) continue;
+      const cues = options.fields.hotCues || options.fields.loops ? track.performance : undefined;
+      if (!options.fields.metadata && !added && !cues) continue;
       // Arsenal cannot read encrypted fields, so writing its blanks back would erase them.
       const current = row;
       if (Object.values(current).some(encrypted) || Object.values(links).some(([table, column, name]) =>
         typeof current[column] === 'string' && encrypted(related(table, name).byId.get(current[column])?.[name]))) { encryptedTracks++; continue; }
+      if (cues) syncCues(row, cues);
+      if (!options.fields.metadata && !added) continue;
       const song = track.song;
       const integer = (value: number | null): number | null => {
         if (value === null) return null;
@@ -563,6 +614,7 @@ export const writeRekordboxDatabase = async (
     if (changedAnalysedBpm) warnings.push('Track BPM metadata was updated. Existing Rekordbox beat grids were left unchanged.');
     if (materializedSmart) warnings.push('Arsenal smart playlists were saved as regular Rekordbox playlists with their current tracks.');
     if (skippedTracks.size) warnings.push(`${skippedTracks.size} track${skippedTracks.size === 1 ? ' is' : 's are'} not in the Rekordbox Collection and could not be synced. ${options.fields.tracks ? `Rekordbox does not support ${skippedTracks.size === 1 ? 'its' : 'their'} file type.` : `Turn on Tracks to add ${skippedTracks.size === 1 ? 'it' : 'them'}.`}`);
+    if (changedCueTracks) warnings.push(`Cues and loops were updated on ${changedCueTracks} track${changedCueTracks === 1 ? '' : 's'}. Rekordbox shows them in its default colors.`);
     if (addedTracks) warnings.push(`${addedTracks} track${addedTracks === 1 ? ' was' : 's were'} added to the Rekordbox Collection. Rekordbox analyses ${addedTracks === 1 ? 'it' : 'them'} when opened.`);
     if (encryptedTracks) warnings.push(`${encryptedTracks} track${encryptedTracks === 1 ? ' has' : 's have'} encrypted details in Rekordbox and ${encryptedTracks === 1 ? 'was' : 'were'} left unchanged.`);
     const backupPaths: string[] = [];
