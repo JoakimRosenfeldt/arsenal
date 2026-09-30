@@ -447,14 +447,6 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     } finally { libraryActions -= 1; }
   });
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.selectSyncLibrary, async (event, id: unknown) => {
-    assertTrustedSender(event, owner);
-    if (content.kind !== 'main') throw new Error('Choose sync libraries from the library window');
-    if (typeof id !== 'string' || !id) throw new Error('Choose a connected library');
-    libraryActions += 1;
-    try { return await library.selectSyncLibrary(id); } finally { libraryActions -= 1; }
-  });
-
   ipc.handle(DJ_LIBRARY_CHANNELS.importExport, async (event) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Import from the library window');
@@ -486,13 +478,6 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   ipc.handle(DJ_LIBRARY_CHANNELS.syncActivity, (event) => {
     assertTrustedSender(event, owner);
     return library.syncActivity();
-  });
-
-  ipc.handle(DJ_LIBRARY_CHANNELS.stopOngoingSync, async (event) => {
-    assertTrustedSender(event, owner);
-    if (content.kind !== 'main') throw new Error('Manage ongoing sync from the library window');
-    libraryActions += 1;
-    try { return await library.stopOngoingSync(); } finally { libraryActions -= 1; }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.chooseSyncLibrary, async (event, kind: unknown, direction: unknown) => {

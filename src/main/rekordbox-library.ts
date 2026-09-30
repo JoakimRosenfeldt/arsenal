@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
 
 import { dialog, shell, type BrowserWindow } from 'electron';
-import { ARSENAL_LIBRARY_ID, DEFAULT_SONG_FILTERS, readSyncRequest, songMetadataGapCount } from '../shared/dj-library';
+import { ARSENAL_LIBRARY_ID, DEFAULT_SONG_FILTERS, ONGOING_SYNC_REQUEST, readSyncRequest, songMetadataGapCount } from '../shared/dj-library';
 import { DEFAULT_MINIMUM_SONG_LENGTH_SECONDS, type LibrarySettings } from '../shared/preferences';
 import { MUSIC_ORGANIZATION_OPTIONS, readMusicOrganization, type BackupConfiguration, type BackupConnection, type MusicOrganization } from '../shared/library-backup';
 
@@ -504,6 +504,9 @@ export class RekordboxLibrary {
     this.minimumSongLengthSeconds = remembered?.minimumSongLengthSeconds ?? DEFAULT_MINIMUM_SONG_LENGTH_SECONDS;
     this.connectedLibraries = (remembered?.connections ?? []).filter((connection) => connection.id !== ARSENAL_LIBRARY_ID);
     this.backups = remembered?.backups ?? [];
+    if (this.connectedLibraries.some((connection) => connection.origin === undefined) && this.savedSyncPreferences.request?.cadence !== 'ongoing') {
+      this.savedSyncPreferences = { ...this.savedSyncPreferences, request: { ...ONGOING_SYNC_REQUEST, timingOffsetMs: this.savedSyncPreferences.request?.timingOffsetMs ?? 0 } };
+    }
     if (remembered?.connections === null) {
       const paths = [
         { kind: 'rekordbox' as const, path: remembered.syncPreferences.rekordboxPath ?? (remembered.seratoPath === null ? remembered.rekordboxXmlPath : null) },
@@ -1217,27 +1220,17 @@ export class RekordboxLibrary {
         const accepted = prepared.connection;
         const connections = existing ? this.connectedLibraries.map((connection) => connection.id === existing.id ? accepted : connection)
           : [...this.connectedLibraries, accepted];
+        const preferences = this.syncPreferences();
         await this.saveConnections({ connections, catalog: prepared.catalog, library: prepared.library,
-          syncPreferences: { ...this.syncPreferences(), [kind === 'rekordbox' ? 'rekordboxPath' : 'seratoPath']: path } });
+          syncPreferences: { ...preferences, [kind === 'rekordbox' ? 'rekordboxPath' : 'seratoPath']: path,
+            request: { ...ONGOING_SYNC_REQUEST, timingOffsetMs: preferences.request?.timingOffsetMs ?? 0 } } });
+        this.ongoingSyncPause = null;
         this.cancelSuggestions();
+        this.requestOngoingSync();
         return { kind: 'updated', connections: await this.connections(), status: this.status(), warnings: prepared.warnings };
       } catch (error) {
         return { kind: 'rejected', message: error instanceof Error ? error.message : 'Could not connect the library.' };
       }
-    });
-  }
-
-  selectSyncLibrary(id: string): Promise<SyncPreferences> {
-    return this.enqueue(async () => {
-      const connection = this.connectedLibraries.find((candidate) => candidate.id === id);
-      if (!connection) throw new Error('This library is no longer connected.');
-      if (connection.origin !== undefined) throw new Error('Choose a connected DJ library as the sync destination.');
-      if (!(await this.connections()).connections.find((candidate) => candidate.id === id)?.available) {
-        throw new Error('This library is unavailable. Open Connections to choose a replacement or disconnect it.');
-      }
-      await this.saveConnections({ syncPreferences: { ...this.syncPreferences(),
-        [connection.kind === 'rekordbox' ? 'rekordboxPath' : 'seratoPath']: connection.path } });
-      return this.syncPreferences();
     });
   }
 
@@ -1258,8 +1251,7 @@ export class RekordboxLibrary {
         if (action.kind === 'reset') {
           const prepared = await this.prepareConnection(connection);
           await this.saveConnections({ connections: this.connectedLibraries.map((candidate) => candidate.id === connection.id ? prepared.connection : candidate),
-            catalog: prepared.catalog, library: prepared.library, replace: true,
-            syncPreferences: stopOngoing(this.savedSyncPreferences) });
+            catalog: prepared.catalog, library: prepared.library, replace: true });
           this.ongoingSyncPause = null;
           this.cancelSuggestions();
           return { kind: 'updated', connections: await this.connections(), status: this.status(), warnings: prepared.warnings };
@@ -1302,6 +1294,7 @@ export class RekordboxLibrary {
             throw error;
           }
           this.cancelSuggestions();
+          this.requestOngoingSync();
           return { kind: 'updated', connections: await this.connections(), status: this.status(), warnings: prepared.warnings };
         } else {
           let updated = connection;
@@ -1499,27 +1492,6 @@ export class RekordboxLibrary {
     this.onSyncActivity?.(this.currentSyncActivity);
   }
 
-  stopOngoingSync(): Promise<SyncActivity> {
-    return this.enqueue(async () => {
-      const previousPause = this.ongoingSyncPause;
-      const previousPending = this.pendingRekordboxSync;
-      this.ongoingSyncPause = null;
-      if (previousPending !== null) this.pendingRekordboxSync = { ...previousPending,
-        request: { ...previousPending.request, cadence: 'once' }, library: previousPending.library ?? this.arsenalLibrary };
-      try {
-        const preferences = this.syncPreferences();
-        await this.rememberSyncPreferences({ ...preferences,
-          request: preferences.request === null ? null : { ...preferences.request, cadence: 'once' } });
-      } catch (error) {
-        this.ongoingSyncPause = previousPause;
-        this.pendingRekordboxSync = previousPending;
-        throw error;
-      }
-      this.setSyncActivity(this.pendingRekordboxSync === null ? 'off' : 'waiting');
-      return this.syncActivity();
-    }, false);
-  }
-
   private async pauseOngoingSync(message: string, result: SyncActivity['result'] = null): Promise<void> {
     this.ongoingSyncPause = message;
     const saved = await this.remember(this.rememberedPath);
@@ -1555,7 +1527,8 @@ export class RekordboxLibrary {
 
   private async checkOngoingSync(): Promise<void> {
     const request = this.savedSyncPreferences.request;
-    if (this.backgroundStopped || !this.startupComplete || request?.cadence !== 'ongoing' || this.ongoingSyncPause !== null) return;
+    if (this.backgroundStopped || !this.startupComplete || request?.cadence !== 'ongoing' || this.ongoingSyncPause !== null ||
+      !this.selectedSyncConnections(request).length) return;
     await this.syncNow(request);
   }
 

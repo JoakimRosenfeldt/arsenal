@@ -293,7 +293,6 @@ export const writeRekordboxDatabase = async (
     const changedPlaylists = new Map<string, Row>();
     const removedPlaylists = new Set<string>();
     const warnings: string[] = [];
-    if (options.fields.beatgrids) warnings.push('Native Rekordbox sync leaves beat grids unchanged.');
     const nextRevision = (): number => {
       revision++;
       if (!Number.isSafeInteger(revision)) throw new Error('The Rekordbox update counter is too large.');

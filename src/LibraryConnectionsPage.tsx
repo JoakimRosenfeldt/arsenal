@@ -172,7 +172,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
         </label></div>
         <p id="library-reset-description">{resetSource === arsenal.id
           ? 'Removes all tracks, playlists, and connections from Arsenal.'
-          : 'Replaces all tracks and playlists in Arsenal with this library.'} Ongoing sync stops. Music files stay on disk.</p>
+          : 'Replaces all tracks and playlists in Arsenal with this library.'} Music files stay on disk.</p>
         <div className="library-connection-remove-actions">
           <button className="quiet-button" type="button" autoFocus onClick={() => resetDialogRef.current?.close()}>Cancel</button>
           <button className="danger-button" type="button" onClick={() => {
