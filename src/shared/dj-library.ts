@@ -218,6 +218,7 @@ export type LibraryConnection = Readonly<{
   path: string;
   available: boolean;
   origin?: 'portable' | 'arsenal';
+  format?: 'rekordbox-xml' | 'rekordbox-database';
 }>;
 
 export type LibraryConnections = Readonly<{
@@ -336,6 +337,12 @@ export type SyncMissingFileAction =
 export type SyncResult =
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{
+      kind: 'queued';
+      message: string;
+      warnings: readonly string[];
+      backupPaths: readonly string[];
+    }>
+  | Readonly<{
       kind: 'missing-files';
       files: readonly SyncMissingFile[];
       message: string;
@@ -359,7 +366,7 @@ export type SyncResult =
     }>;
 
 export type SyncActivity = Readonly<{
-  state: 'off' | 'watching' | 'syncing' | 'attention';
+  state: 'off' | 'watching' | 'syncing' | 'waiting' | 'attention';
   lastSyncedAt: string | null;
   result: Exclude<SyncResult, { kind: 'cancelled' }> | null;
 }>;

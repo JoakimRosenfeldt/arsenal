@@ -18,7 +18,7 @@ const fieldOptions = [
 ] satisfies readonly { value: keyof SyncFields; label: string }[];
 
 const libraryKinds = [
-  { kind: 'rekordbox', label: 'Rekordbox XML', key: 'rekordboxPath' },
+  { kind: 'rekordbox', label: 'Rekordbox', key: 'rekordboxPath' },
   { kind: 'serato', label: 'Serato library', key: 'seratoPath' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string; key: 'rekordboxPath' | 'seratoPath' }[];
 
@@ -54,22 +54,30 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
   const [selectedPaths, setSelectedPaths] = useState<readonly string[]>([]);
   const [removePaths, setRemovePaths] = useState<readonly string[]>([]);
   const [timingOffset, setTimingOffset] = useState('0');
-  const destinationName = direction === 'rekordbox-to-serato' ? 'Serato' : 'Rekordbox XML';
   const loadingPreferences = preferencesFor !== connections;
   const working = busy || pending || loadingPreferences || activity?.state === 'syncing';
-  const ongoing = activity !== null && activity.state !== 'off';
+  const ongoing = activity !== null && activity.state !== 'off' && preferences?.request?.cadence === 'ongoing';
   const destinationKinds = libraryKinds.filter(({ kind }) => direction === 'both' || kind === (direction === 'rekordbox-to-serato' ? 'serato' : 'rekordbox'));
   const nativeConnections = connections?.connections.filter((entry) => entry.origin === undefined) ?? [];
   const destinations = destinationKinds.flatMap(({ kind, key }) => nativeConnections.filter((entry) => entry.kind === kind && entry.path === preferences?.[key]));
   const needsLibraries = destinations.length === 0 || destinations.some((entry) => !entry.available);
   const includesSerato = destinations.some((entry) => entry.kind === 'serato');
+  const includesNativeRekordbox = destinations.some((entry) => entry.format === 'rekordbox-database');
+  const includesRekordboxXml = destinations.some((entry) => entry.kind === 'rekordbox' && entry.format !== 'rekordbox-database');
+  const destinationName = direction === 'rekordbox-to-serato' ? 'Serato'
+    : includesNativeRekordbox ? 'Rekordbox Collection' : 'Rekordbox XML';
+  const supportsPerformance = !includesNativeRekordbox || includesSerato;
+  const supportsTracks = !includesNativeRekordbox || includesSerato;
+  const syncFields = { ...fields, tracks: fields.tracks && supportsTracks,
+    hotCues: fields.hotCues && supportsPerformance, loops: fields.loops && supportsPerformance,
+    beatgrids: fields.beatgrids && supportsPerformance };
   const libraryChoices = destinationKinds.flatMap(({ kind, label, key }) => {
     const options = nativeConnections.filter((entry) => entry.kind === kind);
     const selected = options.find((entry) => entry.path === preferences?.[key]);
     return options.length > 1 || options.length === 1 && selected === undefined ? [{ kind, label, options, selected }] : [];
   });
-  const hasFields = Object.values(fields).some(Boolean);
-  const hasPerformance = fields.hotCues || fields.loops || fields.beatgrids;
+  const hasFields = Object.values(syncFields).some(Boolean);
+  const hasPerformance = syncFields.hotCues || syncFields.loops || syncFields.beatgrids;
   const parsedTimingOffset = Number(timingOffset);
   const validOffset = timingOffset.trim() !== '' && Number.isSafeInteger(parsedTimingOffset) && Math.abs(parsedTimingOffset) <= 1000;
   const timingOffsetMs = validOffset ? parsedTimingOffset : 0;
@@ -181,7 +189,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     setSelectedPaths([]);
     setRemovePaths([]);
     try {
-      let next = await onSync({ cadence, direction, mode, conflictSource: 'rekordbox', fields, timingOffsetMs });
+      let next = await onSync({ cadence, direction, mode, conflictSource: 'rekordbox', fields: syncFields, timingOffsetMs });
       try {
         const saved = await window.djLibrary.syncPreferences();
         setPreferences(saved);
@@ -218,6 +226,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     setRepairError(null);
     try {
       setActivity(await window.djLibrary.stopOngoingSync());
+      setPreferences((current) => current?.request ? { ...current, request: { ...current.request, cadence: 'once' } } : current);
     } catch (error: unknown) {
       setActivity(activity);
       const message = error instanceof Error ? error.message : 'Could not stop ongoing sync. Try again.';
@@ -306,13 +315,15 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
         {activity !== null && (
           <div className="library-sync-activity">
             <p>{activity.state === 'watching' ? 'Ongoing sync is on. App edits sync automatically.'
-              : activity.state === 'syncing' ? 'Ongoing sync is updating your libraries…'
-              : activity.state === 'attention' ? 'Ongoing sync needs attention. Resolve the issue below, then start it again.'
+              : activity.state === 'syncing' ? 'Sync is updating your libraries…'
+              : activity.state === 'waiting' ? 'Changes are saved in Arsenal. Waiting for Rekordbox to close.'
+              : activity.state === 'attention' ? 'Sync needs attention. Resolve the issue below, then retry.'
               : 'Ongoing sync is off.'}
               {activity.lastSyncedAt !== null && <> Last synced <time dateTime={activity.lastSyncedAt}>{new Date(activity.lastSyncedAt).toLocaleString()}</time>.</>}
             </p>
             {ongoing && <button className="quiet-button" type="button" disabled={busy || pending}
               onClick={() => void stopOngoingSync()}>Stop ongoing sync</button>}
+            {ongoing && activity.state === 'waiting' && <p>Stopping ongoing sync keeps the changes already queued.</p>}
           </div>
         )}
         {activityError !== null && <p className="library-sync-recovery-error" role="alert">{activityError}</p>}
@@ -323,6 +334,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
             <h3 id="library-sync-result-title">{result.kind === 'missing-files'
               ? hasMissingFiles ? 'Missing audio files' : 'Resume sync'
               : result.kind === 'rejected' ? 'Sync stopped'
+              : result.kind === 'queued' ? 'Changes queued'
               : hasIssues ? 'Sync needs attention' : 'Sync complete'}</h3>
             <p>{result.kind === 'missing-files' && !hasIssues
               ? 'Retry sync to apply these changes to connected libraries.' : result.message}</p>
@@ -518,12 +530,18 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
             <div>
               {fieldOptions.map((option) => (
                 <label key={option.value}>
-                  <input type="checkbox" checked={fields[option.value]}
+                  <input type="checkbox" checked={syncFields[option.value]}
+                    disabled={option.value === 'tracks' ? !supportsTracks
+                      : (option.value === 'hotCues' || option.value === 'loops' || option.value === 'beatgrids') && !supportsPerformance}
                     onChange={(event) => { draftChanged.current = true; setFields({ ...fields, [option.value]: event.currentTarget.checked }); }} />
                   <span>{option.label}</span>
                 </label>
               ))}
             </div>
+            {includesNativeRekordbox && <p className="tracklist-export-note">Hot cues, loops, and beatgrids cannot sync directly to Rekordbox yet.
+              {includesSerato && ' These categories sync to Serato only.'}</p>}
+            {includesNativeRekordbox && <p className="tracklist-export-note">Direct Rekordbox sync uses existing Collection tracks only. Add or remove tracks in Rekordbox, or use XML to add new tracks.
+              {includesSerato && ' The Tracks category applies to Serato only.'}</p>}
           </fieldset>
 
         </div>
@@ -545,10 +563,14 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
             : 'One time sync applies these settings once and stops any ongoing sync.'}</p>
           <p>Every edit and smart playlist rule is saved in your Arsenal library, even when DJ apps are disconnected.</p>
           <p>Smart playlists sync with their current matching tracks. Their rules stay in Arsenal.</p>
-          {mode === 'merge' && fields.playlists && destinations.some((entry) => entry.kind === 'rekordbox') && <p>Merge updates matching Rekordbox playlists to use Arsenal's tracks and order. Tracks and playlists found only in Rekordbox stay there.</p>}
-          {mode === 'replace' && <p>Overwrite replaces checked categories in {destinationName}. Absent tracks and playlists are removed when checked. Audio files stay on disk.</p>}
+          {includesNativeRekordbox && <p>Existing Rekordbox intelligent playlists stay unchanged.</p>}
+          {mode === 'merge' && syncFields.playlists && destinations.some((entry) => entry.kind === 'rekordbox') && <p>Merge updates matching Rekordbox playlists to use Arsenal's tracks and order. Tracks and playlists found only in Rekordbox stay there.</p>}
+          {mode === 'replace' && <p>Overwrite replaces checked categories in {destinationName}.
+            {includesNativeRekordbox ? ' Absent playlists are removed when checked. Tracks stay in Collection.'
+              : ' Absent tracks and playlists are removed when checked.'} Audio files stay on disk.</p>}
           {includesSerato && <p>{cadence === 'ongoing' ? 'Keep Serato closed while ongoing sync is on.' : 'Close Serato before syncing.'}</p>}
-          {destinations.some((entry) => entry.kind === 'rekordbox') && <>
+          {includesNativeRekordbox && <p>Arsenal updates Rekordbox Collection after Rekordbox closes. Keep Arsenal open to apply queued changes, then reopen Rekordbox to see them. No XML import is needed.</p>}
+          {includesRekordboxXml && <>
             <p>Arsenal updates the XML file. Rekordbox's Collection needs a separate import. Choosing the XML file in Rekordbox does not update Collection automatically.</p>
             <ol>
               <li>In Rekordbox's sidebar, open "rekordbox xml" and click its refresh button.</li>

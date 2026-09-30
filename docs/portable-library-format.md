@@ -78,7 +78,15 @@ Connections offers **Ongoing** and **One time** sync. Ongoing sync runs when you
 
 Library edits always save to Arsenal's JSON first, including when ongoing sync is off. A failed local save rejects the edit. DJ connections are optional, so an unavailable destination does not prevent local editing. Serato must be closed before Arsenal can write its native library.
 
-When ongoing sync is active, app edits also update the selected destinations for the enabled categories. If a destination cannot be updated, the Arsenal edit stays saved and ongoing sync pauses. Review the message on Connections before resuming. For Rekordbox, merge updates matching playlists to use Arsenal's track membership and order. Tracks and playlists found only in the destination remain. Overwrite replaces the selected categories with Arsenal's collection.
+When ongoing sync is active, app edits also update the selected destinations for the enabled categories. If a destination cannot be updated, the Arsenal edit stays saved and ongoing sync pauses. Review the message on Connections before resuming. Rekordbox merge updates matching playlists to use Arsenal's track membership and order. Tracks and playlists found only in the destination remain. During ongoing sync, Arsenal playlist deletions and moves also remove their previously synced paths. XML overwrite replaces the selected categories with Arsenal's collection.
+
+### Direct Rekordbox sync
+
+Choose **Connect Rekordbox Collection** in Connections to use the native library instead of XML. Direct sync updates metadata for existing local Collection tracks and regular playlists. It does not add or remove Collection tracks or change cues, loops, beatgrids, or native intelligent playlists. Arsenal smart playlists become regular Rekordbox playlists with their current matching tracks. A name collision with a native intelligent playlist skips the Arsenal playlist and reports a warning.
+
+Rekordbox must be closed before Arsenal writes its library. While Rekordbox is open, Arsenal saves pending changes and checks every two seconds for it to close. Keep Arsenal open until sync completes, then reopen Rekordbox to load the changes. No XML import is needed. Pending changes survive an Arsenal restart. Stopping ongoing sync keeps already queued changes and excludes later edits.
+
+Each changed sync saves an encrypted database backup and a copy of Rekordbox's playlist sidecar before writing. Outside changes stop the pending sync and require import before retrying. Native overwrite removes absent regular playlists, preserves intelligent playlists and their parent folders, and keeps Collection tracks. XML connections retain the separate import workflow.
 
 ## Document
 

@@ -9,6 +9,8 @@ import { PORTABLE_LIBRARY_FILENAME, portableSnapshotDate, readPortableLibrary } 
 import { findSeratoSource } from './serato-library';
 import { readSeratoWithPerformance } from './sync-libraries';
 import { rekordboxSyncLibrary } from './sync-rekordbox-xml';
+import { readRekordboxDatabase } from './rekordbox-database';
+import { isRekordboxDatabasePath } from './rekordbox-database-connection';
 
 export type PortableLibrarySource = Readonly<{
   manifestPath: string;
@@ -115,6 +117,12 @@ export const readLibrarySource = async ({ kind, path, portableSource, followLate
     })).digest('hex'), library: null, portableManifestPath: manifestPath, warnings: [] };
   }
   if (kind === 'rekordbox') {
+    if (isRekordboxDatabasePath(path)) {
+      const library = await readRekordboxDatabase(path);
+      const media = await nativeMediaState(library);
+      return { fingerprint: createHash('sha256').update(JSON.stringify(library)).update(JSON.stringify(media.files)).digest('hex'),
+        syncFingerprint: syncFingerprint(library, media.files), library, warnings: media.warnings, portableManifestPath: null };
+    }
     const parsed = await parseRekordboxXml(path);
     const library = rekordboxSyncLibrary(parsed, { includeNonLocal: true });
     const media = await nativeMediaState(library);

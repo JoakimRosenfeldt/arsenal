@@ -6,7 +6,7 @@ import { LibraryBackupConnections } from './LibraryBackupConnections';
 import type { LibraryConnection, LibraryConnectionAction, LibraryConnectionResult, LibraryConnections, LibrarySourceKind, SyncMissingFileAction, SyncRequest, SyncResult } from './shared/dj-library';
 
 const libraryKinds = [
-  { kind: 'rekordbox', label: 'Rekordbox XML' },
+  { kind: 'rekordbox', label: 'Rekordbox Collection' },
   { kind: 'serato', label: 'Serato library' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string }[];
 
@@ -45,7 +45,8 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
     }
   };
 
-  const connectionCard = (connection: LibraryConnection, label: string): JSX.Element => {
+  const connectionCard = (connection: LibraryConnection, kindLabel: string): JSX.Element => {
+    const label = connection.kind === 'rekordbox' && connection.format !== 'rekordbox-database' ? 'Rekordbox XML' : kindLabel;
     return (
       <section key={connection.id} className="library-connection-card"
         aria-label={`${connection.origin === 'portable' ? 'Arsenal library' : label}: ${connection.name}`}>
@@ -87,13 +88,17 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
           </button>
           {libraryKinds.flatMap(({ kind, label }) => {
             const connected = connections.filter((connection) => connection.kind === kind && connection.origin === undefined);
-            return connected.length === 0 ? [
-              <button key={kind} className="library-connect-button" type="button" disabled={working}
-                onClick={() => void run(() => onConnect(kind), `Connecting ${label}…`)}>
-                <span><UiIcon name="plus" size={20} /> Connect {label}</span>
-                <span className="library-connection-empty-status">Not connected</span>
-              </button>,
-            ] : connected.map((connection) => connectionCard(connection, label));
+            const canConnect = kind === 'rekordbox' ? !connected.some((connection) => connection.format === 'rekordbox-database') : connected.length === 0;
+            return [
+              ...(canConnect ? [
+                <button key={kind} className="library-connect-button" type="button" disabled={working}
+                  onClick={() => void run(() => onConnect(kind), `Connecting ${label}…`)}>
+                  <span><UiIcon name="plus" size={20} /> Connect {label}</span>
+                  <span className="library-connection-empty-status">{kind === 'rekordbox' ? 'Sync directly with Rekordbox' : 'Not connected'}</span>
+                </button>,
+              ] : []),
+              ...connected.map((connection) => connectionCard(connection, label)),
+            ];
           })}
           {connections.filter((connection) => connection.origin === 'portable').map((connection) => connectionCard(connection, 'Arsenal library'))}
           <LibraryBackupConnections busy={working} connections={state} onError={onError} />

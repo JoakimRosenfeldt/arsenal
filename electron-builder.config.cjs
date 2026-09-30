@@ -12,7 +12,12 @@ module.exports = {
     '!node_modules/**/*',
   ],
   asar: true,
-  extraResources: [{ from: 'assets/icon.png', to: 'icon.png' }],
+  extraResources: [
+    { from: 'assets/icon.png', to: 'icon.png' },
+    { from: 'THIRD_PARTY_NOTICES.md', to: 'THIRD_PARTY_NOTICES.md' },
+    { from: `node_modules/better-sqlite3-multiple-ciphers/prebuilds/${process.platform}-${process.arch}.node`,
+      to: `${process.platform}-${process.arch}.node` },
+  ],
   npmRebuild: false,
   electronFuses: {
     runAsNode: false,
