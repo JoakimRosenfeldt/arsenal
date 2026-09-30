@@ -1009,7 +1009,7 @@ export class RekordboxLibrary {
   private async backupLibrary(connection: StoredLibraryConnection) {
     const native = connection.kind === 'serato' && (!connection.dirty || connection.workspacePath === null);
     const snapshot = connection.origin === 'arsenal' ? { library: this.arsenalLibrary, warnings: [] }
-      : connection.kind === 'rekordbox' && isRekordboxDatabasePath(connection.path) ? { library: await readRekordboxDatabase(connection.path), warnings: [] }
+      : connection.kind === 'rekordbox' && isRekordboxDatabasePath(connection.path) ? await readRekordboxDatabase(connection.path)
       : native ? await readSeratoWithPerformance(await findSeratoSource(connection.path))
       : { library: rekordboxSyncLibrary(await parseRekordboxXml(connection.workspacePath ?? connection.path), { includeNonLocal: true }), warnings: [] };
     const fingerprint = createHash('sha256').update(JSON.stringify(readLibraryModel(snapshot.library)));
@@ -1634,7 +1634,7 @@ export class RekordboxLibrary {
     if (detected !== null) {
       const choice = await dialog.showMessageBox(owner, {
         type: 'question', title: 'Connect Rekordbox', message: 'Connect to Rekordbox Collection?',
-        detail: 'Collection sync applies playlist and track-detail edits automatically while Rekordbox is closed. XML connections require a separate import in Rekordbox.',
+        detail: 'Collection sync adds tracks and applies playlist and track-detail edits automatically while Rekordbox is closed. XML connections require a separate import in Rekordbox.',
         buttons: ['Connect Collection', 'Choose another library', 'Cancel'], defaultId: 0, cancelId: 2,
       });
       if (choice.response === 2) return null;
@@ -1806,7 +1806,7 @@ export class RekordboxLibrary {
     for (const target of context.targets) {
       try {
         const library = target.kind === 'xml' ? rekordboxSyncLibrary(await parseRekordboxXml(target.path))
-          : target.kind === 'rekordbox-database' ? await readRekordboxDatabase(target.path) : await readSeratoLibrary(target);
+          : target.kind === 'rekordbox-database' ? (await readRekordboxDatabase(target.path)).library : await readSeratoLibrary(target);
         const tracks = library.tracks.filter((track) => context.paths.has(normalizePath(track.path)));
         context.knownPaths.set(target.path, new Set(tracks.map((track) => normalizePath(track.path))));
         libraries.push({ target, kind: target.kind === 'xml' ? target.libraryKind : target.kind === 'rekordbox-database' ? 'rekordbox' : 'serato', library: { ...library, tracks } });
