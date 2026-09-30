@@ -430,17 +430,29 @@ export const writeSeratoSqlite = async (
     const assetIdsByPath = new Map<string, number>();
     const assetsByPath = new Map<string, number>();
     const retainedSpaceAssets = new Set<number>();
-    for (const row of db.prepare('SELECT id, portable_id, third_party_type FROM asset ORDER BY id').all()) {
-      const key = await seratoMediaPathKey(assetPath(rootPath, row));
+    const assetRows = db.prepare('SELECT id, portable_id, third_party_type FROM asset ORDER BY id').all();
+    const pathKeys = new Map<string, Promise<string>>();
+    const mediaKeyFor = (path: string): Promise<string> => {
+      let key = pathKeys.get(path);
+      if (key === undefined) { key = seratoMediaPathKey(path); pathKeys.set(path, key); }
+      return key;
+    };
+    const mediaPaths = [...new Set([...assetRows.map((row) => assetPath(rootPath, row)),
+      ...incoming.tracks.map((track) => track.path), ...incoming.playlists.flatMap((playlist) => playlist.trackPaths)])];
+    for (let offset = 0; offset < mediaPaths.length; offset += 32) {
+      await Promise.all(mediaPaths.slice(offset, offset + 32).map(mediaKeyFor));
+    }
+    for (const row of assetRows) {
+      const key = await mediaKeyFor(assetPath(rootPath, row));
       if (!assetIdsByPath.has(key)) assetIdsByPath.set(key, id(row.id));
     }
     for (const row of db.prepare('SELECT a.portable_id, a.third_party_type, sa.id FROM asset a JOIN space_asset sa ON sa.asset_id = a.id WHERE sa.space_id = ?').all(spaceId)) {
       const portableId = text(row.portable_id);
-      if (portableId) assetsByPath.set(await seratoMediaPathKey(assetPath(rootPath, row)), id(row.id));
+      if (portableId) assetsByPath.set(await mediaKeyFor(assetPath(rootPath, row)), id(row.id));
     }
     for (const track of incoming.tracks) {
       const portableId = portablePath(rootPath, track.path);
-      const key = await seratoMediaPathKey(track.path);
+      const key = await mediaKeyFor(track.path);
       const existing = assetIdsByPath.get(key);
       const values = metadata(track);
       const columns = Object.keys(values);
@@ -520,7 +532,7 @@ export const writeSeratoSqlite = async (
       const existingMembers = new Map(members.map((row) => [id(row.space_asset_id), id(row.id)]));
       const desired = new Set<number>();
       for (const path of playlist.trackPaths) {
-        const spaceAssetId = assetsByPath.get(await seratoMediaPathKey(path));
+        const spaceAssetId = assetsByPath.get(await mediaKeyFor(path));
         if (spaceAssetId === undefined) throw new Error(`A playlist track is missing from the library: ${path}`);
         desired.add(spaceAssetId);
       }
@@ -559,13 +571,13 @@ export const writeSeratoSqlite = async (
         for (const [position, row] of group.entries()) setOrder.run(position + 1, revision, id(row.id));
       }
     }
-    const removedTrackKeys = new Set(await Promise.all((options.removeTrackPaths ?? []).map(seratoMediaPathKey)));
-    const removedMemberKeys = new Set(await Promise.all((options.removePlaylistTrackPaths ?? []).map(seratoMediaPathKey)));
+    const removedTrackKeys = new Set(await Promise.all((options.removeTrackPaths ?? []).map(mediaKeyFor)));
+    const removedMemberKeys = new Set(await Promise.all((options.removePlaylistTrackPaths ?? []).map(mediaKeyFor)));
     if (options.replaceTracks || removedTrackKeys.size || removedMemberKeys.size) {
       const removeSpaceAsset = db.prepare('DELETE FROM space_asset WHERE id = ?');
       const removeUnusedAsset = db.prepare('DELETE FROM asset WHERE id = ? AND NOT EXISTS (SELECT 1 FROM space_asset WHERE asset_id = ?)');
       for (const row of db.prepare('SELECT sa.id, sa.asset_id, a.portable_id, a.third_party_type FROM space_asset sa JOIN asset a ON a.id = sa.asset_id WHERE sa.space_id = ?').all(spaceId)) {
-        const key = await seratoMediaPathKey(assetPath(rootPath, row));
+        const key = await mediaKeyFor(assetPath(rootPath, row));
         if (options.replaceTracks && !retainedSpaceAssets.has(id(row.id)) || removedTrackKeys.has(key)) {
           removeSpaceAsset.run(id(row.id));
           removeUnusedAsset.run(id(row.asset_id), id(row.asset_id));

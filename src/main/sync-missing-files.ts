@@ -9,22 +9,30 @@ import { seratoMediaPathKey } from './serato-paths';
 export const findMissingSyncFiles = async (libraries: readonly Readonly<{
   kind: LibrarySourceKind; library: SyncLibrary;
 }>[]): Promise<SyncMissingFile[]> => {
-  const files = new Map<string, SyncMissingFile>();
+  const candidates = new Map<string, SyncMissingFile>();
   for (const { kind, library } of libraries) {
     for (const track of library.tracks) {
       if (track.song.source !== 'local') continue;
-      try {
-        if ((await stat(track.path)).isFile()) continue;
-      } catch (error) {
-        if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
-      }
       const key = normalizePath(track.path);
-      const previous = files.get(key);
-      files.set(key, previous ? { ...previous, libraries: [...new Set([...previous.libraries, kind])] }
+      const previous = candidates.get(key);
+      candidates.set(key, previous ? { ...previous, libraries: [...new Set([...previous.libraries, kind])] }
         : { path: track.path, title: track.song.title, artist: track.song.artist ?? '', libraries: [kind], candidates: [] });
     }
   }
-  return [...files.values()];
+  const allFiles = [...candidates.values()];
+  const missing: SyncMissingFile[] = [];
+  for (let offset = 0; offset < allFiles.length; offset += 32) {
+    const checked = await Promise.all(allFiles.slice(offset, offset + 32).map(async (file) => {
+      try {
+        if ((await stat(file.path)).isFile()) return null;
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
+      }
+      return file;
+    }));
+    missing.push(...checked.filter((file) => file !== null));
+  }
+  return missing;
 };
 
 export const automaticSyncSearchRoots = (libraries: readonly SyncLibrary[], libraryPaths: readonly string[]): string[] => {

@@ -365,7 +365,7 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
         }
         if (children(node, 'NODE').some((child) => child.attributes.ArsenalSeratoCrateTracks === '1')) crateTrackNode(node, currentPath);
         parent = node;
-        if (!last || playlist.trackPaths.length === 0) continue;
+        if (!last || playlist.kind === 'folder' && playlist.trackPaths.length === 0) continue;
         node = crateTrackNode(node, currentPath);
       }
       if (node.attributes.Type === '0' && playlist.trackPaths.length === 0) continue;
@@ -396,10 +396,6 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
         const key = node.attributes.KeyType === '1' ? track?.attributes.Location : track?.attributes.TrackID;
         if (key === undefined) throw new Error(`The crate references a track outside the collection: ${path}`);
         references.set(key, { name: 'TRACK', attributes: { Key: key }, parts: [] });
-      }
-      for (const reference of replacePlaylists || playlist.kind === 'smart' ? [] : children(node, 'TRACK')) {
-        const key = reference.attributes.Key;
-        if (key !== undefined) references.set(key, reference);
       }
       node.parts = node.parts.filter((part) => typeof part === 'string' || part.name !== 'TRACK');
       node.parts.push(...[...references.values()].flatMap((reference) => ['\n', reference]));

@@ -78,7 +78,7 @@ Connections offers **Ongoing** and **One time** sync. Ongoing sync runs when you
 
 Library edits always save to Arsenal's JSON first, including when ongoing sync is off. A failed local save rejects the edit. DJ connections are optional, so an unavailable destination does not prevent local editing. Serato must be closed before Arsenal can write its native library.
 
-When ongoing sync is active, app edits also update the selected destinations for the enabled categories. If a destination cannot be updated, the Arsenal edit stays saved and ongoing sync pauses. Review the message on Connections before resuming. Merge may retain destination entries that are absent from Arsenal; overwrite replaces the selected categories with Arsenal's collection.
+When ongoing sync is active, app edits also update the selected destinations for the enabled categories. If a destination cannot be updated, the Arsenal edit stays saved and ongoing sync pauses. Review the message on Connections before resuming. For Rekordbox, merge updates matching playlists to use Arsenal's track membership and order. Tracks and playlists found only in the destination remain. Overwrite replaces the selected categories with Arsenal's collection.
 
 ## Document
 

@@ -542,9 +542,7 @@ export class RekordboxLibrary {
     this.disposeBackups();
     this.backgroundStopped = false;
     this.backupTimer = setInterval(() => {
-      if (!this.backups.length || this.backupPollQueued) return;
-      this.backupPollQueued = true;
-      void this.enqueue(async () => undefined).catch(() => undefined).finally(() => { this.backupPollQueued = false; });
+      if (this.startupComplete) this.requestBackup();
     }, 30_000);
     this.backupTimer.unref();
   }
@@ -766,11 +764,11 @@ export class RekordboxLibrary {
         }
       }
       this.cancelSuggestions();
-      if (imported > 0) await this.updateBackups();
       if (failed && savedRequest !== null) warnings.push('Automatic sync was skipped because some changed libraries could not be imported.');
       return failed ? null : savedRequest;
     }, false);
     const syncResult = request === null ? null : await this.syncLibraries(owner, request);
+    if (imported > 0 && request === null) this.requestBackup();
     return { connections: await this.connections(), status: this.status(), warnings, syncResult,
       message: imported ? `Imported changes from ${imported} ${imported === 1 ? 'library' : 'libraries'}.` : null };
   }
@@ -901,8 +899,12 @@ export class RekordboxLibrary {
     this.backgroundStopped = true;
   }
 
-  whenIdle(): Promise<void> {
-    return this.operationTail;
+  async whenIdle(): Promise<void> {
+    let pending: Promise<void>;
+    do {
+      pending = this.operationTail;
+      await pending;
+    } while (pending !== this.operationTail);
   }
 
   importBackup(owner: BrowserWindow, mode: 'folder' | 'snapshot' = 'folder'): Promise<LibraryConnectionResult> {
@@ -973,14 +975,19 @@ export class RekordboxLibrary {
       : native ? await readSeratoWithPerformance(await findSeratoSource(connection.path))
       : { library: rekordboxSyncLibrary(await parseRekordboxXml(connection.workspacePath ?? connection.path), { includeNonLocal: true }), warnings: [] };
     const fingerprint = createHash('sha256').update(JSON.stringify(readLibraryModel(snapshot.library)));
-    for (const track of snapshot.library.tracks) {
-      if (track.song.source !== 'local') continue;
-      try {
-        const file = await stat(track.location ?? track.path);
-        fingerprint.update(JSON.stringify([track.path, file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs]));
-      } catch (error) {
-        if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
-        fingerprint.update(JSON.stringify([track.path, 'missing']));
+    const tracks = snapshot.library.tracks.filter((track) => track.song.source === 'local');
+    for (let offset = 0; offset < tracks.length; offset += 32) {
+      const states = await Promise.all(tracks.slice(offset, offset + 32).map(async (track) => {
+        try {
+          const file = await stat(track.location ?? track.path);
+          return JSON.stringify([track.path, file.dev, file.ino, file.size, file.mtimeMs, file.ctimeMs]);
+        } catch (error) {
+          if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
+          return JSON.stringify([track.path, 'missing']);
+        }
+      }));
+      for (const state of states) {
+        fingerprint.update(state);
       }
     }
     return { ...snapshot, fingerprint: fingerprint.digest('hex') };
@@ -1023,6 +1030,13 @@ export class RekordboxLibrary {
 
   private async updateBackups(): Promise<void> {
     for (const backup of this.backups) await this.saveBackup(backup);
+  }
+
+  private requestBackup(): void {
+    if (!this.backups.length || this.backupPollQueued) return;
+    this.backupPollQueued = true;
+    void this.enqueue(() => this.updateBackups(), false).catch(() => undefined)
+      .finally(() => { this.backupPollQueued = false; });
   }
 
   async connections(): Promise<LibraryConnections> {
@@ -1620,7 +1634,7 @@ export class RekordboxLibrary {
         await this.acknowledgeWrites([target.id], true);
       }
       return { kind: 'synced', trackCount, playlistCount, skippedTrackCount, warnings, backupPaths,
-        message: `Saved Arsenal changes to ${synced} ${synced === 1 ? 'DJ library' : 'DJ libraries'}.${targets.some((target) => target.kind === 'rekordbox') ? ' In Rekordbox, refresh the rekordbox xml browser, then import the changed tracks and playlists into your Collection.' : ''}${targets.some((target) => target.kind === 'serato') ? ' Reopen Serato to load the changes.' : ''}${skippedTrackCount ? ` Up to ${skippedTrackCount} tracks were skipped because they are not local files or adding tracks is disabled.` : ''}` };
+        message: `Saved Arsenal changes to ${synced} ${synced === 1 ? 'destination' : 'destinations'}.${targets.some((target) => target.kind === 'rekordbox') ? ' Rekordbox Collection needs a separate import. Refresh "rekordbox xml" in its sidebar, open "All Tracks", and drag the changed tracks into Collection. Import changed XML playlists into Playlists separately.' : ''}${targets.some((target) => target.kind === 'serato') ? ' Reopen Serato to load the changes.' : ''}${skippedTrackCount ? ` Up to ${skippedTrackCount} tracks were skipped because they are not local files or adding tracks is disabled.` : ''}` };
     } catch (error) {
       return { kind: 'rejected', warnings, backupPaths, message: `${error instanceof Error ? error.message : 'Could not sync the library.'}${synced ? ' Some destinations were already updated.' : ''}` };
     }
@@ -1793,8 +1807,8 @@ export class RekordboxLibrary {
   }
 
   private enqueue<T>(work: () => Promise<T>, updateBackups = true): Promise<T> {
-    const operation = this.operationTail.then(async () => {
-      try { return await work(); } finally { if (updateBackups) await this.updateBackups(); }
+    const operation = this.operationTail.then(work).finally(() => {
+      if (updateBackups) this.requestBackup();
     });
     this.operationTail = operation.then(
       () => undefined,

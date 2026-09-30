@@ -154,7 +154,7 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
       wroteLibrary = true;
     } else {
       const outgoing = shiftPerformance(selected, request.timingOffsetMs / 1000, request.fields);
-      if (hasPerformance || request.fields.metadata) {
+      if ((hasPerformance || request.fields.metadata) && protectedMediaRoots.length > 0) {
         const roots = await Promise.all(protectedMediaRoots.map(async (root) => normalizePath(await resolveSeratoMediaPath(root))));
         for (const track of outgoing.tracks) {
           const path = normalizePath(await resolveSeratoMediaPath(track.path));
@@ -191,7 +191,7 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
     return { kind: 'synced', trackCount: selected.tracks.length, playlistCount: selected.playlists.length,
       skippedTrackCount: Math.max(0, library.tracks.length - selected.tracks.length), backupPaths, warnings,
       message: target.kind === 'serato' ? 'Arsenal library synced to Serato. Reopen Serato to load the changes.'
-        : 'Rekordbox XML updated. In Rekordbox, refresh the rekordbox xml browser, then import the changed tracks and playlists into your Collection.' };
+        : 'Rekordbox XML updated. Rekordbox Collection needs a separate import. Refresh "rekordbox xml" in its sidebar, open "All Tracks", and drag the changed tracks into Collection. Import changed XML playlists into Playlists separately.' };
   } catch (error) {
     return { kind: 'rejected', warnings, backupPaths,
       message: `${error instanceof Error ? error.message : 'Could not sync the Arsenal library.'}${wroteLibrary ? ' Some destination files were already updated. Arsenal edits were kept.' : ''}` };

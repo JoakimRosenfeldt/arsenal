@@ -545,9 +545,17 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
             : 'One time sync applies these settings once and stops any ongoing sync.'}</p>
           <p>Every edit and smart playlist rule is saved in your Arsenal library, even when DJ apps are disconnected.</p>
           <p>Smart playlists sync with their current matching tracks. Their rules stay in Arsenal.</p>
+          {mode === 'merge' && fields.playlists && destinations.some((entry) => entry.kind === 'rekordbox') && <p>Merge updates matching Rekordbox playlists to use Arsenal's tracks and order. Tracks and playlists found only in Rekordbox stay there.</p>}
           {mode === 'replace' && <p>Overwrite replaces checked categories in {destinationName}. Absent tracks and playlists are removed when checked. Audio files stay on disk.</p>}
           {includesSerato && <p>{cadence === 'ongoing' ? 'Keep Serato closed while ongoing sync is on.' : 'Close Serato before syncing.'}</p>}
-          {destinations.some((entry) => entry.kind === 'rekordbox') && <p>Rekordbox reads changes when you refresh its rekordbox xml browser and import the updated tracks or playlists into Collection.</p>}
+          {destinations.some((entry) => entry.kind === 'rekordbox') && <>
+            <p>Arsenal updates the XML file. Rekordbox's Collection needs a separate import. Choosing the XML file in Rekordbox does not update Collection automatically.</p>
+            <ol>
+              <li>In Rekordbox's sidebar, open "rekordbox xml" and click its refresh button.</li>
+              <li>Open "All Tracks" and drag the changed tracks into Collection.</li>
+              <li>Drag changed playlists from the XML playlist list into Rekordbox's Playlists.</li>
+            </ol>
+          </>}
           {ongoing && <p>Changed settings take effect when you sync.</p>}
         </div>
 
