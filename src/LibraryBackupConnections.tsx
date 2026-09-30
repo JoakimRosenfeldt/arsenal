@@ -6,13 +6,16 @@ import { MUSIC_ORGANIZATION_OPTIONS, readMusicOrganization, type BackupConfigura
 
 const folderName = (directory: string): string => directory.split(/[\\/]/).filter(Boolean).at(-1) ?? 'Backup folder';
 
-export const LibraryBackupConnections = ({ busy, connections, onError }: Readonly<{
+export const LibraryBackupConnections = ({ busy, connections, onError, connecting, onConnectClose }: Readonly<{
   busy: boolean;
   connections: LibraryConnections;
   onError?: (message: string) => void;
+  connecting: boolean;
+  onConnectClose: () => void;
 }>): JSX.Element => {
   const [backups, setBackups] = useState(connections.backupConnections);
-  const [editing, setEditing] = useState<BackupConfiguration | null>(null);
+  const [draft, setEditing] = useState<BackupConfiguration | null>(null);
+  const editing: BackupConfiguration | null = draft ?? (connecting ? { kind: 'connect', includeMusic: true, musicOrganization: 'artist' } : null);
   const [removing, setRemoving] = useState<BackupConnection | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -54,9 +57,10 @@ export const LibraryBackupConnections = ({ busy, connections, onError }: Readonl
     return () => { active = false; window.clearInterval(interval); };
   }, [connections, onError]);
 
+  const editingOpen = editing !== null;
   useEffect(() => {
-    if (editing !== null && settingsDialog.current && !settingsDialog.current.open) settingsDialog.current.showModal();
-  }, [editing]);
+    if (editingOpen && settingsDialog.current && !settingsDialog.current.open) settingsDialog.current.showModal();
+  }, [editingOpen]);
   useEffect(() => {
     if (removing !== null && removeDialog.current && !removeDialog.current.open) removeDialog.current.showModal();
   }, [removing]);
@@ -121,17 +125,10 @@ export const LibraryBackupConnections = ({ busy, connections, onError }: Readonl
         </button>
       </div>
     </section>)}
-    <button className="library-connect-button" type="button" disabled={working} onClick={() => {
-      setError(null);
-      setEditing({ kind: 'connect', includeMusic: true, musicOrganization: 'artist' });
-    }}>
-      <span><UiIcon name="plus" size={20} /> Connect folder</span>
-      <span className="library-connection-empty-status">Back up your Arsenal library</span>
-    </button>
     {(statusError || error && editing === null) && <p className="library-folder-error tracklist-export-note" role="alert">{error ?? statusError}</p>}
 
     {editing !== null && <dialog className="tracklist-export-dialog library-folder-dialog" ref={settingsDialog}
-      aria-labelledby="folder-settings-title" onClose={() => setEditing(null)}>
+      aria-labelledby="folder-settings-title" onClose={() => { setEditing(null); onConnectClose(); }}>
       <div className="tracklist-export-heading">
         <h2 id="folder-settings-title">{editing.kind === 'connect' ? 'Connect folder' : 'Folder connection settings'}</h2>
         <button className="inspector-close" type="button" onClick={() => settingsDialog.current?.close()} aria-label="Close folder settings"><UiIcon name="close" size={16} /></button>

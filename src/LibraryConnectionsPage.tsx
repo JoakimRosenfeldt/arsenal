@@ -26,6 +26,9 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
   const removeDialogRef = useRef<HTMLDialogElement>(null);
   const [resetSource, setResetSource] = useState<string | null>(null);
   const resetDialogRef = useRef<HTMLDialogElement>(null);
+  const [adding, setAdding] = useState(false);
+  const [connectingFolder, setConnectingFolder] = useState(false);
+  const addDialogRef = useRef<HTMLDialogElement>(null);
   const working = busy || pending !== null;
   const connections = state?.connections ?? [];
   const arsenal = connections.find((connection) => connection.origin === 'arsenal');
@@ -33,6 +36,9 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
   useEffect(() => {
     if (removing !== null && removeDialogRef.current && !removeDialogRef.current.open) removeDialogRef.current.showModal();
   }, [removing]);
+  useEffect(() => {
+    if (adding && addDialogRef.current && !addDialogRef.current.open) addDialogRef.current.showModal();
+  }, [adding]);
   useEffect(() => {
     if (resetSource !== null && resetDialogRef.current && !resetDialogRef.current.open) resetDialogRef.current.showModal();
   }, [resetSource]);
@@ -90,25 +96,15 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
 
       <div className="library-connections-content" aria-busy={working}>
         {state === null ? <p role="status">Loading connections…</p> : <div className="library-connection-grid">
-          <button className="library-connect-button" type="button" disabled={working}
-            onClick={() => void run(() => onImportBackup('snapshot'), 'Connecting Arsenal library…')}>
-            <span><UiIcon name="plus" size={20} /> Connect Arsenal library</span>
-          </button>
-          {libraryKinds.flatMap(({ kind, label }) => {
-            const connected = connections.filter((connection) => connection.kind === kind && connection.origin === undefined);
-            const canConnect = kind === 'rekordbox' ? !connected.some((connection) => connection.format === 'rekordbox-database') : connected.length === 0;
-            return [
-              ...(canConnect ? [
-                <button key={kind} className="library-connect-button" type="button" disabled={working}
-                  onClick={() => void run(() => onConnect(kind), `Connecting ${label}…`)}>
-                  <span><UiIcon name="plus" size={20} /> Connect {label}</span>
-                </button>,
-              ] : []),
-              ...connected.map((connection) => connectionCard(connection, label)),
-            ];
-          })}
+          {libraryKinds.flatMap(({ kind, label }) => connections
+            .filter((connection) => connection.kind === kind && connection.origin === undefined)
+            .map((connection) => connectionCard(connection, label)))}
           {connections.filter((connection) => connection.origin === 'portable').map((connection) => connectionCard(connection, 'Arsenal library'))}
-          <LibraryBackupConnections busy={working} connections={state} onError={onError} />
+          <LibraryBackupConnections busy={working} connections={state} onError={onError}
+            connecting={connectingFolder} onConnectClose={() => setConnectingFolder(false)} />
+          <button className="library-connect-button" type="button" disabled={working} onClick={() => setAdding(true)}>
+            <span><UiIcon name="plus" size={20} /> Add connection</span>
+          </button>
         </div>}
 
         {pending !== null && <p className="library-connection-progress" role="status">{pending}</p>}
@@ -134,6 +130,31 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
             removeDialogRef.current?.close();
             void run(() => onManage({ kind: 'replace', id: removing.id }), 'Choosing another library…');
           }}>Connect another library</button>
+        </div>
+      </dialog>}
+
+      {adding && <dialog className="tracklist-export-dialog library-add-dialog" ref={addDialogRef}
+        aria-labelledby="library-add-title" onClose={() => setAdding(false)}>
+        <div className="tracklist-export-heading">
+          <h2 id="library-add-title">Add connection</h2>
+          <button className="inspector-close" type="button" onClick={() => addDialogRef.current?.close()} aria-label="Close"><UiIcon name="close" size={16} /></button>
+        </div>
+        <div className="library-add-options">
+          <button className="quiet-button" type="button" onClick={() => {
+            addDialogRef.current?.close();
+            void run(() => onImportBackup('snapshot'), 'Connecting Arsenal library…');
+          }}>Arsenal library</button>
+          {libraryKinds.filter(({ kind }) => {
+            const connected = connections.filter((connection) => connection.kind === kind && connection.origin === undefined);
+            return kind === 'rekordbox' ? !connected.some((connection) => connection.format === 'rekordbox-database') : connected.length === 0;
+          }).map(({ kind, label }) => <button key={kind} className="quiet-button" type="button" onClick={() => {
+            addDialogRef.current?.close();
+            void run(() => onConnect(kind), `Connecting ${label}…`);
+          }}>{label}</button>)}
+          <button className="quiet-button" type="button" onClick={() => {
+            addDialogRef.current?.close();
+            setConnectingFolder(true);
+          }}>Backup folder</button>
         </div>
       </dialog>}
 

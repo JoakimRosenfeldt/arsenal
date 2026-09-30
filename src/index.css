@@ -1166,6 +1166,18 @@ input:disabled {
   line-height: 1.6;
 }
 
+.library-add-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.library-add-options > .quiet-button {
+  height: 40px;
+  justify-content: flex-start;
+  font-size: 13px;
+}
+
 .library-connection-remove-actions {
   display: flex;
   flex-wrap: wrap;
