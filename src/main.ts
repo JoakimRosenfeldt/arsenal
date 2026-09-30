@@ -438,7 +438,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Manage connections from the library window');
     if (!isRecord(action) || typeof action.id !== 'string' || !action.id ||
-      (action.kind !== 'open' && action.kind !== 'refresh' && action.kind !== 'disconnect' && action.kind !== 'source-of-truth' && action.kind !== 'locate' && action.kind !== 'replace')) {
+      (action.kind !== 'open' && action.kind !== 'refresh' && action.kind !== 'disconnect' && action.kind !== 'source-of-truth' && action.kind !== 'locate' && action.kind !== 'replace' && action.kind !== 'reset')) {
       throw new Error('Invalid library connection action');
     }
     libraryActions += 1;

@@ -24,11 +24,18 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
   const [pending, setPending] = useState<string | null>(null);
   const [removing, setRemoving] = useState<LibraryConnection | null>(null);
   const removeDialogRef = useRef<HTMLDialogElement>(null);
+  const [resetSource, setResetSource] = useState<string | null>(null);
+  const resetDialogRef = useRef<HTMLDialogElement>(null);
   const working = busy || pending !== null;
   const connections = state?.connections ?? [];
+  const arsenal = connections.find((connection) => connection.origin === 'arsenal');
+  const resetSources = connections.filter((connection) => connection.origin !== 'arsenal' && connection.available);
   useEffect(() => {
     if (removing !== null && removeDialogRef.current && !removeDialogRef.current.open) removeDialogRef.current.showModal();
   }, [removing]);
+  useEffect(() => {
+    if (resetSource !== null && resetDialogRef.current && !resetDialogRef.current.open) resetDialogRef.current.showModal();
+  }, [resetSource]);
 
   const run = async (operation: () => Promise<LibraryConnectionResult>, progress: string): Promise<void> => {
     if (working) return;
@@ -76,6 +83,9 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
     <section className="workspace-page library-connections-page" aria-labelledby="library-connections-title">
       <header className="page-header">
         <div className="page-title-line"><h1 id="library-connections-title">Connections</h1></div>
+        {arsenal && <div className="header-actions">
+          <button className="quiet-button" type="button" disabled={working} onClick={() => setResetSource(arsenal.id)}>Reset library…</button>
+        </div>}
       </header>
 
       <div className="library-connections-content" aria-busy={working}>
@@ -124,6 +134,30 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
             removeDialogRef.current?.close();
             void run(() => onManage({ kind: 'replace', id: removing.id }), 'Choosing another library…');
           }}>Connect another library</button>
+        </div>
+      </dialog>}
+
+      {resetSource !== null && arsenal && <dialog className="tracklist-export-dialog library-connection-remove-dialog" ref={resetDialogRef}
+        aria-labelledby="library-reset-title" aria-describedby="library-reset-description" onClose={() => setResetSource(null)}>
+        <div className="tracklist-export-heading">
+          <h2 id="library-reset-title">Reset library?</h2>
+          <button className="inspector-close" type="button" onClick={() => resetDialogRef.current?.close()} aria-label="Cancel reset"><UiIcon name="close" size={16} /></button>
+        </div>
+        <div className="library-sync-location"><label>Start from
+          <select value={resetSource} onChange={(event) => setResetSource(event.currentTarget.value)}>
+            <option value={arsenal.id}>Empty library</option>
+            {resetSources.map((connection) => <option key={connection.id} value={connection.id}>{connection.name}</option>)}
+          </select>
+        </label></div>
+        <p id="library-reset-description">{resetSource === arsenal.id
+          ? 'Removes all tracks, playlists, and connections from Arsenal.'
+          : 'Replaces all tracks and playlists in Arsenal with this library.'} Ongoing sync stops. Music files stay on disk.</p>
+        <div className="library-connection-remove-actions">
+          <button className="quiet-button" type="button" autoFocus onClick={() => resetDialogRef.current?.close()}>Cancel</button>
+          <button className="danger-button" type="button" onClick={() => {
+            resetDialogRef.current?.close();
+            void run(() => onManage({ kind: 'reset', id: resetSource }), 'Resetting library…');
+          }}>Reset</button>
         </div>
       </dialog>}
     </section>
