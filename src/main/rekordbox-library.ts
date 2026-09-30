@@ -70,8 +70,8 @@ import { readLibrarySource, type PortableLibrarySource } from './library-source'
 import { preparePrimaryLibraryEdit } from './apply-primary-library-edit';
 import { loadArsenalLibrary, mergeArsenalLibrary, saveArsenalLibrary } from './arsenal-library';
 import { describeLibraryChanges, portableLibraryPreview } from './library-changes';
-import { readRekordboxDatabase } from './rekordbox-database';
-import { detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning } from './rekordbox-database-connection';
+import { readRekordboxDatabase, repairRekordboxDatabaseFile } from './rekordbox-database';
+import { detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
 type CatalogTrack = ParsedTrack;
 
@@ -1822,6 +1822,7 @@ export class RekordboxLibrary {
       const context = this.missingSyncContext;
       if (context === null) return { kind: 'rejected', warnings: [], backupPaths: [], message: 'Run sync again to check the current libraries for missing files.' };
       const repairedPaths = new Set<string>();
+      const failures: string[] = [];
       try {
         const requestedPaths = 'paths' in action ? action.paths : action.kind === 'relink-many'
           ? action.replacements.map((replacement) => replacement.path) : [action.path];
@@ -1867,17 +1868,20 @@ export class RekordboxLibrary {
             .sort((left, right) => Number(left.target.kind === 'xml') - Number(right.target.kind === 'xml'));
           for (const { target } of repairs) {
             try {
-              if (target.kind === 'rekordbox-database') throw new Error('Relocate or remove missing Collection tracks in Rekordbox. Direct sync supports playlists and track details only.');
-              const current = target.kind === 'xml' ? rekordboxSyncLibrary(await parseRekordboxXml(target.path)) : await readSeratoLibrary(target);
-              if (!current.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path))) continue;
-              const result = target.kind === 'xml' ? await repairRekordboxMissingFile(target.path, missing.path, replacementPath)
-                : await repairSeratoMissingFile(target, missing.path, replacementPath);
+              let result: { backupPaths: readonly string[]; warnings: readonly string[] };
+              if (target.kind === 'rekordbox-database') result = await repairRekordboxDatabaseFile(target.path, missing.path, replacementPath);
+              else {
+                const current = target.kind === 'xml' ? rekordboxSyncLibrary(await parseRekordboxXml(target.path)) : await readSeratoLibrary(target);
+                if (!current.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path))) continue;
+                result = target.kind === 'xml' ? await repairRekordboxMissingFile(target.path, missing.path, replacementPath)
+                  : await repairSeratoMissingFile(target, missing.path, replacementPath);
+              }
               repairedPaths.add(normalizePath(target.path));
               context.result = { ...context.result, backupPaths: [...context.result.backupPaths, ...result.backupPaths],
                 warnings: [...context.result.warnings, ...result.warnings] };
             } catch (error) {
-              context.result = { ...context.result, warnings: [...context.result.warnings,
-                `${missing.path} in ${target.path}: ${error instanceof Error ? error.message : 'Could not repair the connected library.'}`] };
+              failures.push(`${basename(missing.path)} in ${target.kind === 'rekordbox-database' ? 'Rekordbox Collection' : basename(target.path)}: ${
+                error instanceof RekordboxRunningError ? 'Close Rekordbox, then try again.' : error instanceof Error ? error.message : 'Could not repair the connected library.'}`);
             }
           }
         }
@@ -1897,7 +1901,7 @@ export class RekordboxLibrary {
         }
       }
       await this.acknowledgeWrites(this.connectedLibraries.filter((connection) => repairedPaths.has(normalizePath(connection.path))).map((connection) => connection.id));
-      return context.result;
+      return failures.length ? { kind: 'rejected', message: failures.join(' '), warnings: [], backupPaths: [] } : context.result;
     });
   }
 

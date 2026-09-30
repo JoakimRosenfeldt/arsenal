@@ -1,5 +1,5 @@
 import { randomInt, randomUUID } from 'node:crypto';
-import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
@@ -662,5 +662,55 @@ export const writeRekordboxDatabase = async (
     throw error;
   } finally {
     try { await rm(temporaryPath, { force: true }); } finally { db.close(); }
+  }
+};
+
+// Relinks a missing Collection file, or removes its track when replacementPath is null.
+export const repairRekordboxDatabaseFile = async (path: string, missingPath: string, replacementPath: string | null): Promise<{ backupPaths: string[]; warnings: string[] }> => {
+  await assertRekordboxClosed();
+  const db = await openRekordboxDatabase(path, { readonly: false });
+  try {
+    schema(db);
+    const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0');
+    const at = (location: string): Row[] => contents.filter((row) => {
+      const folderPath = text(row.FolderPath);
+      return folderPath !== null && normalizePath(folderPath) === normalizePath(location);
+    });
+    const missing = at(missingPath);
+    if (!missing.length) return { backupPaths: [], warnings: [] };
+    const existing = replacementPath === null ? undefined : at(replacementPath)[0];
+    const location = replacementPath === null ? null : process.platform === 'win32' ? replacementPath.replaceAll('\\', '/') : replacementPath;
+    const fileSize = replacementPath === null || existing !== undefined ? null : (await stat(replacementPath)).size;
+    const contentTables = rows(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'djmdContent'").map((row) => String(row.name))
+      .filter((table) => rows(db, `PRAGMA table_info("${table}")`).some((column) => column.name === 'ContentID'));
+    const now = dateTime();
+    let revision = number(rows(db, "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")[0]?.int_1) ?? 0;
+    const statements: { sql: string; values: Value[] }[] = [];
+    for (const row of missing) {
+      if (location !== null && existing === undefined) {
+        statements.push({ sql: 'UPDATE djmdContent SET FolderPath = ?, FileNameL = ?, FileSize = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
+          values: [location, basename(location), fileSize, ++revision, now, id(row.ID)] });
+        continue;
+      }
+      // The replacement is already in the Collection, so its entry takes over the missing track's playlist places.
+      if (existing !== undefined) statements.push({ sql: 'UPDATE djmdSongPlaylist SET ContentID = ?, rb_local_usn = ?, updated_at = ? WHERE ContentID = ?',
+        values: [id(existing.ID), ++revision, now, id(row.ID)] });
+      for (const table of contentTables) statements.push({ sql: `DELETE FROM "${table}" WHERE ContentID = ?`, values: [id(row.ID)] });
+      statements.push({ sql: 'DELETE FROM djmdContent WHERE ID = ?', values: [id(row.ID)] });
+      revision++;
+    }
+    const backupPaths = await backupRekordboxDatabase(db, path);
+    db.exec('BEGIN IMMEDIATE');
+    for (const statement of statements) db.prepare(statement.sql).run(...statement.values);
+    db.prepare("UPDATE agentRegistry SET int_1 = ?, updated_at = ? WHERE registry_id = 'localUpdateCount'").run(revision, now);
+    if (rows(db, 'PRAGMA quick_check')[0]?.quick_check !== 'ok') throw new Error('Rekordbox database verification failed.');
+    assertRekordboxClosedSync();
+    db.exec('COMMIT');
+    return { backupPaths, warnings: [] };
+  } catch (error) {
+    if (db.inTransaction) db.exec('ROLLBACK');
+    throw error;
+  } finally {
+    db.close();
   }
 };
