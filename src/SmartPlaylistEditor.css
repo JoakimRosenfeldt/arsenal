@@ -105,12 +105,6 @@
   cursor: not-allowed;
 }
 
-.focused-playlist-type > span {
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 .focused-playlist-editor .smart-rule-group {
   padding: 0;
   border: 0;
@@ -382,10 +376,6 @@
 
   .focused-playlist-type {
     flex-wrap: wrap;
-  }
-
-  .focused-playlist-type > span {
-    flex-basis: 100%;
   }
 
   .focused-playlist-editor .smart-rule-row,

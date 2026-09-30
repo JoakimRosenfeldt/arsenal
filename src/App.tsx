@@ -68,46 +68,34 @@ export type DuplicateViewState =
     }>;
 
 const errorMessages: Readonly<Record<DisplayError, string>> = {
-  'cannot-read':
-    'Could not open this file. Check that it still exists and try again.',
+  'cannot-read': 'Could not open this file.',
   'not-rekordbox-xml':
-    'That file is not a supported Rekordbox Collection export. In Rekordbox, choose File > Library > Export Collection in xml format.',
-  'not-serato-library':
-    'Choose a Serato Library folder containing root.sqlite or location.sqlite, or an _Serato_ folder containing database V2.',
-  'cannot-save-library':
-    'Could not save the library connection. Check the available disk space and permissions.',
-  'malformed-xml':
-    'This file is damaged. Export the collection again, then choose the new file.',
-  'stale-library':
-    'The library changed before this action ran. Try the action again.',
-  'source-changed':
-    'The library file changed. Open its connection on the Connections page before editing.',
-  'song-not-found':
-    'That track is no longer in the library.',
-  'duplicate-not-found':
-    'That duplicate group is no longer in the list. Choose another group.',
-  'cannot-save-preferences':
-    'Could not ignore this group. Try again.',
-  'invalid-playlist':
-    'Could not save this playlist. Check its name, tracks, and rules.',
-  'name-conflict': 'A playlist or folder with this name already exists here. Choose another name.',
-  'folder-not-found': 'The destination folder no longer exists. Choose another folder.',
-  'playlist-sync-needed': 'This playlist move cannot be saved in every connected library. Sync playlists first.',
+    'Not a Rekordbox Collection export. In Rekordbox, use File > Library > Export Collection in xml format.',
+  'not-serato-library': 'Choose a Serato library or _Serato_ folder.',
+  'cannot-save-library': 'Could not save the connection. Check disk space and permissions.',
+  'malformed-xml': 'This file is damaged. Export the collection again.',
+  'stale-library': 'The library changed. Try again.',
+  'source-changed': 'The library file changed. Import it again from Connections.',
+  'song-not-found': 'That track is no longer in the library.',
+  'duplicate-not-found': 'That duplicate group no longer exists.',
+  'cannot-save-preferences': 'Could not ignore this group. Try again.',
+  'invalid-playlist': 'Could not save this playlist.',
+  'name-conflict': 'That name is already used here.',
+  'folder-not-found': 'That folder no longer exists.',
+  'playlist-sync-needed': 'Sync playlists before moving this one.',
   'serato-open': 'Close Serato before moving playlists and folders.',
-  'cannot-write':
-    'Could not save the library. Check the file permissions and try again.',
-  unexpected:
-    'Arsenal could not complete that action. Close the app, reopen it, and try again.',
+  'cannot-write': 'Could not save the library. Check file permissions.',
+  unexpected: 'Something went wrong. Restart Arsenal and try again.',
 };
 
 const feedbackForRemoval = (
   result: Extract<LibraryMutationResult, { kind: 'songs-removed' }>,
 ): Feedback | null => {
   const warnings = {
-    shared: 'Files still used by other tracks were kept.',
-    missing: 'Some local files could not be found.',
-    unsupported: 'Files not recognized as audio were kept.',
-    failed: 'Some local files could not be moved to Trash.',
+    shared: 'Kept files used by other tracks.',
+    missing: 'Some files were not found.',
+    unsupported: 'Kept files that are not audio.',
+    failed: 'Some files could not be moved to Trash.',
   };
   const problems = [...new Set(result.fileActions)].flatMap((action) =>
     action === 'kept' || action === 'trashed' ? [] : [warnings[action]],
@@ -287,7 +275,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       }
     }).catch(() => {
       if (!active) return;
-      setFeedback({ tone: 'warning', message: 'Could not check for changed libraries. Try reopening Arsenal.' });
+      setFeedback({ tone: 'warning', message: 'Could not check for library changes.' });
       setActivePage('connections');
     });
     return () => { active = false; };
@@ -430,7 +418,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   useEffect(() => {
     let active = true;
     let receivedActivity = false;
-    const attentionMessage = 'Ongoing sync needs attention. Open Connections to review it. Edits still save to your Arsenal library.';
+    const attentionMessage = 'Sync needs attention. See Connections.';
     const stopActivity = window.djLibrary.onSyncActivity((activity) => {
       receivedActivity = true;
       setBackgroundSyncing(activity.state === 'syncing');
@@ -483,7 +471,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       setViewFilters(filters);
       setDuplicateRefresh((current) => current + 1);
     }).catch(() => {
-      if (active) setFeedback({ tone: 'warning', message: 'Sync finished, but the library view could not refresh. Reopen the connection.' });
+      if (active) setFeedback({ tone: 'warning', message: 'Sync finished, but the view could not refresh.' });
     });
     return () => { active = false; };
   }, [backgroundLibrary, operationBusy, backgroundSyncing, loading, view?.library.revision, view?.page.offset, playlistWindow, query, filters, stopPlayback]);
@@ -639,7 +627,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       } catch {
         setReloadRequired(true);
         if (navigation === navigationSequence.current) setActivePage('connections');
-        return { ...result, warnings: [...result.warnings, 'Connection saved, but Arsenal could not refresh the collection view. Open the connection again.'] };
+        return { ...result, warnings: [...result.warnings, 'Connection saved, but the view could not refresh.'] };
       }
       if (navigation === navigationSequence.current) setActivePage(openView && result.status.kind === 'ready' && result.warnings.length === 0 ? 'library' : 'connections');
       return result;
@@ -671,12 +659,12 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         }
       } catch {
         setReloadRequired(true);
-        return { ...result, warnings: [...result.warnings, 'Arsenal could not refresh the library view. Reopen the library to see the changes.'] };
+        return { ...result, warnings: [...result.warnings, 'The view could not refresh. Reload the library.'] };
       }
       return result;
     } catch (error) {
       return { kind: 'rejected', warnings: [], backupPaths: [],
-        message: error instanceof Error ? error.message : 'Could not finish syncing. Check the libraries and try again.',
+        message: error instanceof Error ? error.message : 'Sync failed. Try again.',
       };
     } finally {
       operationPending.current = false;
@@ -843,7 +831,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       } catch {
         if (committed) {
           setReloadRequired(true);
-          setFeedback({ tone: 'warning', message: 'The change was saved, but the library could not refresh. Reload it before making another edit.' });
+          setFeedback({ tone: 'warning', message: 'Saved, but the view could not refresh.' });
         } else { rollback(); setError('unexpected'); }
         return committed;
       } finally {
@@ -960,7 +948,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         setExportPlaylistId(playlistId);
       } else if (kind === 'remove-playlist') {
         const playlist = playlists?.find((candidate) => candidate.id === playlistId);
-        if (playlistId !== null && playlist && window.confirm(`Remove "${playlist.name}"? The tracks will stay in your library.`)) {
+        if (playlistId !== null && playlist && window.confirm(`Remove "${playlist.name}"?`)) {
           await applyMutation((revision) => ({ kind: 'remove-playlist', revision, playlistId }));
         }
       } else if (kind !== null) {
@@ -1016,7 +1004,6 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             onAdd={addToPlaylist}
             onRemove={removeSongs}
             onManageLibraries={() => navigate('connections')}
-            onSync={() => navigate('connections')}
             onPage={(offset) => void changePage(offset)}
             playback={playback}
             playlists={playlists ?? []}
@@ -1038,7 +1025,6 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               groupKey,
             }))}
             onManageLibraries={() => navigate('connections')}
-            onSync={() => navigate('connections')}
             onModeChange={setDuplicateMode}
             onRescan={rescanDuplicates}
             onRemove={removeSongs}
@@ -1091,10 +1077,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
             folders={folders}
             onCancel={cancelPlaylistEditor}
             onEditSmart={(playlist) => openPlaylistEditor({ kind: 'edit-smart-playlist', playlistId: playlist.id, parentFolderId: playlist.parentFolderId, revision: libraryVersion })}
-            onExport={(playlist) => setExportPlaylistId(playlist.id)}
             onCreate={createPlaylist}
             onManageLibraries={() => navigate('connections')}
-            onSync={() => navigate('connections')}
             playback={playback}
             playlists={playlists}
             selectedPlaylistId={selectedPlaylistId}

@@ -46,7 +46,6 @@ export type LibraryView = Readonly<{
 type CommonPageProps = Readonly<{
   busy: boolean;
   onManageLibraries: () => void;
-  onSync: () => void;
   playback: PlaybackController;
   view: LibraryView | null;
 }>;
@@ -139,28 +138,15 @@ const TrackNumber = ({ song, index, offset = 0, playback }: Readonly<{
   </button>;
 };
 
-const NoLibrary = ({
-  busy,
-  onManageLibraries,
-  onSync,
-}: Readonly<{
-  busy: boolean;
-  onManageLibraries: () => void;
-  onSync: () => void;
-}>): JSX.Element => (
+const NoLibrary = ({ onManageLibraries }: Readonly<{ onManageLibraries: () => void }>): JSX.Element => (
   <section className="page-empty" aria-labelledby="empty-page-title">
     <div className="page-empty-mark" aria-hidden>
       <span />
       <span />
       <span />
     </div>
-    <h1 id="empty-page-title">Build your Arsenal library</h1>
-    <p className="library-connect-description">Import tracks from a DJ app or open an Arsenal backup folder. Your library is saved locally in Arsenal.</p>
+    <h1 id="empty-page-title">No library yet</h1>
     <button className="accent-button" type="button" onClick={onManageLibraries}>Connections</button>
-    <button className="quiet-button library-empty-sync" type="button" onClick={onSync} disabled={busy}>
-      <UiIcon name="refresh" size={16} /> Sync libraries
-    </button>
-    {busy && <p role="status">Opening library…</p>}
   </section>
 );
 
@@ -170,7 +156,6 @@ export const LibraryPage = ({
   onCreate,
   onAdd,
   onManageLibraries,
-  onSync,
   onPage,
   onRemove,
   onSearch,
@@ -213,13 +198,7 @@ export const LibraryPage = ({
   }, [inspectorOpen]);
 
   if (view === null) {
-    return (
-      <NoLibrary
-        busy={busy}
-        onManageLibraries={onManageLibraries}
-        onSync={onSync}
-      />
-    );
+    return <NoLibrary onManageLibraries={onManageLibraries} />;
   }
 
   const visibleSongs = view.page.items;
@@ -299,19 +278,7 @@ export const LibraryPage = ({
           <h1 id="library-title">All tracks</h1>
           <p>{view.library.songCount.toLocaleString()} tracks{view.page.total === view.library.songCount && !view.page.hasNext && view.page.offset === 0 ? ` · ${totalTime(visibleSongs)}` : ''}</p>
         </div>
-        <div className="header-actions">
-          <button className="quiet-button" type="button" onClick={onSync} disabled={busy}>
-            <UiIcon name="refresh" size={16} /> Sync libraries
-          </button>
-          <button className="accent-button" type="button" onClick={onManageLibraries}>
-            <UiIcon name="folder" size={16} /> Connections
-          </button>
-        </div>
       </header>
-
-      <p className="library-source-note">
-        {view.library.sourceName} · Saved locally in Arsenal
-      </p>
 
       <div className="library-tools">
         <label className="library-search">
@@ -358,7 +325,7 @@ export const LibraryPage = ({
           playlists={playlists} songs={selectedSongs} />}
       </div>
 
-      {menuError && <p className="library-menu-error" role="alert">Could not complete this action. Please try again.</p>}
+      {menuError && <p className="library-menu-error" role="alert">Something went wrong. Try again.</p>}
 
       <div className="library-body">
         <div className="track-table" role="table" aria-label="Library tracks"
@@ -616,7 +583,7 @@ const SelectionActionMenu = ({
   const choose = (action: SelectionAction): void => { close(); onAction(action); };
   return <div className="selection-menu-group">
     <span role="status">{songs.length.toLocaleString()} selected
-      {hiddenCount > 0 && <><small> · {hiddenCount.toLocaleString()} hidden</small> <HelpTooltip label="Hidden selections">Selected tracks on other pages or outside filters.</HelpTooltip></>}
+      {hiddenCount > 0 && <small> · {hiddenCount.toLocaleString()} hidden</small>}
       {tooMany && <> <HelpTooltip label="Selection limit">Select at most 10,000 tracks per action.</HelpTooltip></>}
     </span>
     <details className="focused-popover selection-action-menu" ref={menuRef}>
@@ -683,22 +650,18 @@ const LibrarySelectionActions = ({
     <form className="library-selection-actions" onSubmit={submit} aria-label="Selected track actions">
       {action === 'remove' && (
         <div className="duplicate-selection-review" ref={actionRef} tabIndex={-1}>
-          <div className="help-label">
-            <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'}?</strong>
-            <HelpTooltip label="Removing tracks">Removes tracks from the library and playlists. Audio files are kept unless selected below.</HelpTooltip>
-          </div>
+          <strong>Remove {songs.length} {songs.length === 1 ? 'track' : 'tracks'} from the library and playlists?</strong>
           <ul aria-label="Tracks to remove">
-            {songs.map((song) => <li key={song.id}>{song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}</li>)}
+            {songs.map((song) => <li key={song.id}>{song.title} · {song.artist ?? 'Unknown artist'}</li>)}
           </ul>
           <FileRemovalOption busy={busy} checked={removeLocalFile} onChange={setRemoveLocalFile} songs={songs} />
         </div>
       )}
       {action === 'remove-playlist' && <div className="duplicate-selection-review" ref={actionRef} tabIndex={-1}>
-        <strong>Remove {songs.length} selected {songs.length === 1 ? 'track' : 'tracks'} from {playlist?.name}?</strong>
-        <p>The tracks will stay in your library.</p>
+        <strong>Remove {songs.length} {songs.length === 1 ? 'track' : 'tracks'} from {playlist?.name}?</strong>
       </div>}
       {action === 'add' && <div className="selection-playlist-picker" ref={actionRef} tabIndex={-1}>
-        <label>Add selected tracks to
+        <label>Add to
           <select value={targetId} onChange={(event) => setTargetId(event.currentTarget.value)} disabled={busy}>
             <option value="">Choose a playlist</option>
             {regularPlaylists.map((item) => <option key={item.id} value={item.id}>{[...item.folderPath, item.name].join(' / ')}</option>)}
@@ -709,7 +672,7 @@ const LibrarySelectionActions = ({
       </div>}
       <div className="duplicate-selection-toolbar">
         <span role="status">{songs.length.toLocaleString()} selected
-          {hiddenCount > 0 && <><small> · {hiddenCount.toLocaleString()} hidden</small> <HelpTooltip label="Hidden selections">Selected tracks on other pages or outside filters.</HelpTooltip></>}
+          {hiddenCount > 0 && <small> · {hiddenCount.toLocaleString()} hidden</small>}
           {tooMany && <> <HelpTooltip label="Selection limit">Select at most 10,000 tracks per action.</HelpTooltip></>}
         </span>
         <button className="quiet-button" type="button" onClick={() => { setRemoveLocalFile(false); onAction(null); }} disabled={busy}>Cancel</button>
@@ -743,14 +706,11 @@ const DuplicateSelectionActions = ({
     <footer className="duplicate-selection-actions focused-duplicate-footer" aria-label="Duplicate review actions">
       {removalSongs !== null && (
         <div className="duplicate-selection-review">
-          <div className="help-label">
-            <strong>Remove {removalSongs.length} selected {removalSongs.length === 1 ? 'track' : 'tracks'}?</strong>
-            <HelpTooltip label="Removing tracks">Also removes these tracks from playlists.</HelpTooltip>
-          </div>
+          <strong>Remove {removalSongs.length} {removalSongs.length === 1 ? 'track' : 'tracks'} from the library and playlists?</strong>
           <ul aria-label="Tracks to remove">
             {removalSongs.map((song) => (
               <li key={song.id}>
-                {song.title} · {song.artist ?? 'Unknown artist'} · Track {song.id}
+                {song.title} · {song.artist ?? 'Unknown artist'}
                 <SongLabels song={song} />
               </li>
             ))}
@@ -851,10 +811,9 @@ const DuplicateServiceDialog = ({ sources, preferredSource, onSelect, onClose }:
       }
       onSelect(source);
     }}>
-      <h2 id="duplicate-service-title">Prioritize a streaming service</h2>
-      <p id="duplicate-service-description">Keep copies from this service and select the others for removal. Local files still take priority.</p>
-      <label htmlFor="duplicate-preferred-service">Service to keep</label>
-      <select id="duplicate-preferred-service" value={source ?? ''} required onChange={(event) => {
+      <h2 id="duplicate-service-title">Service to keep</h2>
+      <p id="duplicate-service-description">Local files are always kept first.</p>
+      <select id="duplicate-preferred-service" aria-label="Service to keep" value={source ?? ''} required onChange={(event) => {
         setSource(sources.find((option) => option === event.currentTarget.value) ?? null);
       }}>
         <option value="" disabled>Choose a service</option>
@@ -873,7 +832,6 @@ export const DuplicatesPage = ({
   mode,
   onIgnore,
   onManageLibraries,
-  onSync,
   onModeChange,
   onRemove,
   onRescan,
@@ -910,13 +868,7 @@ export const DuplicatesPage = ({
   }, [selection.key]);
 
   if (view === null) {
-    return (
-      <NoLibrary
-        busy={busy}
-        onManageLibraries={onManageLibraries}
-        onSync={onSync}
-      />
-    );
+    return <NoLibrary onManageLibraries={onManageLibraries} />;
   }
 
   const scan: DuplicateScan | null =
@@ -1005,13 +957,6 @@ export const DuplicatesPage = ({
     { label: 'Cue points', value: (song) => String(song.cuePointCount) },
     { label: 'Source', value: (song) => SONG_SOURCE_LABELS[song.source] },
   ];
-  const modeDescription: Record<DuplicateMatchMode, string> = {
-    versions: 'Find alternate mixes of the same title and artist.',
-    exact: 'Find tracks with the same title and artist.',
-    smart: 'Find likely duplicates and suggested versions to keep.',
-    'dj-edits': 'Find DJ edits of the same title and artist.',
-    remixes: 'Find remixes of the same title and artist.',
-  };
 
   return (
     <section className="workspace-page duplicates-page focused-duplicates" aria-labelledby="duplicates-title">
@@ -1019,11 +964,6 @@ export const DuplicatesPage = ({
         <div className="page-title-line">
           <h1 id="duplicates-title">Duplicates</h1>
           {!scanning && !scanFailed && <p>{groups.length} {groups.length === 1 ? 'group' : 'groups'} · {scan?.trackCount ?? 0} tracks</p>}
-        </div>
-        <div className="header-actions">
-          <button className="quiet-button" type="button" onClick={onRescan} disabled={busy || scanning}>
-            <UiIcon name="refresh" size={16} /> {scanning ? 'Scanning…' : 'Scan again'}
-          </button>
         </div>
       </header>
       <div className="focused-duplicate-controls">
@@ -1037,7 +977,6 @@ export const DuplicatesPage = ({
         }}>
           {DUPLICATE_MATCH_MODES.map((option) => <option value={option} key={option}>{option === 'versions' ? 'Versions' : duplicateModeCopy[option].label}</option>)}
         </select>
-        <span>{modeDescription[mode]}</span>
         {mode === 'smart' && <button className="quiet-button" type="button" disabled={busy || scanning || suggestedIds.length === 0}
           onClick={() => {
             if (streamingSources.length > 1) setChoosingService(true);
@@ -1064,7 +1003,8 @@ export const DuplicatesPage = ({
         </aside>
         <div className="duplicate-detail">
           {scanning ? <div className="detail-empty" role="status"><span className="loading-mark" aria-hidden /><h2>Scanning library…</h2></div>
-            : scanFailed ? <div className="detail-empty" role="alert"><h2>Scan unavailable</h2><p>Try scanning again.</p></div>
+            : scanFailed ? <div className="detail-empty" role="alert"><h2>Scan failed</h2>
+              <button className="quiet-button" type="button" onClick={onRescan} disabled={busy}><UiIcon name="refresh" size={16} /> Scan again</button></div>
             : selectedGroup === null ? <div className="detail-empty"><h2>{emptyTitle}</h2></div>
             : <>
               <div className="focused-duplicate-content">
@@ -1143,7 +1083,7 @@ export const DuplicatesPage = ({
 
 export const PlaylistsPage = ({
   busy, minimumSongLengthSeconds, creating, initialParentFolderId, initialName = '', initialSongs,
-  folders, onAdd, onCancel, onCreateFromSelection, onEditSmart, onExport, onCreate, onManageLibraries, onSync, onRemove, onSmart, onUpdateTracks, onMenu,
+  folders, onAdd, onCancel, onCreateFromSelection, onEditSmart, onCreate, onManageLibraries, onRemove, onSmart, onUpdateTracks, onMenu,
   playback, playlists, selectedPlaylistId, view,
 }: CommonPageProps & Readonly<{
   minimumSongLengthSeconds: number;
@@ -1156,7 +1096,6 @@ export const PlaylistsPage = ({
   onCancel: () => void;
   onCreateFromSelection: (songIds: readonly string[], songs?: readonly SongRow[]) => void;
   onEditSmart: (playlist: RekordboxPlaylist) => void;
-  onExport: (playlist: RekordboxPlaylist) => void;
   onCreate: (name: string, songIds: readonly string[], parentFolderId: string | null, songs?: readonly SongRow[]) => Promise<boolean>;
   onRemove: RemoveSongs;
   onSmart?: (name: string, parentFolderId: string | null, songs: readonly SongRow[]) => void;
@@ -1211,7 +1150,7 @@ export const PlaylistsPage = ({
     setLoadingSongs(picking);
   }), [picking, minimumSongLengthSeconds]);
 
-  if (view === null) return <NoLibrary busy={busy} onManageLibraries={onManageLibraries} onSync={onSync} />;
+  if (view === null) return <NoLibrary onManageLibraries={onManageLibraries} />;
 
   const selectedPlaylist = playlists?.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
   const existingIds = new Set(selectedPlaylist?.tracks.map((song) => song.id) ?? []);
@@ -1274,7 +1213,6 @@ export const PlaylistsPage = ({
           {!picking && selectedPlaylist && <p>{selectedPlaylist.tracks.length} tracks · {totalTime(selectedPlaylist.tracks)}</p>}
         </div>
         {!picking && selectedPlaylist !== null && <div className="header-actions">
-          <button className="quiet-button focused-export" type="button" onClick={() => onExport(selectedPlaylist)}><UiIcon name="download" size={16} /> Export tracklist</button>
           {selectedPlaylist.smartDefinition ? <button className="accent-button" type="button" disabled={busy} onClick={() => onEditSmart(selectedPlaylist)}>Edit rules</button>
             : selectedPlaylist.kind === 'regular' && onUpdateTracks && <button className="accent-button" type="button" disabled={busy} onClick={() => {
               setChosenSongs(new Map()); setQuery(''); setLoadingSongs(true); setAdding(true);
@@ -1293,7 +1231,6 @@ export const PlaylistsPage = ({
               <div className="focused-playlist-type" role="group" aria-label="Playlist type">
                 <button type="button" aria-pressed="true">Manual</button>
                 {onSmart && <button type="button" aria-pressed="false" disabled={busy} onClick={() => onSmart(name, parentFolderId, chosen)}>Smart</button>}
-                <span>Choose tracks and arrange them yourself.</span>
               </div>
             </>}
             <div className="library-tools">
@@ -1330,7 +1267,7 @@ export const PlaylistsPage = ({
             {!picking && selectedPlaylist?.smartRules && selectedPlaylist.smartRules.conditions.length > 0 && <details className="focused-playlist-rules">
               <summary>Smart playlist rules</summary><ul>{selectedPlaylist.smartRules.conditions.map((condition, index) => <li key={index}>{condition}</li>)}</ul>
             </details>}
-            {searchFailed && picking && <p className="playlist-search-error" role="alert">Arsenal could not search this collection.</p>}
+            {searchFailed && picking && <p className="playlist-search-error" role="alert">Search failed.</p>}
             <div className="track-table focused-playlist-table" role="table" aria-label={picking ? 'Tracks to add' : 'Playlist tracks'} aria-busy={picking && loadingSongs}>
               <div className="track-table-head" role="row" style={{ gridTemplateColumns: trackGrid(columns) }}>
                 <span role="columnheader">{!picking ? <input type="checkbox" aria-label="Select all visible playlist tracks" checked={allOnPageSelected} disabled={selectionLocked || visibleTracks.length === 0}
@@ -1411,7 +1348,7 @@ export const PlaylistsPage = ({
             <button className="accent-button" type="button" onClick={save} disabled={busy || (creating ? name.trim().length === 0 : chosenSongs.size === 0)}>
               {busy ? 'Saving…' : creating ? 'Create playlist' : 'Add tracks'}
             </button>
-          </footer> : <footer className="focused-playlist-note">{selectedPlaylist?.kind === 'smart' ? 'Tracks update automatically when they match the playlist rules.' : 'Drag tracks to change the play order.'}</footer>}
+          </footer> : null}
         </>}
     </section>
   );

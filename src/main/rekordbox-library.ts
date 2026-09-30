@@ -1093,22 +1093,24 @@ export class RekordboxLibrary {
     return { connections, backupConnections: this.backupStatus(), activeConnectionId: this.activeConnectionId, sourceOfTruthId: this.sourceOfTruthId };
   }
 
-  private async saveConnections({ connections = this.connectedLibraries, syncPreferences = this.savedSyncPreferences, catalog = this.catalog, library }: Readonly<{
+  private async saveConnections({ connections = this.connectedLibraries, syncPreferences = this.savedSyncPreferences, catalog = this.catalog, library, replace = false, backups = this.backups }: Readonly<{
       connections?: readonly StoredLibraryConnection[];
       syncPreferences?: SyncPreferences;
       catalog?: CurrentCatalog | null;
       library?: SyncLibrary | null;
+      replace?: boolean;
+      backups?: readonly StoredLibraryBackup[];
     }>): Promise<void> {
     const previousLibrary = this.arsenalLibrary;
     const previousCatalog = this.catalog;
-    if (library !== undefined && library !== null) {
-      await this.importIntoArsenal(library);
-    } else if (catalog !== null && catalog.sourcePath !== this.arsenalWorkspace) {
-      await this.importIntoArsenal(rekordboxSyncLibrary(await parseRekordboxXml(catalog.sourcePath), { includeNonLocal: true }));
-    }
+    const incoming = library !== undefined && library !== null ? library
+      : catalog !== null && catalog.sourcePath !== this.arsenalWorkspace
+        ? rekordboxSyncLibrary(await parseRekordboxXml(catalog.sourcePath), { includeNonLocal: true }) : null;
+    if (replace) this.catalog = await this.saveArsenalState(incoming ?? { tracks: [], playlists: [] });
+    else if (incoming !== null) await this.importIntoArsenal(incoming);
     const preferences = syncPreferences;
     const pending = this.pendingRekordboxSync;
-    const pendingRekordboxSync = pending !== null && connections.some((connection) => connection.id === pending.connectionId && connection.path === pending.path) &&
+    const pendingRekordboxSync = !replace && pending !== null && connections.some((connection) => connection.id === pending.connectionId && connection.path === pending.path) &&
       preferences.rekordboxPath === pending.path && !(library !== undefined && library !== null &&
         connections.find((connection) => connection.id === pending.connectionId)?.sourceSyncFingerprint !==
         this.connectedLibraries.find((connection) => connection.id === pending.connectionId)?.sourceSyncFingerprint) ? pending : null;
@@ -1116,7 +1118,7 @@ export class RekordboxLibrary {
     if (!await this.writeRemembered({ rekordboxXmlPath: this.arsenalWorkspace, seratoPath: null, syncPreferences: preferences,
       connections, activeConnectionId: ARSENAL_LIBRARY_ID, sourceOfTruthId: ARSENAL_LIBRARY_ID,
       ignoredDuplicateGroups: this.ignoredDuplicateGroups, minimumSongLengthSeconds: this.minimumSongLengthSeconds,
-      backups: this.backups, syncBaseline: this.syncBaseline, ongoingSyncPause: this.ongoingSyncPause, pendingRekordboxSync })) {
+      backups, syncBaseline: this.syncBaseline, ongoingSyncPause: this.ongoingSyncPause, pendingRekordboxSync })) {
       if (previousLibrary !== this.arsenalLibrary) {
         await saveArsenalLibrary(this.arsenalPath, previousLibrary);
         this.arsenalLibrary = previousLibrary;
@@ -1130,6 +1132,10 @@ export class RekordboxLibrary {
       if (connection.sourceFingerprint !== undefined && connection.sourceFingerprint !== previous?.sourceFingerprint) this.startupChanges.delete(connection.id);
     }
     this.connectedLibraries = connections;
+    if (backups !== this.backups) {
+      for (const backup of this.backups) if (!backups.includes(backup)) this.backupStates.delete(backup.id);
+      this.backups = backups;
+    }
     this.activeConnectionId = ARSENAL_LIBRARY_ID;
     this.sourceOfTruthId = ARSENAL_LIBRARY_ID;
     this.savedSyncPreferences = preferences;
@@ -1240,6 +1246,24 @@ export class RekordboxLibrary {
       try {
         const connection = this.connectedLibraries.find((candidate) => candidate.id === action.id);
         if (!connection) throw new Error('This library is no longer connected.');
+        const stopOngoing = (preferences: SyncPreferences): SyncPreferences => ({ ...preferences,
+          request: preferences.request === null ? null : { ...preferences.request, cadence: 'once' } });
+        if (action.kind === 'reset' && connection.origin === 'arsenal') {
+          await this.saveConnections({ connections: [connection], library: null, catalog: null, replace: true, backups: [],
+            syncPreferences: { ...stopOngoing(this.savedSyncPreferences), rekordboxPath: null, seratoPath: null } });
+          this.ongoingSyncPause = null;
+          this.cancelSuggestions();
+          return { kind: 'updated', connections: await this.connections(), status: this.status(), warnings: [] };
+        }
+        if (action.kind === 'reset') {
+          const prepared = await this.prepareConnection(connection);
+          await this.saveConnections({ connections: this.connectedLibraries.map((candidate) => candidate.id === connection.id ? prepared.connection : candidate),
+            catalog: prepared.catalog, library: prepared.library, replace: true,
+            syncPreferences: stopOngoing(this.savedSyncPreferences) });
+          this.ongoingSyncPause = null;
+          this.cancelSuggestions();
+          return { kind: 'updated', connections: await this.connections(), status: this.status(), warnings: prepared.warnings };
+        }
         if (connection.origin === 'arsenal') {
           if (action.kind !== 'open' && action.kind !== 'refresh') throw new Error('Arsenal is the primary library and cannot be replaced or disconnected.');
           return { kind: 'updated', connections: await this.connections(), status: this.status(), warnings: [] };

@@ -347,6 +347,7 @@ export const writePortableLibrary = async ({ library, directory, name, includeMu
   const root = await realpath(directory);
   const manifestPath = join(root, PORTABLE_LIBRARY_FILENAME);
   const warnings: string[] = [];
+  let unreadableCount = 0;
   const musicPaths = new Map<string, string>();
   const paths = new Map<string, string>();
   for (const track of library.tracks) {
@@ -363,9 +364,7 @@ export const writePortableLibrary = async ({ library, directory, name, includeMu
     if (track.song.source !== 'local') media = { kind: 'reference', uri: sourcePath };
     else {
       let identity: Awaited<ReturnType<typeof fingerprint>> | null = null;
-      try { identity = await fingerprint(sourcePath); } catch (error) {
-        warnings.push(`${track.song.title}: music could not be read. ${error instanceof Error ? error.message : 'Check the original file.'}`);
-      }
+      try { identity = await fingerprint(sourcePath); } catch { unreadableCount += 1; }
       let relativePath: string | null = null;
       if (identity !== null && includeMusic) {
         const extension = audioExtension(sourcePath);
@@ -424,6 +423,7 @@ export const writePortableLibrary = async ({ library, directory, name, includeMu
     if (await readPortableLibraryFingerprint(manifestPath) !== expected) throw new Error('The backup library changed while saving. Its changes were kept. Import them before saving again.');
     await rename(temporary, manifestPath);
   } finally { await unlink(temporary).catch((error: unknown) => { if (!missing(error)) throw error; }); }
+  if (unreadableCount > 0) warnings.push(`Could not read audio for ${unreadableCount} ${unreadableCount === 1 ? 'track' : 'tracks'}.`);
   return { manifestPath, manifestFingerprint, savedAt, warnings };
 };
 
