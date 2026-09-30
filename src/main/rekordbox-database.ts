@@ -426,6 +426,8 @@ export const writeRekordboxDatabase = async (
       changedCueTracks++;
     };
     let changedCueTracks = 0;
+    // Conflicts skip one track or playlist so the rest of the library still syncs.
+    const conflicts: string[] = [];
     const syncedTracks = new Set<string>();
     const skippedTracks = new Set<string>();
     let addedTracks = 0;
@@ -434,7 +436,7 @@ export const writeRekordboxDatabase = async (
     for (const track of incoming.tracks) {
       const location = track.location ?? track.path;
       const key = normalizePath(location);
-      if (ambiguousPaths.has(key)) throw new Error(`Rekordbox contains duplicate entries for ${track.song.title}. Resolve them before syncing.`);
+      if (ambiguousPaths.has(key)) { conflicts.push(`${track.song.title}: Rekordbox has this file more than once`); continue; }
       let row = byPath.get(key);
       const added = !row && options.fields.tracks;
       if (!row && added) {
@@ -442,7 +444,7 @@ export const writeRekordboxDatabase = async (
         if (row) { byPath.set(key, row); addedTracks++; }
       }
       if (!row) { skippedTracks.add(key); continue; }
-      if (syncedTracks.has(id(row.ID))) throw new Error(`Arsenal contains multiple entries for ${track.song.title}. Resolve them before syncing to Rekordbox.`);
+      if (syncedTracks.has(id(row.ID))) { conflicts.push(`${track.song.title}: Arsenal has this file more than once`); continue; }
       byPath.set(normalizePath(track.path), row);
       syncedTracks.add(id(row.ID));
       const cues = options.fields.hotCues || options.fields.loops ? track.performance : undefined;
@@ -474,24 +476,30 @@ export const writeRekordboxDatabase = async (
     }
     const native = nativePlaylists(db);
     const playlistsByPath = new Map<string, Row>();
+    const duplicateNative = new Set<string>();
     for (const entry of native.ordered) {
       const key = pathKey(entry.path);
-      if (options.fields.playlists && playlistsByPath.has(key)) throw new Error(`Multiple Rekordbox playlists share ${entry.path.join(' / ')}.`);
-      playlistsByPath.set(key, entry.row);
+      if (playlistsByPath.has(key)) duplicateNative.add(key);
+      else playlistsByPath.set(key, entry.row);
     }
     const desired = new Map<string, { path: readonly string[]; folder: boolean; playlist?: SyncPlaylist }>();
     const incomingPlaylistPaths = new Set<string>();
     const protectedIntelligent = new Set<string>();
     let playlistCount = 0;
     if (options.fields.playlists) for (const playlist of incoming.playlists) {
-      if (!playlist.path.length || playlist.path.some((part) => !part.trim() || /[\0\r\n]/.test(part))) throw new Error('A playlist has an invalid name.');
+      const name = playlist.path.join(' / ');
+      if (!playlist.path.length || playlist.path.some((part) => !part.trim() || /[\0\r\n]/.test(part))) { conflicts.push(`${name || 'Untitled playlist'}: invalid playlist name`); continue; }
+      if (playlist.path.some((_, index) => duplicateNative.has(pathKey(playlist.path.slice(0, index + 1))))) {
+        conflicts.push(`${name}: Rekordbox has more than one playlist with this name`);
+        continue;
+      }
       const protectedPath = playlist.path.findIndex((_, index) => number(playlistsByPath.get(pathKey(playlist.path.slice(0, index + 1)))?.Attribute) === 4);
       if (protectedPath !== -1) {
         protectedIntelligent.add(pathKey(playlist.path.slice(0, protectedPath + 1)));
         continue;
       }
       const key = pathKey(playlist.path);
-      if (incomingPlaylistPaths.has(key)) throw new Error(`Multiple Arsenal playlists share ${playlist.path.join(' / ')}. Rename one before syncing to Rekordbox.`);
+      if (incomingPlaylistPaths.has(key)) { conflicts.push(`${name}: Arsenal has more than one playlist with this name`); continue; }
       incomingPlaylistPaths.add(key);
       playlistCount++;
       for (let length = 1; length <= playlist.path.length; length++) {
@@ -504,7 +512,7 @@ export const writeRekordboxDatabase = async (
       }
     }
     for (const entry of desired.values()) {
-      if (entry.folder && entry.playlist?.trackPaths.length) throw new Error(`Rekordbox folders cannot contain tracks: ${entry.path.join(' / ')}.`);
+      if (entry.folder && entry.playlist?.trackPaths.length) conflicts.push(`${entry.path.join(' / ')}: Rekordbox folders cannot hold tracks, so its tracks were not synced`);
     }
     if (protectedIntelligent.size) warnings.push(`${protectedIntelligent.size} native Rekordbox intelligent playlist${protectedIntelligent.size === 1 ? ' was' : 's were'} kept unchanged. Arsenal playlists with the same names were skipped.`);
     const members = rows(db, 'SELECT * FROM djmdSongPlaylist WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY TrackNo, ID');
@@ -518,6 +526,7 @@ export const writeRekordboxDatabase = async (
     const explicitRemovals = new Set((options.fields.playlists ? options.removePlaylistPaths ?? [] : []).map(pathKey));
     for (const { row, path } of native.ordered) {
       if (number(row.Attribute) === 4) continue;
+      if (duplicateNative.has(pathKey(path))) continue;
       const removePath = explicitRemovals.has(pathKey(path));
       if (options.fields.playlists && !desired.has(pathKey(path)) && (options.mode === 'replace' || removePath)) removedPlaylists.add(id(row.ID));
     }
@@ -553,8 +562,11 @@ export const writeRekordboxDatabase = async (
         native.all.push(row);
         changedPlaylists.set(id(row.ID), row);
       } else {
+        // An empty Arsenal playlist over a Rekordbox folder usually is that folder, kept after its intelligent playlists were left out.
         if (!entry.folder && parentsWithChildren.has(id(row.ID))) {
-          throw new Error(`A Rekordbox folder still contains playlists: ${entry.path.join(' / ')}.`);
+          if (entry.playlist?.trackPaths.length) conflicts.push(`${entry.path.join(' / ')}: a Rekordbox folder with this name holds other playlists`);
+          desiredOrder.set(id(row.ID), desiredOrder.size);
+          continue;
         }
         update('djmdPlaylist', row, { Attribute: entry.folder ? 1 : 0, SmartList: null });
       }
@@ -563,7 +575,7 @@ export const writeRekordboxDatabase = async (
       if (!entry.playlist && !entry.folder) continue;
       const desiredMembers = entry.folder ? [] : (entry.playlist?.trackPaths ?? []).flatMap((path) => {
         const key = normalizePath(path);
-        if (ambiguousPaths.has(key)) throw new Error('A playlist contains a duplicate native Rekordbox track location.');
+        if (ambiguousPaths.has(key)) return [];
         const content = byPath.get(key);
         if (!content) { skippedTracks.add(key); return []; }
         return [id(content.ID)];
@@ -613,6 +625,7 @@ export const writeRekordboxDatabase = async (
     if (changedAnalysedBpm) warnings.push('Track BPM metadata was updated. Existing Rekordbox beat grids were left unchanged.');
     if (materializedSmart) warnings.push('Arsenal smart playlists were saved as regular Rekordbox playlists with their current tracks.');
     if (skippedTracks.size) warnings.push(`${skippedTracks.size} track${skippedTracks.size === 1 ? ' is' : 's are'} not in the Rekordbox Collection and could not be synced. ${options.fields.tracks ? `Rekordbox does not support ${skippedTracks.size === 1 ? 'its' : 'their'} file type.` : `Turn on Tracks to add ${skippedTracks.size === 1 ? 'it' : 'them'}.`}`);
+    if (conflicts.length) warnings.push(`Skipped ${conflicts.length} item${conflicts.length === 1 ? '' : 's'} that could not sync: ${conflicts.join('; ')}.`);
     if (changedCueTracks) warnings.push(`Cues and loops were updated on ${changedCueTracks} track${changedCueTracks === 1 ? '' : 's'}. Rekordbox shows them in its default colors.`);
     if (addedTracks) warnings.push(`${addedTracks} track${addedTracks === 1 ? ' was' : 's were'} added to the Rekordbox Collection. Rekordbox analyses ${addedTracks === 1 ? 'it' : 'them'} when opened.`);
     if (encryptedTracks) warnings.push(`${encryptedTracks} track${encryptedTracks === 1 ? ' has' : 's have'} encrypted details in Rekordbox and ${encryptedTracks === 1 ? 'was' : 'were'} left unchanged.`);

@@ -1693,11 +1693,13 @@ export class RekordboxLibrary {
     let trackCount = 0;
     let playlistCount = 0;
     let skippedTrackCount = 0;
+    let importConnectionIds: string[] = [];
     try {
       const request = readSyncRequest(requested);
       if (!nativeOnly) await this.rememberSyncPreferences({ ...this.syncPreferences(), request });
       const targets = this.selectedSyncConnections(request).filter((connection) => !nativeOnly || connection.kind === 'rekordbox' && isRekordboxDatabasePath(connection.path));
       if (!targets.length) throw new Error('Connect a DJ library and choose it as a sync destination. Your Arsenal library is saved locally.');
+      importConnectionIds = targets.filter((connection) => this.startupChanges.has(connection.id)).map((connection) => connection.id);
       if (targets.some((connection) => this.startupChanges.has(connection.id) || this.startupUnreadable.has(connection.id))) {
         throw new Error('A sync destination has changes waiting for import or could not be checked. Import its connection before syncing. Your Arsenal library is saved locally.');
       }
@@ -1716,6 +1718,7 @@ export class RekordboxLibrary {
           const current = await readLibrarySource(target);
           if (pending !== null && current.syncFingerprint !== pending.fingerprint) {
             this.startupChanges.add(target.id);
+            importConnectionIds = [target.id];
             throw new Error('Rekordbox changed while Arsenal updates were queued. Import its changes in Connections before resuming sync. Arsenal edits were kept.');
           }
         }
@@ -1749,7 +1752,8 @@ export class RekordboxLibrary {
       return { kind: 'synced', trackCount, playlistCount, skippedTrackCount, warnings, backupPaths,
         message: `Saved Arsenal changes to ${synced} ${synced === 1 ? 'destination' : 'destinations'}.${targets.some((target) => target.kind === 'rekordbox' && isRekordboxDatabasePath(target.path)) ? ' Rekordbox Collection will show the changes on its next launch.' : ''}${targets.some((target) => target.kind === 'rekordbox' && !isRekordboxDatabasePath(target.path)) ? ' Rekordbox XML needs a separate Collection import.' : ''}${targets.some((target) => target.kind === 'serato') ? ' Reopen Serato to load the changes.' : ''}${skippedTrackCount ? ` Up to ${skippedTrackCount} tracks were skipped. Review the warnings for details.` : ''}` };
     } catch (error) {
-      return { kind: 'rejected', warnings, backupPaths, message: `${error instanceof Error ? error.message : 'Could not sync the library.'}${synced ? ' Some destinations were already updated.' : ''}` };
+      return { kind: 'rejected', warnings, backupPaths, message: `${error instanceof Error ? error.message : 'Could not sync the library.'}${synced ? ' Some destinations were already updated.' : ''}`,
+        ...(importConnectionIds.length ? { importConnectionIds } : {}) };
     }
   }
 

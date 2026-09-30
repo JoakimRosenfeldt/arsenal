@@ -10,12 +10,13 @@ const libraryKinds = [
   { kind: 'serato', label: 'Serato library' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string }[];
 
-export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSync, onResolveMissing, onImportBackup, initialSyncResult, onError }: Readonly<{
+export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImportChanges, onSync, onResolveMissing, onImportBackup, initialSyncResult, onError }: Readonly<{
   busy: boolean;
   onError: (message: string) => void;
   state: LibraryConnections | null;
   onConnect: (kind: LibrarySourceKind) => Promise<LibraryConnectionResult>;
   onManage: (action: LibraryConnectionAction) => Promise<LibraryConnectionResult>;
+  onImportChanges: (id: string) => Promise<LibraryConnectionResult>;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
   onImportBackup: (mode: 'folder' | 'snapshot') => Promise<LibraryConnectionResult>;
@@ -108,7 +109,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
         </div>}
 
         {pending !== null && <p className="library-connection-progress" role="status">{pending}</p>}
-        <SyncLibrarySettings busy={working} connections={state} onSync={onSync} onResolveMissing={onResolveMissing}
+        <SyncLibrarySettings busy={working} connections={state} onSync={onSync} onResolveMissing={onResolveMissing} onImportChanges={onImportChanges}
           initialResult={initialSyncResult ?? null} onError={onError} />
       </div>
 

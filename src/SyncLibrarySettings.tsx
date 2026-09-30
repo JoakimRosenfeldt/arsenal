@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type JSX } from 'react';
+import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
 
-import { ONGOING_SYNC_REQUEST, type LibraryConnections, type SyncActivity, type SyncMissingFileAction, type SyncRequest, type SyncResult } from './shared/dj-library';
+import { ONGOING_SYNC_REQUEST, type LibraryConnectionResult, type LibraryConnections, type SyncActivity, type SyncMissingFileAction, type SyncRequest, type SyncResult } from './shared/dj-library';
 
-export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissing, onError, initialResult = null }: Readonly<{
+export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissing, onImportChanges, onError, initialResult = null }: Readonly<{
   busy: boolean;
   connections: LibraryConnections | null;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
+  onImportChanges: (id: string) => Promise<LibraryConnectionResult>;
   onError?: (message: string) => void;
   initialResult?: Exclude<SyncResult, { kind: 'cancelled' }> | null;
 }>): JSX.Element => {
@@ -99,8 +100,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     }
   }, [removePaths]);
 
-  const submit = async (event: FormEvent): Promise<void> => {
-    event.preventDefault();
+  const retry = async (): Promise<void> => {
     if (working || !hasConnections) return;
     setPending(true);
     setResult(null);
@@ -110,9 +110,9 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     try {
       const saved = await window.djLibrary.syncPreferences();
       const next = await onSync({ ...ONGOING_SYNC_REQUEST, timingOffsetMs: saved.request?.timingOffsetMs ?? 0 });
-      if (next.kind === 'rejected' && onError) {
+      if (next.kind === 'rejected' && onError && result?.kind === 'missing-files') {
         onError([next.message, ...next.warnings].join(' '));
-        setResult(result?.kind === 'missing-files' ? result : null);
+        setResult(result);
         return;
       }
       if (!mounted.current && next.kind !== 'cancelled' && (next.kind === 'missing-files' || next.warnings.length > 0 ||
@@ -124,6 +124,24 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     } finally {
       setPending(false);
     }
+  };
+
+  const importAndRetry = async (ids: readonly string[]): Promise<void> => {
+    if (working) return;
+    setPending(true);
+    try {
+      for (const id of ids) {
+        const imported = await onImportChanges(id);
+        if (imported.kind === 'cancelled') return;
+        if (imported.kind === 'rejected') { reportError(imported.message); return; }
+      }
+    } catch (error: unknown) {
+      reportError(error instanceof Error ? error.message : 'Could not import the changes. Try again.');
+      return;
+    } finally {
+      setPending(false);
+    }
+    await retry();
   };
 
   const resolveMissing = async (action: SyncMissingFileAction): Promise<void> => {
@@ -178,7 +196,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
 
   return (
     <section className="library-sync-settings" aria-labelledby="library-sync-title">
-      <form onSubmit={(event) => void submit(event)}>
+      <form onSubmit={(event) => { event.preventDefault(); void retry(); }}>
         <h2 id="library-sync-title">Sync</h2>
 
         {activity !== null && (
@@ -204,6 +222,14 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
               : result.kind === 'queued' ? 'Changes queued'
               : hasIssues ? 'Sync needs attention' : 'Sync complete'}</h3>
             {!(result.kind === 'missing-files' && !hasIssues) && <p>{result.message}</p>}
+            {result.kind === 'rejected' && result.importConnectionIds !== undefined && result.importConnectionIds.length > 0 && (
+              <div className="library-sync-file-actions">
+                <button className="accent-button" type="button" disabled={working}
+                  onClick={() => void importAndRetry(result.importConnectionIds ?? [])}>
+                  Import {connections?.connections.filter((entry) => result.importConnectionIds?.includes(entry.id)).map((entry) => entry.name).join(' and ') || 'library'} changes and retry
+                </button>
+              </div>
+            )}
             {missingFiles !== null && (
               <div className="library-sync-recovery" aria-busy={working}>
                 {repairError !== null && <p className="library-sync-recovery-error" role="alert">{repairError}</p>}

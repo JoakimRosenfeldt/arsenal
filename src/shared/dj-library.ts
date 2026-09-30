@@ -365,6 +365,8 @@ export type SyncResult =
       message: string;
       warnings: readonly string[];
       backupPaths: readonly string[];
+      // Connections whose own changes must be imported into Arsenal before sync can continue.
+      importConnectionIds?: readonly string[];
     }>;
 
 export type SyncActivity = Readonly<{
