@@ -201,7 +201,6 @@ export const writeSeratoTags = async (
   if (tags.size === 0 && !song) return { backupPaths: [] };
   tagTypeFor(filePath);
   const target = await realpath(filePath);
-  if (!(await stat(target)).isFile()) throw new Error(`Not an audio file: ${filePath}`);
   const original = await readSeratoTags(target);
   const updates = new Map(tags);
   const autotags = updates.get('Serato Autotags') ?? original.get('Serato Autotags');
@@ -211,6 +210,7 @@ export const writeSeratoTags = async (
     updates.set('Serato Autotags', Buffer.concat([autotags.subarray(0, 2), Buffer.from(`${song.bpm.toFixed(2)}\0`, 'ascii'), autotags.subarray(bpmEnd + 1)]));
   }
   if ([...updates].every(([name, data]) => original.get(name)?.equals(data)) && (!song || metadataMatches(target, song))) return { backupPaths: [] };
+  if (!(await stat(target)).isFile()) throw new Error(`Not an audio file: ${filePath}`);
   const expectedFingerprint = await fingerprintFor(target);
   const temporaryDirectory = await mkdtemp(join(dirname(target), '.arsenal-tags-'));
   const temporaryPath = join(temporaryDirectory, basename(target));

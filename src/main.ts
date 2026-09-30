@@ -375,7 +375,15 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Check changed libraries from the library window');
     libraryActions += 1;
-    try { return await library.checkStartupChanges(owner); } finally { libraryActions -= 1; }
+    try { return await library.checkStartupChanges(); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.resolveStartupChanges, async (event, action: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Review changed libraries from the library window');
+    if (action !== 'import' && action !== 'skip') throw new Error('Choose whether to import the changes');
+    libraryActions += 1;
+    try { return await library.resolveStartupChanges(owner, action); } finally { libraryActions -= 1; }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.configureBackup, async (event, request: unknown) => {

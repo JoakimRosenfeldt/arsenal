@@ -8,6 +8,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   connections: 'dj-library:connections',
   checkStartupChanges: 'dj-library:check-startup-changes',
+  resolveStartupChanges: 'dj-library:resolve-startup-changes',
   backupStatus: 'dj-library:backup-status',
   configureBackup: 'dj-library:configure-backup',
   backupNow: 'dj-library:backup-now',
@@ -217,6 +218,7 @@ export type LibraryConnection = Readonly<{
   path: string;
   available: boolean;
   origin?: 'portable' | 'arsenal';
+  format?: 'rekordbox-xml' | 'rekordbox-database';
 }>;
 
 export type LibraryConnections = Readonly<{
@@ -235,6 +237,12 @@ export type LibraryConnectionResult =
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{ kind: 'rejected'; message: string }>
   | Readonly<{ kind: 'updated'; connections: LibraryConnections; status: LibraryStatus; warnings: readonly string[] }>;
+
+export type LibraryStartupPreview = Readonly<{
+  libraries: readonly Readonly<{ id: string; name: string; changes: readonly string[] }>[];
+  syncAfterImport: boolean;
+  warnings: readonly string[];
+}>;
 
 export type LibraryStartupResult = Readonly<{
   connections: LibraryConnections;
@@ -329,6 +337,12 @@ export type SyncMissingFileAction =
 export type SyncResult =
   | Readonly<{ kind: 'cancelled' }>
   | Readonly<{
+      kind: 'queued';
+      message: string;
+      warnings: readonly string[];
+      backupPaths: readonly string[];
+    }>
+  | Readonly<{
       kind: 'missing-files';
       files: readonly SyncMissingFile[];
       message: string;
@@ -352,7 +366,7 @@ export type SyncResult =
     }>;
 
 export type SyncActivity = Readonly<{
-  state: 'off' | 'watching' | 'syncing' | 'attention';
+  state: 'off' | 'watching' | 'syncing' | 'waiting' | 'attention';
   lastSyncedAt: string | null;
   result: Exclude<SyncResult, { kind: 'cancelled' }> | null;
 }>;
@@ -500,7 +514,8 @@ export type LibraryMutationResult = (
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   connections(): Promise<LibraryConnections>;
-  checkStartupChanges(): Promise<LibraryStartupResult>;
+  checkStartupChanges(): Promise<LibraryStartupPreview>;
+  resolveStartupChanges(action: 'import' | 'skip'): Promise<LibraryStartupResult>;
   backupStatus(): Promise<readonly BackupConnection[]>;
   configureBackup(request: BackupConfiguration): Promise<BackupConnection | null>;
   backupNow(id: string): Promise<BackupConnection>;

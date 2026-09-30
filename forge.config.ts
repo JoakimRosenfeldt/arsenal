@@ -11,7 +11,8 @@ const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     icon: './assets/icon',
-    extraResource: ['./assets/icon.png'],
+    extraResource: ['./assets/icon.png', './THIRD_PARTY_NOTICES.md',
+      `./node_modules/better-sqlite3-multiple-ciphers/prebuilds/${process.platform}-${process.arch}.node`],
     osxSign: {
       identity: '-',
       identityValidation: false,

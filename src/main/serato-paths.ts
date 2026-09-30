@@ -42,9 +42,14 @@ export const assertSeratoMediaFile = async (path: string): Promise<void> => {
 
 export const resolveSeratoLibraryPaths = async (library: SyncLibrary, reference?: SyncLibrary): Promise<SyncLibrary> => {
   const nativePaths = new Map<string, string>();
-  for (const track of reference?.tracks ?? []) {
-    const key = await seratoMediaPathKey(track.path);
-    if (!nativePaths.has(key)) nativePaths.set(key, track.path);
+  const referenceTracks = reference?.tracks ?? [];
+  for (let offset = 0; offset < referenceTracks.length; offset += 32) {
+    const batch = referenceTracks.slice(offset, offset + 32);
+    const keys = await Promise.all(batch.map((track) => seratoMediaPathKey(track.path)));
+    for (const [index, key] of keys.entries()) {
+      const track = batch[index];
+      if (track !== undefined && !nativePaths.has(key)) nativePaths.set(key, track.path);
+    }
   }
   const paths = new Map<string, Promise<{ path: string; key: string }>>();
   const resolve = (path: string): Promise<{ path: string; key: string }> => {

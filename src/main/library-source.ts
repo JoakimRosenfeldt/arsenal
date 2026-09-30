@@ -9,6 +9,8 @@ import { PORTABLE_LIBRARY_FILENAME, portableSnapshotDate, readPortableLibrary } 
 import { findSeratoSource } from './serato-library';
 import { readSeratoWithPerformance } from './sync-libraries';
 import { rekordboxSyncLibrary } from './sync-rekordbox-xml';
+import { readRekordboxDatabase } from './rekordbox-database';
+import { isRekordboxDatabasePath } from './rekordbox-database-connection';
 
 export type PortableLibrarySource = Readonly<{
   manifestPath: string;
@@ -65,10 +67,18 @@ const mediaFileState = async (path: string): Promise<readonly [string, ...string
   }
 };
 
+const mediaFilesState = async (paths: ReadonlySet<string>) => {
+  const ordered = [...paths];
+  const files: Awaited<ReturnType<typeof mediaFileState>>[] = [];
+  for (let offset = 0; offset < ordered.length; offset += 32) {
+    files.push(...await Promise.all(ordered.slice(offset, offset + 32).map(mediaFileState)));
+  }
+  return files;
+};
+
 const nativeMediaState = async (library: SyncLibrary) => {
   const paths = new Set(library.tracks.filter((track) => track.song.source === 'local').map((track) => track.location ?? track.path));
-  const files: Awaited<ReturnType<typeof mediaFileState>>[] = [];
-  for (const path of paths) files.push(await mediaFileState(path));
+  const files = await mediaFilesState(paths);
   return { files, warnings: files.flatMap((file) => file[1] === 'missing' || file[1] === 'not-file'
     ? [`${basename(file[0])}: the music file is missing or unavailable.`] : []) };
 };
@@ -97,11 +107,8 @@ export const readLibrarySource = async ({ kind, path, portableSource, followLate
       ...(isAbsolute(track.media.originalPath) ? [track.media.originalPath] : []),
     ]));
     const paths = new Set([...sourcePaths, ...portableSource.resolvedPaths ?? []]);
-    const files: Awaited<ReturnType<typeof mediaFileState>>[] = [];
-    for (const path of paths) {
-      const state = await mediaFileState(path);
-      files.push(sourcePaths.has(path) ? state : [path, state[1] === 'missing' || state[1] === 'not-file' ? state[1] : 'file']);
-    }
+    const files = (await mediaFilesState(paths)).map((state) => sourcePaths.has(state[0]) ? state
+      : [state[0], state[1] === 'missing' || state[1] === 'not-file' ? state[1] : 'file']);
     const fingerprint = createHash('sha256').update(JSON.stringify({
       ...manifest, savedAt: undefined, files,
     })).digest('hex');
@@ -110,6 +117,12 @@ export const readLibrarySource = async ({ kind, path, portableSource, followLate
     })).digest('hex'), library: null, portableManifestPath: manifestPath, warnings: [] };
   }
   if (kind === 'rekordbox') {
+    if (isRekordboxDatabasePath(path)) {
+      const library = await readRekordboxDatabase(path);
+      const media = await nativeMediaState(library);
+      return { fingerprint: createHash('sha256').update(JSON.stringify(library)).update(JSON.stringify(media.files)).digest('hex'),
+        syncFingerprint: syncFingerprint(library, media.files), library, warnings: media.warnings, portableManifestPath: null };
+    }
     const parsed = await parseRekordboxXml(path);
     const library = rekordboxSyncLibrary(parsed, { includeNonLocal: true });
     const media = await nativeMediaState(library);
