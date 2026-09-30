@@ -123,7 +123,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
       savedRequestKey.current = requestKey;
     }).catch((error: unknown) => {
       if (!active) return;
-      const message = `Could not load sync settings. ${error instanceof Error ? error.message : 'Reopen Connections to try again.'}`;
+      const message = `Could not load sync settings. ${error instanceof Error ? error.message : ''}`.trim();
       setPreferences(null);
       reportError(message);
     }).finally(() => { if (active) setPreferencesFor(connections); });
@@ -314,16 +314,15 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
 
         {activity !== null && (
           <div className="library-sync-activity">
-            <p>{activity.state === 'watching' ? 'Ongoing sync is on. App edits sync automatically.'
-              : activity.state === 'syncing' ? 'Sync is updating your libraries…'
-              : activity.state === 'waiting' ? 'Changes are saved in Arsenal. Waiting for Rekordbox to close.'
-              : activity.state === 'attention' ? 'Sync needs attention. Resolve the issue below, then retry.'
+            <p>{activity.state === 'watching' ? 'Ongoing sync is on.'
+              : activity.state === 'syncing' ? 'Syncing…'
+              : activity.state === 'waiting' ? 'Waiting for Rekordbox to close.'
+              : activity.state === 'attention' ? 'Sync needs attention.'
               : 'Ongoing sync is off.'}
               {activity.lastSyncedAt !== null && <> Last synced <time dateTime={activity.lastSyncedAt}>{new Date(activity.lastSyncedAt).toLocaleString()}</time>.</>}
             </p>
             {ongoing && <button className="quiet-button" type="button" disabled={busy || pending}
               onClick={() => void stopOngoingSync()}>Stop ongoing sync</button>}
-            {ongoing && activity.state === 'waiting' && <p>Stopping ongoing sync keeps the changes already queued.</p>}
           </div>
         )}
         {activityError !== null && <p className="library-sync-recovery-error" role="alert">{activityError}</p>}
@@ -336,14 +335,12 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
               : result.kind === 'rejected' ? 'Sync stopped'
               : result.kind === 'queued' ? 'Changes queued'
               : hasIssues ? 'Sync needs attention' : 'Sync complete'}</h3>
-            <p>{result.kind === 'missing-files' && !hasIssues
-              ? 'Retry sync to apply these changes to connected libraries.' : result.message}</p>
+            {!(result.kind === 'missing-files' && !hasIssues) && <p>{result.message}</p>}
             {missingFiles !== null && (
               <div className="library-sync-recovery" aria-busy={working}>
                 {repairError !== null && <p className="library-sync-recovery-error" role="alert">{repairError}</p>}
                 {hasMissingFiles ? (
                   <>
-                    <p>Changes apply to your Arsenal library and connected libraries.</p>
                     <div className="library-sync-bulk-actions" aria-label="Missing file selection">
                       <label className="library-sync-file-selection">
                         <input type="checkbox" disabled={working} checked={selectedFiles.length === missingFiles.length}
@@ -361,11 +358,10 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
                       <button className="quiet-button" type="button" disabled={working || selectedFiles.length === 0}
                         onClick={() => setRemovePaths(selectedFiles.map((file) => file.path))}>Remove selected…</button>
                     </div>
-                    {selectedFiles.length > 0 && <p>Use matches relinks songs with one possible match. Review multiple matches individually.</p>}
                     {removalFiles.length > 0 && (
                       <div className="library-sync-remove-confirmation" ref={removalRef} tabIndex={-1}
                         role="group" aria-labelledby="library-sync-remove-title">
-                        <strong id="library-sync-remove-title">Remove {removalFiles.length === 1 ? 'this song' : `${removalFiles.length} songs`} from Arsenal and connected libraries?</strong>
+                        <strong id="library-sync-remove-title">Remove {removalFiles.length === 1 ? 'this track' : `${removalFiles.length} tracks`} from Arsenal and connected libraries?</strong>
                         <ul className="library-sync-result-list" aria-label="Songs to remove">
                           {removalFiles.map((file) => <li key={file.path}>{file.title || 'Untitled track'}
                             <div className="library-sync-file-path">{file.path}</div>
@@ -379,7 +375,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
                             </ul>
                           </details>
                         )}
-                        <p>Removes the songs and their playlist memberships. Audio files stay on disk.</p>
+                        <p>Audio files stay on disk.</p>
                         <div className="library-sync-file-actions">
                           <button className="quiet-button" type="button" disabled={working} onClick={() => setRemovePaths([])}>Cancel</button>
                           <button className="quiet-button" type="button" disabled={working}
@@ -426,7 +422,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
                                     </li>
                                   ))}
                                 </ul>
-                                {file.candidates.length > 3 && <p>Showing 3 of {file.candidates.length} matches. Use Choose file to select another.</p>}
+                                {file.candidates.length > 3 && <p>+{file.candidates.length - 3} more</p>}
                               </>
                             ) : <p>No matches found.</p>}
                             <div className="library-sync-file-actions">
@@ -538,10 +534,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
                 </label>
               ))}
             </div>
-            {includesNativeRekordbox && <p className="tracklist-export-note">Hot cues, loops, and beatgrids cannot sync directly to Rekordbox yet.
-              {includesSerato && ' These categories sync to Serato only.'}</p>}
-            {includesNativeRekordbox && <p className="tracklist-export-note">Direct Rekordbox sync uses existing Collection tracks only. Add or remove tracks in Rekordbox, or use XML to add new tracks.
-              {includesSerato && ' The Tracks category applies to Serato only.'}</p>}
+            {includesNativeRekordbox && <p className="tracklist-export-note">Rekordbox Collection sync skips tracks, hot cues, loops, and beatgrids{includesSerato ? '. Serato still gets them.' : '.'}</p>}
           </fieldset>
 
         </div>
@@ -554,35 +547,25 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
                 value={timingOffset} disabled={working || preferences === null}
                 onChange={(event) => { draftChanged.current = true; setTimingOffset(event.currentTarget.value); }} />
             </label>
-            <p>Added when exporting to Serato. Leave 0 to keep stored positions.</p>
           </details>
         )}
 
         <div className="library-sync-description">
-          <p>{cadence === 'ongoing' ? 'Ongoing sync updates the selected DJ libraries after edits made in Arsenal.'
-            : 'One time sync applies these settings once and stops any ongoing sync.'}</p>
-          <p>Every edit and smart playlist rule is saved in your Arsenal library, even when DJ apps are disconnected.</p>
-          <p>Smart playlists sync with their current matching tracks. Their rules stay in Arsenal.</p>
-          {includesNativeRekordbox && <p>Existing Rekordbox intelligent playlists stay unchanged.</p>}
-          {mode === 'merge' && syncFields.playlists && destinations.some((entry) => entry.kind === 'rekordbox') && <p>Merge updates matching Rekordbox playlists to use Arsenal's tracks and order. Tracks and playlists found only in Rekordbox stay there.</p>}
-          {mode === 'replace' && <p>Overwrite replaces checked categories in {destinationName}.
-            {includesNativeRekordbox ? ' Absent playlists are removed when checked. Tracks stay in Collection.'
-              : ' Absent tracks and playlists are removed when checked.'} Audio files stay on disk.</p>}
+          {mode === 'replace' && <p>Overwrite removes {includesNativeRekordbox ? 'playlists' : 'tracks and playlists'} missing from Arsenal in {destinationName}. Audio files stay on disk.</p>}
           {includesSerato && <p>{cadence === 'ongoing' ? 'Keep Serato closed while ongoing sync is on.' : 'Close Serato before syncing.'}</p>}
-          {includesNativeRekordbox && <p>Arsenal updates Rekordbox Collection after Rekordbox closes. Keep Arsenal open to apply queued changes, then reopen Rekordbox to see them. No XML import is needed.</p>}
+          {includesNativeRekordbox && <p>Rekordbox updates after it closes. Keep Arsenal open until then.</p>}
           {includesRekordboxXml && <>
-            <p>Arsenal updates the XML file. Rekordbox's Collection needs a separate import. Choosing the XML file in Rekordbox does not update Collection automatically.</p>
+            <p>Import the XML changes in Rekordbox:</p>
             <ol>
               <li>In Rekordbox's sidebar, open "rekordbox xml" and click its refresh button.</li>
               <li>Open "All Tracks" and drag the changed tracks into Collection.</li>
               <li>Drag changed playlists from the XML playlist list into Rekordbox's Playlists.</li>
             </ol>
           </>}
-          {ongoing && <p>Changed settings take effect when you sync.</p>}
         </div>
 
         {!hasFields && <p className="tracklist-export-note">Choose at least one category to sync.</p>}
-        {needsLibraries && <p className="tracklist-export-note">Connect and select an available DJ library for this destination.</p>}
+        {needsLibraries && <p className="tracklist-export-note">Connect a DJ library for this destination.</p>}
         {!validTiming && <p className="tracklist-export-note">Enter a whole number between -1000 and 1000 milliseconds.</p>}
         <div className="library-sync-actions">
           <button className="accent-button" type="submit" disabled={working || preferences === null || needsLibraries || !hasFields || !validTiming}>

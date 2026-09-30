@@ -8,9 +8,9 @@ const messageFor = (status: UpdateStatus): string => {
     case 'error':
       return status.message;
     case 'idle':
-      return 'Check for available updates.';
+      return '';
     case 'checking':
-      return 'Checking for updates...';
+      return 'Checking…';
     case 'unpublished':
       return 'No releases have been published yet.';
     case 'current':
@@ -52,7 +52,7 @@ export const AppUpdates = ({ onError }: Readonly<{
     }).catch(() => {
       if (active) {
         setRequestFailed(true);
-        onError?.('Could not load update status. Reopen Preferences to try again.');
+        onError?.('Could not load update status.');
       }
     });
     return () => {
@@ -97,25 +97,25 @@ export const AppUpdates = ({ onError }: Readonly<{
   };
 
   const label = status?.kind === 'checking'
-    ? 'Checking...'
+    ? 'Checking…'
     : status?.kind === 'downloading'
       ? `Downloading ${status.percent}%`
       : status?.kind === 'available'
         ? 'Download update'
         : status?.kind === 'downloaded'
-          ? pending ? 'Restarting...' : 'Install and restart'
+          ? pending ? 'Restarting…' : 'Install and restart'
           : status?.kind === 'error' || requestFailed
             ? 'Retry update check'
             : 'Check for updates';
   const message = requestFailed
     ? status?.kind === 'downloaded' ? 'Could not restart Arsenal. Wait for library actions to finish, then try again.' : 'Could not update Arsenal. Try again.'
-    : status === null ? 'Loading update status...' : messageFor(status);
+    : status === null ? '' : messageFor(status);
 
   return (
     <div className="app-updates">
       <div className="app-updates-description">
         <strong>{status === null ? 'Arsenal' : `Arsenal ${status.currentVersion}`}</strong>
-        {(!onError || !requestFailed && status?.kind !== 'error') &&
+        {message !== '' && (!onError || !requestFailed && status?.kind !== 'error') &&
           <p role={requestFailed || status?.kind === 'error' ? 'alert' : undefined}>{message}</p>}
       </div>
       <button

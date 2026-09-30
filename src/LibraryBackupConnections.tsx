@@ -42,7 +42,7 @@ export const LibraryBackupConnections = ({ busy, connections, onError }: Readonl
         reportedFailure = false;
       } catch {
         if (!active || sequence !== statusSequence.current) return;
-        const message = 'Could not read folder connections. Reopen Connections to retry.';
+        const message = 'Could not read backup folders.';
         if (onError) {
           if (!reportedFailure) onError(message);
           reportedFailure = true;
@@ -86,7 +86,7 @@ export const LibraryBackupConnections = ({ busy, connections, onError }: Readonl
         setStatusError(null);
       }
     } catch {
-      const message = 'Could not read folder connections. Reopen Connections to retry.';
+      const message = 'Could not read backup folders.';
       if (onError) onError(message);
       else setStatusError(message);
     } finally {
@@ -106,10 +106,9 @@ export const LibraryBackupConnections = ({ busy, connections, onError }: Readonl
         </span>
       </div>
       <p className="library-connection-empty-status">{folderName(backup.directory)}</p>
-      <p className="library-folder-summary">Arsenal library<br />
-        Automatic backup · {backup.includeMusic ? 'With music' : 'Library data only'}
-        {backup.includeMusic && <><br />Music folders: {MUSIC_ORGANIZATION_OPTIONS.find((option) => option.value === backup.musicOrganization)?.label}</>}
-      </p>
+      <p className="library-folder-summary">{backup.includeMusic
+        ? `With music · ${MUSIC_ORGANIZATION_OPTIONS.find((option) => option.value === backup.musicOrganization)?.label ?? ''}`
+        : 'Library data only'}</p>
       {backup.lastSavedAt && <p className="library-connection-empty-status">Last saved {new Date(backup.lastSavedAt).toLocaleString()}</p>}
       {backup.message && <p className="tracklist-export-note" role={backup.state === 'error' ? 'alert' : undefined}>{backup.message}</p>}
       <div className="library-connection-actions">
@@ -127,7 +126,7 @@ export const LibraryBackupConnections = ({ busy, connections, onError }: Readonl
       setEditing({ kind: 'connect', includeMusic: true, musicOrganization: 'artist' });
     }}>
       <span><UiIcon name="plus" size={20} /> Connect folder</span>
-      <span className="library-connection-empty-status">Backup or transfer your Arsenal library</span>
+      <span className="library-connection-empty-status">Back up your Arsenal library</span>
     </button>
     {(statusError || error && editing === null) && <p className="library-folder-error tracklist-export-note" role="alert">{error ?? statusError}</p>}
 
@@ -137,18 +136,14 @@ export const LibraryBackupConnections = ({ busy, connections, onError }: Readonl
         <h2 id="folder-settings-title">{editing.kind === 'connect' ? 'Connect folder' : 'Folder connection settings'}</h2>
         <button className="inspector-close" type="button" onClick={() => settingsDialog.current?.close()} aria-label="Close folder settings"><UiIcon name="close" size={16} /></button>
       </div>
-      <p>Save your Arsenal library to a local folder, an external drive, or a folder synced by your cloud app.
-        Arsenal updates one <strong>Arsenal Library.json</strong> file automatically while it is open.</p>
+      <p>Arsenal keeps <strong>Arsenal Library.json</strong> in this folder up to date.</p>
       {editing.kind === 'update' && <p>{folderName(backups.find((backup) => backup.id === editing.id)?.directory ?? '')}</p>}
-      {!hasLibrary && <p>Open or import a library in Arsenal before creating a backup.</p>}
+      {!hasLibrary && <p>Import a library first.</p>}
       <label className="library-backup-music">
         <input type="checkbox" checked={editing.includeMusic} disabled={working}
           onChange={(event) => setEditing({ ...editing, includeMusic: event.currentTarget.checked })} />
         Include music files
       </label>
-      <p>{editing.includeMusic
-        ? 'Music is saved in a Music folder beside the library file. Keep them together to open your library on another computer without locating files again.'
-        : 'Only library data is saved. On another computer, choose your music folder to find moved or renamed files.'}</p>
       {editing.includeMusic && <div className="library-sync-location">
         <label>Organize music by
           <select value={editing.musicOrganization} disabled={working}
@@ -181,7 +176,7 @@ export const LibraryBackupConnections = ({ busy, connections, onError }: Readonl
         <button className="inspector-close" type="button" onClick={() => removeDialog.current?.close()} aria-label="Cancel folder removal"><UiIcon name="close" size={16} /></button>
       </div>
       <p>{folderName(removing.directory)}</p>
-      <p id="folder-remove-description">Automatic backups stop. Your saved library and music files stay on disk.</p>
+      <p id="folder-remove-description">Backups stop. Saved files stay on disk.</p>
       <div className="library-connection-remove-actions">
         <button className="quiet-button" type="button" autoFocus onClick={() => removeDialog.current?.close()}>Cancel</button>
         <button className="accent-button" type="button" disabled={working} onClick={() => {

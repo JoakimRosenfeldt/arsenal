@@ -183,7 +183,6 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
             <div className="focused-playlist-type" role="group" aria-label="Playlist type">
               <button type="button" aria-pressed={false} disabled={editing || onManual === undefined} onClick={() => onManual?.(name, parentFolderId, definition)}>Manual</button>
               <button type="button" aria-pressed={true}>Smart</button>
-              <span>Tracks update automatically when your library changes.</span>
             </div>
             <RuleGroupEditor group={definition.rules} onChange={(rules) => setDefinition({ ...definition, rules })} />
             <details className="smart-advanced-options">
@@ -230,7 +229,7 @@ export const SmartPlaylistEditor = ({ busy, folders, initialParentFolderId, init
         </div>
         <footer className="focused-playlist-footer">
           <div className="smart-preview-status">
-            <span role="status">{validation ?? (failed ? 'Could not load matches. Try again.' : currentPreview === null ? 'Finding matches…' : `${currentPreview.matchingCount.toLocaleString()} matching ${currentPreview.matchingCount === 1 ? 'track' : 'tracks'}${currentPreview.total !== currentPreview.matchingCount ? ` · ${currentPreview.total.toLocaleString()} in playlist` : ''} · Updates automatically`)}</span>
+            <span role="status">{validation ?? (failed ? 'Could not load matches.' : currentPreview === null ? 'Finding matches…' : `${currentPreview.matchingCount.toLocaleString()} matching ${currentPreview.matchingCount === 1 ? 'track' : 'tracks'}${currentPreview.total !== currentPreview.matchingCount ? ` · ${currentPreview.total.toLocaleString()} in playlist` : ''}`)}</span>
             {currentPreview !== null && currentPreview.total > currentPreview.tracks.length && <HelpTooltip label="Preview">{`Showing the first ${currentPreview.tracks.length} tracks.`}</HelpTooltip>}
             {failed && <button className="quiet-button" type="button" onClick={() => setDefinition({ ...definition })}>Retry</button>}
           </div>

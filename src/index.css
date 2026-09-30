@@ -250,11 +250,6 @@ input:disabled {
   border-color: var(--accent);
 }
 
-.preferences-link > p {
-  color: var(--accent);
-  font-size: 11px;
-}
-
 .preferences-window {
   display: grid;
   height: 100%;
@@ -1016,33 +1011,6 @@ input:disabled {
 .page-empty .accent-button {
   width: max-content;
   margin-top: 24px;
-}
-
-.library-connect-description {
-  margin: 20px 0 0;
-  color: var(--text-soft);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
-.library-empty-sync {
-  width: max-content;
-  gap: 7px;
-  margin-top: 16px;
-}
-
-.library-source-note {
-  margin: 0;
-  padding: 0 28px 12px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.library-source-note span {
-  margin-left: 12px;
-  color: var(--text-soft);
 }
 
 .library-connections-page {
@@ -3370,7 +3338,6 @@ button.sidebar-search {
   border-block: 1px solid var(--line-strong);
 }
 
-.playlist-helper-heading,
 .playlist-helper-actions {
   display: flex;
   align-items: center;
@@ -3379,8 +3346,6 @@ button.sidebar-search {
   gap: 12px;
 }
 
-.playlist-helper h3,
-.playlist-helper h4,
 .playlist-draft h3 {
   margin: 0;
   font-size: 15px;
@@ -3389,16 +3354,10 @@ button.sidebar-search {
 
 .playlist-helper p,
 .playlist-helper-actions > span,
-.playlist-helper-heading > span,
 .playlist-draft h3 > span {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.playlist-helper-heading > .mono-label {
-  color: var(--accent);
-  font-size: 9px;
 }
 
 .playlist-mood-field {

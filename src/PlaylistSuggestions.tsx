@@ -20,12 +20,12 @@ const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
   'service-unavailable': 'Suggestions unavailable. Check your connection and try again.',
   'request-rejected': 'Could not find suggestions. Try again.',
   'model-unavailable': 'Suggestions unavailable for your OpenRouter account.',
-  'invalid-tempo': 'Use a tempo from 30 to 300 BPM, with the lower number first in a range.',
+  'invalid-tempo': 'Use a tempo from 30 to 300 BPM.',
   'timed-out': 'Suggestions took too long. Try again.',
   cancelled: 'Suggestions stopped.',
-  'stale-library': 'The library changed. Reopen the playlist creator to use the current tracks.',
-  'invalid-request': 'Describe a mood or select some tracks before requesting suggestions.',
-  failed: 'Could not finish playlist suggestions. Try again.',
+  'stale-library': 'The library changed. Reopen the playlist editor.',
+  'invalid-request': 'Describe a mood or select tracks first.',
+  failed: 'Could not find suggestions. Try again.',
 };
 
 const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
@@ -125,10 +125,7 @@ export const PlaylistSuggestions = ({
   };
 
   return (
-    <section className="playlist-helper" aria-labelledby="playlist-helper-title">
-      <div className="playlist-helper-heading">
-        <h3 id="playlist-helper-title">Suggestions</h3>
-      </div>
+    <section className="playlist-helper" aria-label="Suggestions">
       <form onSubmit={(event) => void generate(event)}>
         <label className="playlist-mood-field" htmlFor="playlist-mood">Mood</label>
         <textarea
@@ -138,7 +135,7 @@ export const PlaylistSuggestions = ({
           maxLength={MAX_MOOD_LENGTH}
           rows={3}
           disabled={busy || generating}
-          placeholder="Describe a mood, e.g. sunset house at 115 BPM, or select tracks below."
+          placeholder="e.g. sunset house at 115 BPM"
         />
         <div className="playlist-helper-actions">
           {chosenSongs.size > 0 && <span>{chosenSongs.size} starting {chosenSongs.size === 1 ? 'track' : 'tracks'}</span>}
@@ -155,10 +152,6 @@ export const PlaylistSuggestions = ({
       {failure !== null && <p className="playlist-search-error" role={failure.reason === 'cancelled' ? 'status' : 'alert'}>{failureMessages[failure.reason]}</p>}
       {result !== null && (
         <div className="playlist-suggestions" aria-busy={generating}>
-          <div className="playlist-helper-heading">
-            <h4>Suggested tracks</h4>
-            <span role="status" aria-label={`${result.suggestions.length} suggestions`}>{result.suggestions.length}</span>
-          </div>
           {result.suggestions.length === 0 ? (
             <p>No matching tracks</p>
           ) : (

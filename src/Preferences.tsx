@@ -5,22 +5,8 @@ import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
 import type { LibrarySettings, OpenRouterSettings } from './shared/preferences';
 import './Preferences.css';
 
-export const PreferencesButton = (): JSX.Element => {
-  const [failed, setFailed] = useState(false);
-  return (
-    <div className="preferences-link">
-      <button className="quiet-button" type="button" onClick={() => {
-        setFailed(false);
-        void window.preferences.open().catch(() => setFailed(true));
-      }}>Preferences</button>
-      {failed && <p role="alert">Could not open Preferences. Try again.</p>}
-    </div>
-  );
-};
-
-export const Preferences = ({ onCancel, onSaved, onError }: Readonly<{
+export const Preferences = ({ onCancel, onError }: Readonly<{
   onCancel?: () => void;
-  onSaved?: () => void;
   onError?: (message: string) => void;
 }> = {}): JSX.Element => {
   const [library, setLibrary] = useState<LibrarySettings | null>(null);
@@ -45,12 +31,12 @@ export const Preferences = ({ onCancel, onSaved, onError }: Readonly<{
         setLibrary(libraryResult.value);
         setSeconds(String(libraryResult.value.minimumSongLengthSeconds));
       } else {
-        failures.push('Could not load library settings. Reopen Preferences to try again.');
+        failures.push('Could not load library settings.');
       }
       if (keyResult.status === 'fulfilled') {
         setSettings(keyResult.value);
       } else {
-        failures.push('Could not load OpenRouter settings. Reopen Preferences to try again.');
+        failures.push('Could not load OpenRouter settings.');
       }
       if (onError && failures.length > 0) onError(failures.join(' '));
       else setErrors(failures);
@@ -98,15 +84,12 @@ export const Preferences = ({ onCancel, onSaved, onError }: Readonly<{
     setSaving(false);
     if (onError && failures.length > 0) onError(failures.join(' '));
     else setErrors(failures);
-    if (failures.length === 0) {
-      onSaved?.();
-    }
   };
 
   const keyStatus = removeKey
-    ? 'The saved key will be removed when you save.'
+    ? 'Key will be removed on save.'
     : settings === null
-      ? 'Loading connection...'
+      ? 'Loading…'
       : settings.hasApiKey
         ? settings.keyStorage === 'session' ? 'Connected for this session.' : 'Connected'
         : 'Not connected';
@@ -141,7 +124,7 @@ export const Preferences = ({ onCancel, onSaved, onError }: Readonly<{
           <div className="preferences-setting-row preferences-key-row">
             <div className="preferences-explanation">
               <label htmlFor="playlist-api-key">OpenRouter API key</label>
-              <p id="playlist-api-key-help">Connect OpenRouter to suggest music for your playlists.</p>
+              <p id="playlist-api-key-help">Used for playlist suggestions.</p>
             </div>
             <div className="preferences-key-entry">
               <div className="preferences-key-input">
@@ -184,7 +167,7 @@ export const Preferences = ({ onCancel, onSaved, onError }: Readonly<{
       <footer className="preferences-page-actions">
         <button className="preferences-secondary-button" type="button" disabled={saving && onError === undefined}
           onClick={onCancel ?? (() => window.close())}>Cancel</button>
-        <button className="preferences-save-button" type="submit" disabled={!ready || saving || !valid}>{saving ? 'Saving...' : 'Save changes'}</button>
+        <button className="preferences-save-button" type="submit" disabled={!ready || saving || !valid}>{saving ? 'Saving…' : 'Save'}</button>
       </footer>
     </form>
   );

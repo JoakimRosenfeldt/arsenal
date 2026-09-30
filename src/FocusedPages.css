@@ -34,8 +34,6 @@
 .focused-library .library-search kbd { font-size: 12px; }
 .focused-library .search-icon,
 .focused-playlists .search-icon { width: 11px; height: 11px; flex: none; }
-.focused-export { border-color: transparent; background: transparent; }
-.focused-export > span { color: var(--muted); }
 
 .focused-popover { position: relative; flex: none; }
 .focused-popover > summary { display: flex; align-items: center; justify-content: center; list-style: none; cursor: pointer; }
@@ -141,7 +139,6 @@
 .focused-playlists .focused-drag-handle { width: 16px; height: 30px; padding: 0; color: var(--muted); background: transparent; cursor: grab; font-size: 17px; }
 .focused-playlists .focused-drag-handle:active { cursor: grabbing; }
 .focused-playlists .focused-row-menu .focused-popover-panel { width: 145px; gap: 2px; top: 24px; }
-.focused-playlists .focused-playlist-note { min-height: 40px; flex: none; display: flex; align-items: center; padding: 0 28px; border-top: 1px solid var(--line); color: #a5a5af; font-size: 12px; }
 .focused-playlists .focused-playlist-rules { padding: 12px 28px; border-bottom: 1px solid var(--line); color: var(--text-soft); font-size: 13px; }
 .focused-playlists .focused-playlist-rules summary { cursor: pointer; }
 .focused-playlists.is-creating > .page-header { border: 0; }
@@ -220,8 +217,6 @@
 }
 @media (max-width: 900px) {
   .focused-library .header-actions, .focused-playlists .header-actions { gap: 5px; }
-  .focused-library .focused-export, .focused-playlists .focused-export { padding-inline: 6px; }
   .focused-duplicate-controls { flex-wrap: wrap; }
-  .focused-duplicate-controls > span { flex-basis: 100%; }
   .focused-duplicates .duplicate-groups { width: 180px; }
 }

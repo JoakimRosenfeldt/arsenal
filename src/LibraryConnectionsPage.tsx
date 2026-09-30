@@ -39,7 +39,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
       if (result.kind === 'rejected') onError(result.message);
       else if (result.warnings.length > 0) onError(result.warnings.join(' '));
     } catch (error: unknown) {
-      onError(error instanceof Error ? error.message : 'Could not update the library connection. Try again.');
+      onError(error instanceof Error ? error.message : 'Could not update the connection. Try again.');
     } finally {
       setPending(null);
     }
@@ -79,12 +79,10 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
       </header>
 
       <div className="library-connections-content" aria-busy={working}>
-        <p>Connect an Arsenal library or DJ app to import and sync, or connect a folder for automatic backups.</p>
         {state === null ? <p role="status">Loading connections…</p> : <div className="library-connection-grid">
           <button className="library-connect-button" type="button" disabled={working}
             onClick={() => void run(() => onImportBackup('snapshot'), 'Connecting Arsenal library…')}>
             <span><UiIcon name="plus" size={20} /> Connect Arsenal library</span>
-            <span className="library-connection-empty-status">Open an Arsenal library file</span>
           </button>
           {libraryKinds.flatMap(({ kind, label }) => {
             const connected = connections.filter((connection) => connection.kind === kind && connection.origin === undefined);
@@ -94,7 +92,6 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
                 <button key={kind} className="library-connect-button" type="button" disabled={working}
                   onClick={() => void run(() => onConnect(kind), `Connecting ${label}…`)}>
                   <span><UiIcon name="plus" size={20} /> Connect {label}</span>
-                  <span className="library-connection-empty-status">{kind === 'rekordbox' ? 'Sync directly with Rekordbox' : 'Not connected'}</span>
                 </button>,
               ] : []),
               ...connected.map((connection) => connectionCard(connection, label)),
@@ -116,7 +113,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onSyn
           <button className="inspector-close" type="button" onClick={() => removeDialogRef.current?.close()} aria-label="Cancel removal"><UiIcon name="close" size={16} /></button>
         </div>
         <p>{removing.name}</p>
-        <p id="library-remove-description">Your Arsenal library stays saved. The connected library and music files stay on disk.</p>
+        <p id="library-remove-description">Your Arsenal library, the connected library, and music files are kept.</p>
         <div className="library-connection-remove-actions">
           <button className="quiet-button" type="button" autoFocus onClick={() => removeDialogRef.current?.close()}>Cancel</button>
           <button className="quiet-button" type="button" onClick={() => {
