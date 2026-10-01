@@ -78,7 +78,9 @@ export const readSeratoTags = async (filePath: string): Promise<ReadonlyMap<stri
         }
       }
     } else if (tag instanceof XiphComment) {
-      for (const name of tag.fieldNames.filter((field) => field.toUpperCase().startsWith('SERATO_'))) {
+      // Serato also writes plain-text fields such as SERATO_PLAYCOUNT; only the wrapped binary fields are read.
+      const known = new Set(wrappedFields.flatMap((field) => field.flac ?? []));
+      for (const name of tag.fieldNames.filter((field) => known.has(field.toUpperCase()))) {
         const value = tag.getFieldFirstValue(name);
         if (value) {
           const [field, data] = decodeWrapper(value);
