@@ -191,15 +191,22 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
         wroteLibrary = true;
       }
       if (hasPerformance || request.fields.metadata) {
+        // One unwritable audio file should not stop the rest of the library from syncing.
+        const failed: string[] = [];
         for (const track of outgoing.tracks) {
           if (!track.performance && !request.fields.metadata) continue;
-          const backup = await writeSeratoPerformance(track.path, track.performance ?? { hotCues: [], loops: [], beatgrids: [] }, {
-            hotCues: track.performance !== undefined && request.fields.hotCues,
-            loops: track.performance !== undefined && request.fields.loops,
-            beatgrids: track.performance !== undefined && request.fields.beatgrids,
-          }, request.fields.metadata ? track.song : undefined);
-          if (backup !== null) { backupPaths.push(backup); wroteLibrary = true; }
+          try {
+            const backup = await writeSeratoPerformance(track.path, track.performance ?? { hotCues: [], loops: [], beatgrids: [] }, {
+              hotCues: track.performance !== undefined && request.fields.hotCues,
+              loops: track.performance !== undefined && request.fields.loops,
+              beatgrids: track.performance !== undefined && request.fields.beatgrids,
+            }, request.fields.metadata ? track.song : undefined);
+            if (backup !== null) { backupPaths.push(backup); wroteLibrary = true; }
+          } catch (error) {
+            failed.push(`${basename(track.path)} (${error instanceof Error ? error.message : 'unknown error'})`);
+          }
         }
+        if (failed.length) warnings.push(`Could not update the audio tags of ${failed.length} file${failed.length === 1 ? '' : 's'} for Serato: ${failed.join('; ')}.`);
       }
     }
     return { kind: 'synced', trackCount: selected.tracks.length, playlistCount: selected.playlists.length,
