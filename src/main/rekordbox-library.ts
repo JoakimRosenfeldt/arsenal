@@ -60,7 +60,7 @@ import {
   isSupportedAudioPath,
 } from './track-artwork';
 import { findSeratoSource, moveSeratoNode, readSeratoLibrary, repairSeratoMissingFile, type SeratoSource } from './serato-library';
-import { mergeRekordboxXml, rekordboxSyncLibrary, repairRekordboxMissingFile } from './sync-rekordbox-xml';
+import { mergeRekordboxXml, rekordboxSyncLibrary, repairRekordboxMissingFiles } from './sync-rekordbox-xml';
 import { readSeratoWithPerformance, saveLibraryXml, syncArsenalLibraryToConnection } from './sync-libraries';
 import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
 import { resolveSeratoMediaPath } from './serato-paths';
@@ -70,7 +70,7 @@ import { readLibrarySource, type PortableLibrarySource } from './library-source'
 import { preparePrimaryLibraryEdit } from './apply-primary-library-edit';
 import { loadArsenalLibrary, mergeArsenalLibrary, saveArsenalLibrary } from './arsenal-library';
 import { describeLibraryChanges, portableLibraryPreview } from './library-changes';
-import { readRekordboxDatabase, repairRekordboxDatabaseFile } from './rekordbox-database';
+import { readRekordboxDatabase, repairRekordboxDatabaseFiles } from './rekordbox-database';
 import { detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
 type CatalogTrack = ParsedTrack;
@@ -1783,7 +1783,7 @@ export class RekordboxLibrary {
     for (const target of context.targets) {
       try {
         const library = target.kind === 'xml' ? rekordboxSyncLibrary(await parseRekordboxXml(target.path))
-          : target.kind === 'rekordbox-database' ? (await readRekordboxDatabase(target.path)).library : await readSeratoLibrary(target);
+          : target.kind === 'rekordbox-database' ? (await readRekordboxDatabase(target.path, { performance: false })).library : await readSeratoLibrary(target);
         const tracks = library.tracks.filter((track) => context.paths.has(normalizePath(track.path)));
         context.knownPaths.set(target.path, new Set(tracks.map((track) => normalizePath(track.path))));
         libraries.push({ target, kind: target.kind === 'xml' ? target.libraryKind : target.kind === 'rekordbox-database' ? 'rekordbox' : 'serato', library: { ...library, tracks } });
@@ -1856,6 +1856,7 @@ export class RekordboxLibrary {
           if (picked.canceled || replacementPath === undefined) return context.result;
           replacements.set(normalizePath(action.path), replacementPath);
         }
+        const batch: { missingPath: string; replacementPath: string | null }[] = [];
         for (const missing of missingFiles) {
           const replacementPath = replacements.get(normalizePath(missing.path)) ?? null;
           if (replacementPath !== null && !isSupportedAudioPath(replacementPath)) {
@@ -1864,25 +1865,40 @@ export class RekordboxLibrary {
           }
           if (replacementPath !== null) context.result = { ...context.result, files: context.result.files.map((file) => file.path === missing.path
             ? { ...file, candidates: [...new Set([replacementPath, ...file.candidates])] } : file) };
-          const repairs = libraries.filter(({ library }) => library.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path)))
-            .sort((left, right) => Number(left.target.kind === 'xml') - Number(right.target.kind === 'xml'));
-          for (const { target } of repairs) {
-            try {
-              let result: { backupPaths: readonly string[]; warnings: readonly string[] };
-              if (target.kind === 'rekordbox-database') result = await repairRekordboxDatabaseFile(target.path, missing.path, replacementPath);
-              else {
-                const current = target.kind === 'xml' ? rekordboxSyncLibrary(await parseRekordboxXml(target.path)) : await readSeratoLibrary(target);
-                if (!current.tracks.some((track) => normalizePath(track.path) === normalizePath(missing.path))) continue;
-                result = target.kind === 'xml' ? await repairRekordboxMissingFile(target.path, missing.path, replacementPath)
-                  : await repairSeratoMissingFile(target, missing.path, replacementPath);
+          batch.push({ missingPath: missing.path, replacementPath });
+        }
+        // Each library is read, backed up and written once for the whole batch.
+        const targets = [...libraries].sort((left, right) => Number(left.target.kind === 'xml') - Number(right.target.kind === 'xml'));
+        for (const { target, library } of targets) {
+          const present = new Set(library.tracks.map((track) => normalizePath(track.path)));
+          const repairs = batch.filter((repair) => present.has(normalizePath(repair.missingPath)));
+          if (!repairs.length) continue;
+          const name = target.kind === 'rekordbox-database' ? 'Rekordbox Collection' : basename(target.path);
+          const describe = (error: unknown): string => error instanceof RekordboxRunningError ? 'Close Rekordbox, then try again.'
+            : error instanceof Error ? error.message : 'Could not repair the connected library.';
+          try {
+            let result: { backupPaths: readonly string[]; warnings: readonly string[]; failures: readonly { path: string; message: string }[] };
+            if (target.kind === 'rekordbox-database') result = await repairRekordboxDatabaseFiles(target.path, repairs);
+            else if (target.kind === 'xml') result = await repairRekordboxMissingFiles(target.path, repairs);
+            else {
+              const backupPaths: string[] = [];
+              const warnings: string[] = [];
+              const failed: { path: string; message: string }[] = [];
+              for (const repair of repairs) {
+                try {
+                  const repaired = await repairSeratoMissingFile(target, repair.missingPath, repair.replacementPath);
+                  backupPaths.push(...repaired.backupPaths);
+                  warnings.push(...repaired.warnings);
+                } catch (error) { failed.push({ path: repair.missingPath, message: describe(error) }); }
               }
-              repairedPaths.add(normalizePath(target.path));
-              context.result = { ...context.result, backupPaths: [...context.result.backupPaths, ...result.backupPaths],
-                warnings: [...context.result.warnings, ...result.warnings] };
-            } catch (error) {
-              failures.push(`${basename(missing.path)} in ${target.kind === 'rekordbox-database' ? 'Rekordbox Collection' : basename(target.path)}: ${
-                error instanceof RekordboxRunningError ? 'Close Rekordbox, then try again.' : error instanceof Error ? error.message : 'Could not repair the connected library.'}`);
+              result = { backupPaths, warnings, failures: failed };
             }
+            if (result.failures.length < repairs.length) repairedPaths.add(normalizePath(target.path));
+            failures.push(...result.failures.map((failure) => `${basename(failure.path)} in ${name}: ${failure.message}`));
+            context.result = { ...context.result, backupPaths: [...context.result.backupPaths, ...result.backupPaths],
+              warnings: [...context.result.warnings, ...result.warnings] };
+          } catch (error) {
+            failures.push(`${repairs.length === 1 ? basename(repairs[0]?.missingPath ?? '') : `${repairs.length} files`} in ${name}: ${describe(error)}`);
           }
         }
         await this.refreshMissingSyncReport(context);

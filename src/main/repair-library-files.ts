@@ -5,6 +5,9 @@ import { isAbsolute, win32 } from 'node:path';
 import { isSupportedAudioPath } from './track-artwork';
 
 export type LibraryFileRepairResult = Readonly<{ backupPaths: string[]; warnings: string[] }>;
+export type MissingFileRepair = Readonly<{ missingPath: string; replacementPath: string | null }>;
+// Repairs that could not be applied; the rest of the batch is still saved.
+export type LibraryFilesRepairResult = LibraryFileRepairResult & Readonly<{ failures: { path: string; message: string }[] }>;
 
 export const assertMissingFileRepair = async (missingPath: string, replacementPath: string | null): Promise<void> => {
   for (const path of [missingPath, replacementPath]) {

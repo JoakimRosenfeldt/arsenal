@@ -4,6 +4,7 @@ import { basename, dirname, join } from 'node:path';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
+import type { LibraryFilesRepairResult, MissingFileRepair } from './repair-library-files';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
 type Row = Record<string, unknown>;
@@ -118,7 +119,8 @@ const readBeatgrids = async (path: string): Promise<SyncBeatgrid[]> => {
 const cueColor = [255, 0, 0] as const;
 const loopColor = [39, 170, 225] as const;
 
-export const readRekordboxDatabase = async (path: string): Promise<{ library: SyncLibrary; warnings: string[] }> => {
+// Leave out performance when only paths and playlists are needed; reading beat grids opens an analysis file per track.
+export const readRekordboxDatabase = async (path: string, { performance: withPerformance = true } = {}): Promise<{ library: SyncLibrary; warnings: string[] }> => {
   const db = await openRekordboxDatabase(path);
   try {
     schema(db);
@@ -127,7 +129,7 @@ export const readRekordboxDatabase = async (path: string): Promise<{ library: Sy
       if (!names.has(table)) names.set(table, new Map(rows(db, `SELECT ID, "${column}" FROM "${table}"`).map((row) => [id(row.ID), text(row[column])])));
     }
     const performances = new Map<string, { hotCues: SyncCue[]; memoryCues: SyncCue[]; loops: SyncLoop[]; beatgrids: SyncBeatgrid[] }>();
-    for (const cue of rows(db, 'SELECT * FROM djmdCue WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY InMsec, ID')) {
+    for (const cue of withPerformance ? rows(db, 'SELECT * FROM djmdCue WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY InMsec, ID') : []) {
       const contentId = id(cue.ContentID);
       const performance = performances.get(contentId) ?? { hotCues: [], memoryCues: [], loops: [], beatgrids: [] };
       performances.set(contentId, performance);
@@ -142,7 +144,7 @@ export const readRekordboxDatabase = async (path: string): Promise<{ library: Sy
     }
     const share = join(dirname(path), 'share');
     const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY ID');
-    for (let offset = 0; offset < contents.length; offset += 32) {
+    for (let offset = 0; withPerformance && offset < contents.length; offset += 32) {
       await Promise.all(contents.slice(offset, offset + 32).map(async (row) => {
         const analysis = text(row.AnalysisDataPath);
         if (!analysis) return;
@@ -665,40 +667,54 @@ export const writeRekordboxDatabase = async (
   }
 };
 
-// Relinks a missing Collection file, or removes its track when replacementPath is null.
-export const repairRekordboxDatabaseFile = async (path: string, missingPath: string, replacementPath: string | null): Promise<{ backupPaths: string[]; warnings: string[] }> => {
+// Relinks missing Collection files, or removes their tracks when replacementPath is null.
+export const repairRekordboxDatabaseFiles = async (path: string, repairs: readonly MissingFileRepair[]): Promise<LibraryFilesRepairResult> => {
   await assertRekordboxClosed();
   const db = await openRekordboxDatabase(path, { readonly: false });
   try {
     schema(db);
     const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0');
-    const at = (location: string): Row[] => contents.filter((row) => {
+    const byPath = new Map<string, Row[]>();
+    for (const row of contents) {
       const folderPath = text(row.FolderPath);
-      return folderPath !== null && normalizePath(folderPath) === normalizePath(location);
-    });
-    const missing = at(missingPath);
-    if (!missing.length) return { backupPaths: [], warnings: [] };
-    const existing = replacementPath === null ? undefined : at(replacementPath)[0];
-    const location = replacementPath === null ? null : process.platform === 'win32' ? replacementPath.replaceAll('\\', '/') : replacementPath;
-    const fileSize = replacementPath === null || existing !== undefined ? null : (await stat(replacementPath)).size;
+      if (folderPath === null) continue;
+      byPath.set(normalizePath(folderPath), [...byPath.get(normalizePath(folderPath)) ?? [], row]);
+    }
     const contentTables = rows(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'djmdContent'").map((row) => String(row.name))
       .filter((table) => rows(db, `PRAGMA table_info("${table}")`).some((column) => column.name === 'ContentID'));
     const now = dateTime();
     let revision = number(rows(db, "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")[0]?.int_1) ?? 0;
     const statements: { sql: string; values: Value[] }[] = [];
-    for (const row of missing) {
-      if (location !== null && existing === undefined) {
-        statements.push({ sql: 'UPDATE djmdContent SET FolderPath = ?, FileNameL = ?, FileSize = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
-          values: [location, basename(location), fileSize, ++revision, now, id(row.ID)] });
-        continue;
+    const failures: { path: string; message: string }[] = [];
+    for (const { missingPath, replacementPath } of repairs) {
+      const missing = byPath.get(normalizePath(missingPath)) ?? [];
+      if (!missing.length) continue;
+      const existing = replacementPath === null ? undefined : byPath.get(normalizePath(replacementPath))?.[0];
+      let fileSize: number | null = null;
+      if (replacementPath !== null && existing === undefined) {
+        try { fileSize = (await stat(replacementPath)).size; } catch (error) {
+          failures.push({ path: missingPath, message: error instanceof Error ? error.message : 'Could not read the replacement file.' });
+          continue;
+        }
       }
-      // The replacement is already in the Collection, so its entry takes over the missing track's playlist places.
-      if (existing !== undefined) statements.push({ sql: 'UPDATE djmdSongPlaylist SET ContentID = ?, rb_local_usn = ?, updated_at = ? WHERE ContentID = ?',
-        values: [id(existing.ID), ++revision, now, id(row.ID)] });
-      for (const table of contentTables) statements.push({ sql: `DELETE FROM "${table}" WHERE ContentID = ?`, values: [id(row.ID)] });
-      statements.push({ sql: 'DELETE FROM djmdContent WHERE ID = ?', values: [id(row.ID)] });
-      revision++;
+      byPath.delete(normalizePath(missingPath));
+      for (const row of missing) {
+        if (replacementPath !== null && existing === undefined) {
+          const location = process.platform === 'win32' ? replacementPath.replaceAll('\\', '/') : replacementPath;
+          statements.push({ sql: 'UPDATE djmdContent SET FolderPath = ?, FileNameL = ?, FileSize = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
+            values: [location, basename(location), fileSize, ++revision, now, id(row.ID)] });
+          byPath.set(normalizePath(replacementPath), [row]);
+          continue;
+        }
+        // The replacement is already in the Collection, so its entry takes over the missing track's playlist places.
+        if (existing !== undefined) statements.push({ sql: 'UPDATE djmdSongPlaylist SET ContentID = ?, rb_local_usn = ?, updated_at = ? WHERE ContentID = ?',
+          values: [id(existing.ID), ++revision, now, id(row.ID)] });
+        for (const table of contentTables) statements.push({ sql: `DELETE FROM "${table}" WHERE ContentID = ?`, values: [id(row.ID)] });
+        statements.push({ sql: 'DELETE FROM djmdContent WHERE ID = ?', values: [id(row.ID)] });
+        revision++;
+      }
     }
+    if (!statements.length) return { backupPaths: [], warnings: [], failures };
     const backupPaths = await backupRekordboxDatabase(db, path);
     db.exec('BEGIN IMMEDIATE');
     for (const statement of statements) db.prepare(statement.sql).run(...statement.values);
@@ -706,7 +722,7 @@ export const repairRekordboxDatabaseFile = async (path: string, missingPath: str
     if (rows(db, 'PRAGMA quick_check')[0]?.quick_check !== 'ok') throw new Error('Rekordbox database verification failed.');
     assertRekordboxClosedSync();
     db.exec('COMMIT');
-    return { backupPaths, warnings: [] };
+    return { backupPaths, warnings: [], failures };
   } catch (error) {
     if (db.inTransaction) db.exec('ROLLBACK');
     throw error;
