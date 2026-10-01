@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState, type JSX } from 'react';
 
 import { ONGOING_SYNC_REQUEST, type LibraryConnectionResult, type LibraryConnections, type SyncActivity, type SyncMissingFileAction, type SyncRequest, type SyncResult } from './shared/dj-library';
 
+// Notifications stay short; the Sync section lists the details.
+const syncIssuesMessage = 'Sync ran into some errors. See Connections for details.';
+
 export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissing, onImportChanges, onError, initialResult = null }: Readonly<{
   busy: boolean;
   connections: LibraryConnections | null;
@@ -110,13 +113,14 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
     try {
       const saved = await window.djLibrary.syncPreferences();
       const next = await onSync({ ...ONGOING_SYNC_REQUEST, timingOffsetMs: saved.request?.timingOffsetMs ?? 0 });
-      if (next.kind === 'rejected' && onError && result?.kind === 'missing-files') {
-        onError([next.message, ...next.warnings].join(' '));
+      if (next.kind === 'rejected' && result?.kind === 'missing-files') {
+        onError?.(syncIssuesMessage);
+        setRepairError(next.message);
         setResult(result);
         return;
       }
       if (!mounted.current && next.kind !== 'cancelled' && (next.kind === 'missing-files' || next.warnings.length > 0 ||
-        next.kind === 'synced' && next.skippedTrackCount > 0)) onError?.([next.message, ...next.warnings].join(' '));
+        next.kind === 'synced' && next.skippedTrackCount > 0)) onError?.(syncIssuesMessage);
       setResult(next.kind === 'cancelled' ? result : result?.kind === 'missing-files'
         ? { ...next, backupPaths: [...new Set([...result.backupPaths, ...next.backupPaths])] } : next);
     } catch (error: unknown) {
@@ -162,11 +166,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
         return;
       }
       if (next.kind === 'rejected') {
-        if (onError) {
-          onError([next.message, ...next.warnings].join(' '));
-          setResult(result?.kind === 'missing-files' ? result : null);
-          return;
-        }
+        onError?.(syncIssuesMessage);
         setRepairError(next.message);
         setResult((current) => {
           const previous = repairedPaths.size > 0 ? result : current;
@@ -177,7 +177,7 @@ export const SyncLibrarySettings = ({ busy, connections, onSync, onResolveMissin
         });
       } else {
         if (!mounted.current && (next.kind === 'missing-files' && next.files.length > 0 || next.warnings.length > 0 ||
-          next.kind === 'synced' && next.skippedTrackCount > 0)) onError?.([next.message, ...next.warnings].join(' '));
+          next.kind === 'synced' && next.skippedTrackCount > 0)) onError?.(syncIssuesMessage);
         setResult((current) => ({ ...next,
           warnings: [...new Set([...(current?.warnings ?? []), ...next.warnings])],
           backupPaths: [...new Set([...(current?.backupPaths ?? []), ...next.backupPaths])],

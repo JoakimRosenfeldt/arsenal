@@ -425,9 +425,7 @@ export const writeRekordboxDatabase = async (
           OutMpegFrame: 0, OutMpegAbs: 0, Color: -1, ActiveLoop: 0, BeatLoopSize: 0 };
         insert('djmdCue', Object.fromEntries(Object.entries(values).filter(([column]) => cueColumns.has(column))));
       }
-      changedCueTracks++;
     };
-    let changedCueTracks = 0;
     // Conflicts skip one track or playlist so the rest of the library still syncs.
     const conflicts: string[] = [];
     const syncedTracks = new Set<string>();
@@ -486,7 +484,6 @@ export const writeRekordboxDatabase = async (
     }
     const desired = new Map<string, { path: readonly string[]; folder: boolean; playlist?: SyncPlaylist }>();
     const incomingPlaylistPaths = new Set<string>();
-    const protectedIntelligent = new Set<string>();
     let playlistCount = 0;
     if (options.fields.playlists) for (const playlist of incoming.playlists) {
       const name = playlist.path.join(' / ');
@@ -495,11 +492,8 @@ export const writeRekordboxDatabase = async (
         conflicts.push(`${name}: Rekordbox has more than one playlist with this name`);
         continue;
       }
-      const protectedPath = playlist.path.findIndex((_, index) => number(playlistsByPath.get(pathKey(playlist.path.slice(0, index + 1)))?.Attribute) === 4);
-      if (protectedPath !== -1) {
-        protectedIntelligent.add(pathKey(playlist.path.slice(0, protectedPath + 1)));
-        continue;
-      }
+      // Native intelligent playlists keep their rules; Arsenal playlists with the same name are skipped.
+      if (playlist.path.some((_, index) => number(playlistsByPath.get(pathKey(playlist.path.slice(0, index + 1)))?.Attribute) === 4)) continue;
       const key = pathKey(playlist.path);
       if (incomingPlaylistPaths.has(key)) { conflicts.push(`${name}: Arsenal has more than one playlist with this name`); continue; }
       incomingPlaylistPaths.add(key);
@@ -516,7 +510,6 @@ export const writeRekordboxDatabase = async (
     for (const entry of desired.values()) {
       if (entry.folder && entry.playlist?.trackPaths.length) conflicts.push(`${entry.path.join(' / ')}: Rekordbox folders cannot hold tracks, so its tracks were not synced`);
     }
-    if (protectedIntelligent.size) warnings.push(`${protectedIntelligent.size} native Rekordbox intelligent playlist${protectedIntelligent.size === 1 ? ' was' : 's were'} kept unchanged. Arsenal playlists with the same names were skipped.`);
     const members = rows(db, 'SELECT * FROM djmdSongPlaylist WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY TrackNo, ID');
     const membersByPlaylist = new Map<string, Row[]>();
     for (const member of members) {
@@ -628,7 +621,6 @@ export const writeRekordboxDatabase = async (
     if (materializedSmart) warnings.push('Arsenal smart playlists were saved as regular Rekordbox playlists with their current tracks.');
     if (skippedTracks.size) warnings.push(`${skippedTracks.size} track${skippedTracks.size === 1 ? ' is' : 's are'} not in the Rekordbox Collection and could not be synced. ${options.fields.tracks ? `Rekordbox does not support ${skippedTracks.size === 1 ? 'its' : 'their'} file type.` : `Turn on Tracks to add ${skippedTracks.size === 1 ? 'it' : 'them'}.`}`);
     if (conflicts.length) warnings.push(`Skipped ${conflicts.length} item${conflicts.length === 1 ? '' : 's'} that could not sync: ${conflicts.join('; ')}.`);
-    if (changedCueTracks) warnings.push(`Cues and loops were updated on ${changedCueTracks} track${changedCueTracks === 1 ? '' : 's'}. Rekordbox shows them in its default colors.`);
     if (addedTracks) warnings.push(`${addedTracks} track${addedTracks === 1 ? ' was' : 's were'} added to the Rekordbox Collection. Rekordbox analyses ${addedTracks === 1 ? 'it' : 'them'} when opened.`);
     if (encryptedTracks) warnings.push(`${encryptedTracks} track${encryptedTracks === 1 ? ' has' : 's have'} encrypted details in Rekordbox and ${encryptedTracks === 1 ? 'was' : 'were'} left unchanged.`);
     const backupPaths: string[] = [];

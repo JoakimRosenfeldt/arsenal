@@ -45,8 +45,9 @@ const tagTypeFor = (filePath: string): TagTypes => {
 };
 
 const decodeWrapper = (value: string): readonly [string, Buffer] => {
-  let encoded = value.replace(/\s/g, '').replace(/=+$/, '');
-  if (!/^[A-Za-z0-9+/]+$/.test(encoded)) throw new Error('Invalid Serato tag encoding');
+  // Some taggers rewrite the value with URL-safe characters, padding between lines or stray bytes.
+  let encoded = value.replaceAll('-', '+').replaceAll('_', '/').replace(/[^A-Za-z0-9+/]/g, '');
+  if (!encoded) throw new Error('Invalid Serato tag encoding');
   // Serato sometimes truncates the final base64 sextet, whose missing bits are zero.
   if (encoded.length % 4 === 1) encoded += 'A';
   const decoded = Buffer.from(encoded, 'base64');
@@ -82,18 +83,21 @@ export const readSeratoTags = async (filePath: string): Promise<ReadonlyMap<stri
       const known = new Set(wrappedFields.flatMap((field) => field.flac ?? []));
       for (const name of tag.fieldNames.filter((field) => known.has(field.toUpperCase()))) {
         const value = tag.getFieldFirstValue(name);
-        if (value) {
+        if (!value) continue;
+        // A damaged field is skipped so the file's other Serato data still loads.
+        try {
           const [field, data] = decodeWrapper(value);
           result.set(field, data);
-        }
+        } catch { /* Skipped. */ }
       }
     } else if (tag instanceof Mpeg4AppleTag) {
       for (const field of wrappedFields) {
         const value = tag.getFirstItunesString('com.serato.dj', field.mp4);
-        if (value) {
+        if (!value) continue;
+        try {
           const [name, data] = decodeWrapper(value);
           result.set(name, data);
-        }
+        } catch { /* Skipped like damaged FLAC fields. */ }
       }
       for (const value of tag.getQuickTimeData(Mpeg4BoxType.ITUNES_TAG_BOX)) {
         const encoded = Buffer.from(value.toByteArray()).toString('utf8');
