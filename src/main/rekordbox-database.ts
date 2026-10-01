@@ -96,7 +96,22 @@ const links = {
 } as const;
 
 // ANLZ layout follows Deep Symmetry's crate-digger notes: a big-endian "PMAI" file of tagged sections, where PQTZ holds the beat grid.
+const beatgridCache = new Map<string, Readonly<{ identity: string; grids: SyncBeatgrid[] }>>();
+// Analysis files only change when Rekordbox reanalyses a track, so parsed grids are reused until the file changes.
 const readBeatgrids = async (path: string): Promise<SyncBeatgrid[]> => {
+  let identity: string;
+  try {
+    const info = await stat(path, { bigint: true });
+    identity = `${info.ino}:${info.size}:${info.mtimeNs}`;
+  } catch { return []; }
+  const cached = beatgridCache.get(path);
+  if (cached?.identity === identity) return cached.grids;
+  const grids = await parseBeatgrids(path);
+  beatgridCache.set(path, { identity, grids });
+  return grids;
+};
+
+const parseBeatgrids = async (path: string): Promise<SyncBeatgrid[]> => {
   let data: Buffer;
   try { data = await readFile(path); } catch { return []; }
   if (data.length < 12 || data.toString('latin1', 0, 4) !== 'PMAI') return [];

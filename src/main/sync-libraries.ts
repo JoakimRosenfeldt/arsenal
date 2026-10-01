@@ -18,18 +18,18 @@ export const readSeratoWithPerformance = async (source: SeratoSource, includePer
   const warnings: string[] = [];
   const tracks: SyncTrack[] = [];
   let missingFiles = false;
-  for (const track of library.tracks) {
-    if (!includePerformance || track.song.source !== 'local') {
-      tracks.push(track);
-      continue;
-    }
+  const read = async (track: SyncTrack): Promise<SyncTrack> => {
+    if (!includePerformance || track.song.source !== 'local') return track;
     try {
-      tracks.push({ ...track, performance: await readSeratoPerformance(track.path) });
+      return { ...track, performance: await readSeratoPerformance(track.path) };
     } catch (error) {
       if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR')) missingFiles = true;
-      tracks.push(track);
       warnings.push(`${basename(track.path)}: ${error instanceof Error ? error.message : 'Could not read performance data.'}`);
+      return track;
     }
+  };
+  for (let offset = 0; offset < library.tracks.length; offset += 16) {
+    tracks.push(...await Promise.all(library.tracks.slice(offset, offset + 16).map(read)));
   }
   return { library: { ...library, tracks }, warnings, missingFiles };
 };
@@ -132,7 +132,7 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
         playlists: projected.playlists.map((playlist) => ({ ...playlist, trackPaths: playlist.trackPaths.map((path) => locations.get(path) ?? path) })) };
       const saved = await writeRekordboxDatabase(target.path, incoming, { fields: request.fields, mode: request.mode ?? 'merge', removePlaylistPaths });
       return { kind: 'synced', ...saved,
-        skippedTrackCount: saved.skippedTrackCount + library.tracks.length - incoming.tracks.length,
+        skippedTrackCount: saved.skippedTrackCount,
         message: 'Rekordbox Collection updated. Your changes appear when you open Rekordbox.' };
     }
     const serato = target.kind === 'serato' ? await findSeratoSource(target.path) : null;
@@ -210,7 +210,7 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
       }
     }
     return { kind: 'synced', trackCount: selected.tracks.length, playlistCount: selected.playlists.length,
-      skippedTrackCount: Math.max(0, library.tracks.length - selected.tracks.length), backupPaths, warnings,
+      skippedTrackCount: Math.max(0, local.tracks.length - selected.tracks.length), backupPaths, warnings,
       message: target.kind === 'serato' ? 'Arsenal library synced to Serato. Reopen Serato to load the changes.'
         : 'Rekordbox XML updated. Rekordbox Collection needs a separate import. Refresh "rekordbox xml" in its sidebar, open "All Tracks", and drag the changed tracks into Collection. Import changed XML playlists into Playlists separately.' };
   } catch (error) {

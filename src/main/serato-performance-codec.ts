@@ -248,7 +248,10 @@ export const encodeSeratoPerformance = (
       loops.push({ ...loop, index });
     }
   }
-  const performance = { hotCues: fields.hotCues ? incoming.hotCues : current.hotCues, loops: fields.loops ? loops : current.loops, beatgrids: fields.beatgrids ? incoming.beatgrids : current.beatgrids };
+  // Serato has 8 hot cue slots; extra cues in a taken or out-of-range slot are left out instead of failing the track.
+  const slots = new Set<number>();
+  const hotCues = incoming.hotCues.filter((cue) => Number.isInteger(cue.index) && cue.index >= 0 && cue.index <= 7 && !slots.has(cue.index) && slots.add(cue.index));
+  const performance = { hotCues: fields.hotCues ? hotCues : current.hotCues, loops: fields.loops ? loops : current.loops, beatgrids: fields.beatgrids ? incoming.beatgrids : current.beatgrids };
   if (fields.hotCues) validateMarkers(performance.hotCues, 7, 50);
   if (fields.loops) {
     validateMarkers(performance.loops, 7, 32747);
