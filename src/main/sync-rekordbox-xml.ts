@@ -101,15 +101,16 @@ export const repairRekordboxMissingFile = async (
   const missingKey = await seratoMediaPathKey(missingPath);
   const replacementKey = replacementPath === null ? null : await seratoMediaPathKey(replacementPath);
   const locations = new Set<string>();
+  let existingLocation: string | undefined;
   for (const track of children(collection, 'TRACK')) {
     const location = track.attributes.Location;
     const path = pathFromLocation(location ?? null);
     if (path === null || location === undefined) continue;
     const key = await seratoMediaPathKey(path);
     if (key === missingKey) locations.add(location);
-    else if (key === replacementKey) throw new Error('The selected audio file already has an entry in this Rekordbox collection. Remove the missing entry or choose another audio file.');
+    else if (key === replacementKey) existingLocation ??= location;
   }
-  const after = Buffer.from(repairRekordboxXmlLocations(source, locations, replacementPath === null ? null : locationFor(replacementPath)), 'utf8');
+  const after = Buffer.from(repairRekordboxXmlLocations(source, locations, replacementPath === null ? null : locationFor(replacementPath), existingLocation), 'utf8');
   return saveRepairedLibraryFiles([{ path: xmlPath, before, after }], () => assertMissingFileRepair(missingPath, replacementPath));
 };
 
