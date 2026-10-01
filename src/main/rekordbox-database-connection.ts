@@ -1,6 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { copyFile, mkdir, open, readFile, realpath, stat } from 'node:fs/promises';
+import { copyFile, mkdir, open, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -118,9 +118,22 @@ export const openRekordboxDatabase = async (
   }
 };
 
+const backupInterval = 60 * 60 * 1000;
+
+// Ongoing sync writes after every edit, so a full copy of the database is made at most once an hour.
+const recentBackup = async (root: string, name: string): Promise<boolean> => {
+  let entries: string[];
+  try { entries = await readdir(root); } catch { return false; }
+  for (const entry of entries) {
+    try { if ((await stat(join(root, entry, name))).mtimeMs > Date.now() - backupInterval) return true; } catch { /* Not a database backup. */ }
+  }
+  return false;
+};
+
 export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: string): Promise<string[]> => {
   await assertRekordboxClosed();
   if (db.inTransaction) throw new Error('Back up the Rekordbox database before starting a transaction.');
+  if (await recentBackup(join(dirname(path), 'arsenal-backups'), basename(path))) return [];
   const directory = join(dirname(path), 'arsenal-backups', `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
   await mkdir(directory, { recursive: true });
   const databaseBackup = join(directory, basename(path));

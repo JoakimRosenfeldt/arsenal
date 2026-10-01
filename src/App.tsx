@@ -985,6 +985,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           onImportBackup={(mode) => manageConnection(() => window.djLibrary.importBackup(mode), true)}
           onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind), true)}
           onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open', action.kind === 'disconnect' ? action.id : undefined)}
+          onImportChanges={(id) => manageConnection(() => window.djLibrary.manageLibraryConnection({ kind: 'open', id }))}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
           onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />;
       case 'preferences':

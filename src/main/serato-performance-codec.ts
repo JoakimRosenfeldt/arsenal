@@ -88,7 +88,8 @@ const readBeatgrid = (raw: Buffer | undefined): SyncBeatgrid[] => {
   if (!raw) return [];
   requireBytes(raw.length >= 7 && raw[0] === 1 && raw[1] === 0, BEATGRID);
   const count = raw.readUInt32BE(2);
-  requireBytes(count * 8 + 7 === raw.length, BEATGRID);
+  // The one-byte footer is missing or followed by padding in some files, so only the markers must be present.
+  requireBytes(count * 8 + 6 <= raw.length, BEATGRID);
   const grids: SyncBeatgrid[] = [];
   let beatCount = 0;
   for (let index = 0; index < count; index++) {
@@ -132,7 +133,10 @@ export const decodeSeratoPerformance = (tags: ReadonlyMap<string, Buffer>): Sync
       loops.set(index, { ...cue, end, locked: bytes[21] !== 0 });
     }
   }
-  return { hotCues: [...hotCues.values()].sort((a, b) => a.index - b.index), loops: [...loops.values()].sort((a, b) => a.index - b.index), beatgrids: readBeatgrid(tags.get(BEATGRID)) };
+  // An unreadable grid should not discard the track's cues and loops.
+  let beatgrids: SyncBeatgrid[] = [];
+  try { beatgrids = readBeatgrid(tags.get(BEATGRID)); } catch { /* Left empty; encodeSeratoPerformance keeps the original bytes. */ }
+  return { hotCues: [...hotCues.values()].sort((a, b) => a.index - b.index), loops: [...loops.values()].sort((a, b) => a.index - b.index), beatgrids };
 };
 
 const validateMarkers = (cues: readonly SyncCue[], maxIndex: number, maxNameBytes: number): void => {
@@ -244,7 +248,10 @@ export const encodeSeratoPerformance = (
       loops.push({ ...loop, index });
     }
   }
-  const performance = { hotCues: fields.hotCues ? incoming.hotCues : current.hotCues, loops: fields.loops ? loops : current.loops, beatgrids: fields.beatgrids ? incoming.beatgrids : current.beatgrids };
+  // Serato has 8 hot cue slots; extra cues in a taken or out-of-range slot are left out instead of failing the track.
+  const slots = new Set<number>();
+  const hotCues = incoming.hotCues.filter((cue) => Number.isInteger(cue.index) && cue.index >= 0 && cue.index <= 7 && !slots.has(cue.index) && slots.add(cue.index));
+  const performance = { hotCues: fields.hotCues ? hotCues : current.hotCues, loops: fields.loops ? loops : current.loops, beatgrids: fields.beatgrids ? incoming.beatgrids : current.beatgrids };
   if (fields.hotCues) validateMarkers(performance.hotCues, 7, 50);
   if (fields.loops) {
     validateMarkers(performance.loops, 7, 32747);
@@ -259,7 +266,8 @@ export const encodeSeratoPerformance = (
     updates.set(MARKERS2, writeMarkers2(retained, existing.get(MARKERS2)?.length ?? 0));
     if (includeLegacy) updates.set(MARKERS, writeLegacy(existing.get(MARKERS), performance, fields));
   }
-  if (fields.beatgrids) updates.set(BEATGRID, writeBeatgrid(performance.beatgrids, existing.get(BEATGRID)));
+  // Without an incoming grid, keep Serato's own grid instead of erasing it.
+  if (fields.beatgrids && (performance.beatgrids.length || !existing.has(BEATGRID))) updates.set(BEATGRID, writeBeatgrid(performance.beatgrids, existing.get(BEATGRID)));
   for (const [name, bytes] of updates) if (existing.get(name)?.equals(bytes)) updates.delete(name);
   return updates;
 };

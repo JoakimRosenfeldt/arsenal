@@ -28,7 +28,6 @@ const api: DjLibraryApi = Object.freeze({
   importBackup: (mode) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importBackup, mode),
   connectLibrary: (kind) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.connectLibrary, kind),
   manageLibraryConnection: (action) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.manageLibraryConnection, action),
-  selectSyncLibrary: (id) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.selectSyncLibrary, id),
   importRekordboxExport: () =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importExport),
   importSeratoLibrary: () =>
@@ -38,7 +37,6 @@ const api: DjLibraryApi = Object.freeze({
   resolveSyncMissingFile: (action) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.resolveSyncMissingFile, action),
   syncPreferences: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.syncPreferences),
   syncActivity: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.syncActivity),
-  stopOngoingSync: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.stopOngoingSync),
   onSyncActivity: (listener) => {
     const handleChange = (_event: IpcRendererEvent, activity: SyncActivity): void => listener(activity);
     ipcRenderer.on(DJ_LIBRARY_CHANNELS.syncActivityChanged, handleChange);

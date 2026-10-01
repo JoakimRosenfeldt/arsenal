@@ -724,10 +724,31 @@ export const repairRekordboxXmlLocations = (
   source: string,
   locations: ReadonlySet<string>,
   replacementLocation: string | null,
+  // Location of an existing entry for the replacement file; it takes over the missing entry's playlist places.
+  existingLocation?: string,
 ): string => {
   const index = scanXml(source);
   const targets = index.collectionTracks.filter((track) => locations.has(track.attributes.Location ?? ''));
   if (targets.length === 0) throw new RekordboxWriteError('target-not-found', 'The missing track is no longer in this XML collection.');
+  const existing = existingLocation === undefined ? undefined : index.collectionTracks.find((track) => track.attributes.Location === existingLocation);
+  if (existing !== undefined) {
+    const targetSet = new Set(targets);
+    const remainingIds = new Set(index.collectionTracks.filter((track) => !targetSet.has(track)).map((track) => track.attributes.TrackID));
+    const ids = new Set(targets.flatMap((track) => track.attributes.TrackID && !remainingIds.has(track.attributes.TrackID) ? [track.attributes.TrackID] : []));
+    const replacements = [
+      ...targets.map((track) => removalReplacement(source, track)),
+      openingReplacement(source, index.collection, 'Entries', String(index.collectionTracks.length - targets.length)),
+    ];
+    for (const playlist of index.playlistNodes) {
+      const keys = playlist.keyType === '0' ? ids : playlist.keyType === '1' ? locations : null;
+      const key = playlist.keyType === '0' ? existing.attributes.TrackID : existing.attributes.Location;
+      if (keys === null || key === undefined) continue;
+      for (const track of playlist.trackReferences) if (keys.has(track.attributes.Key ?? '')) replacements.push(openingReplacement(source, track, 'Key', key));
+    }
+    const result = applyReplacements(source, replacements);
+    scanXml(result);
+    return result;
+  }
   if (replacementLocation === null) {
     const targetSet = new Set(targets);
     const remainingIds = new Set(index.collectionTracks.filter((track) => !targetSet.has(track)).map((track) => track.attributes.TrackID));

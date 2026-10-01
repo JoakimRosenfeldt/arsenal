@@ -1,5 +1,5 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream, constants } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
 import { copyFile, mkdtemp, open, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 
@@ -18,7 +18,7 @@ import {
   TagTypes,
   XiphComment,
 } from 'node-taglib-sharp';
-import type { Tag } from 'node-taglib-sharp';
+import type { Id3v2UniqueFileIdentifierFrame, Tag } from 'node-taglib-sharp';
 import type { SongRow } from '../shared/dj-library';
 
 const wrappedFields = [
@@ -45,8 +45,9 @@ const tagTypeFor = (filePath: string): TagTypes => {
 };
 
 const decodeWrapper = (value: string): readonly [string, Buffer] => {
-  let encoded = value.replace(/\s/g, '').replace(/=+$/, '');
-  if (!/^[A-Za-z0-9+/]+$/.test(encoded)) throw new Error('Invalid Serato tag encoding');
+  // Some taggers rewrite the value with URL-safe characters, padding between lines or stray bytes.
+  let encoded = value.replaceAll('-', '+').replaceAll('_', '/').replace(/[^A-Za-z0-9+/]/g, '');
+  if (!encoded) throw new Error('Invalid Serato tag encoding');
   // Serato sometimes truncates the final base64 sextet, whose missing bits are zero.
   if (encoded.length % 4 === 1) encoded += 'A';
   const decoded = Buffer.from(encoded, 'base64');
@@ -65,11 +66,19 @@ const encodeWrapper = (name: string, data: Buffer, lineBreaks: boolean): string 
   return lineBreaks ? encoded.match(/.{1,72}/g)?.join('\n') ?? '' : encoded;
 };
 
-export const readSeratoTags = async (filePath: string): Promise<ReadonlyMap<string, Buffer>> => {
+type AudioSnapshot = Readonly<{
+  tags: ReadonlyMap<string, Buffer>;
+  metadata: Readonly<{ fields: Readonly<Record<string, string>>; bpm: number; apple: boolean }> | null;
+}>;
+
+// One open reads both the Serato data and the standard metadata used to skip unchanged files.
+const readSnapshot = (filePath: string): AudioSnapshot => {
   const tagType = tagTypeFor(filePath);
   const file = File.createFromPath(filePath, undefined, ReadStyle.None);
   try {
     const tag = file.getTag(tagType, false);
+    const metadata = tag ? { fields: Object.fromEntries(standardFields.map((key) => [key, JSON.stringify(tag[key])])),
+      bpm: readBpm(tag), apple: tag instanceof Mpeg4AppleTag } : null;
     const result = new Map<string, Buffer>();
     if (tag instanceof Id3v2Tag) {
       for (const frame of tag.getFramesByClassType<Id3v2AttachmentFrame>(Id3v2FrameClassType.AttachmentFrame)) {
@@ -78,20 +87,25 @@ export const readSeratoTags = async (filePath: string): Promise<ReadonlyMap<stri
         }
       }
     } else if (tag instanceof XiphComment) {
-      for (const name of tag.fieldNames.filter((field) => field.toUpperCase().startsWith('SERATO_'))) {
+      // Serato also writes plain-text fields such as SERATO_PLAYCOUNT; only the wrapped binary fields are read.
+      const known = new Set(wrappedFields.flatMap((field) => field.flac ?? []));
+      for (const name of tag.fieldNames.filter((field) => known.has(field.toUpperCase()))) {
         const value = tag.getFieldFirstValue(name);
-        if (value) {
+        if (!value) continue;
+        // A damaged field is skipped so the file's other Serato data still loads.
+        try {
           const [field, data] = decodeWrapper(value);
           result.set(field, data);
-        }
+        } catch { /* Skipped. */ }
       }
     } else if (tag instanceof Mpeg4AppleTag) {
       for (const field of wrappedFields) {
         const value = tag.getFirstItunesString('com.serato.dj', field.mp4);
-        if (value) {
+        if (!value) continue;
+        try {
           const [name, data] = decodeWrapper(value);
           result.set(name, data);
-        }
+        } catch { /* Skipped like damaged FLAC fields. */ }
       }
       for (const value of tag.getQuickTimeData(Mpeg4BoxType.ITUNES_TAG_BOX)) {
         const encoded = Buffer.from(value.toByteArray()).toString('utf8');
@@ -101,11 +115,29 @@ export const readSeratoTags = async (filePath: string): Promise<ReadonlyMap<stri
         }
       }
     }
-    return result;
+    return { tags: result, metadata };
   } finally {
     file.dispose();
   }
 };
+
+// Every sync checks every audio file, so parsed tags are kept until the file changes on disk.
+const snapshots = new Map<string, Readonly<{ identity: string; snapshot: AudioSnapshot }>>();
+const fileIdentity = async (filePath: string): Promise<string> => {
+  const info = await stat(filePath, { bigint: true });
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+};
+const inspectAudioFile = async (filePath: string, cache = true): Promise<AudioSnapshot> => {
+  if (!cache) return readSnapshot(filePath);
+  const identity = await fileIdentity(filePath);
+  const cached = snapshots.get(filePath);
+  if (cached?.identity === identity) return cached.snapshot;
+  const snapshot = readSnapshot(filePath);
+  snapshots.set(filePath, { identity, snapshot });
+  return snapshot;
+};
+
+export const readSeratoTags = async (filePath: string): Promise<ReadonlyMap<string, Buffer>> => (await inspectAudioFile(filePath)).tags;
 
 const standardMetadata = (song: SongRow) => ({
   title: song.title || null,
@@ -123,23 +155,20 @@ const standardMetadata = (song: SongRow) => ({
 });
 const standardFields = ['title', 'performers', 'album', 'genres', 'comment', 'composers', 'remixedBy', 'publisher', 'initialKey', 'year', 'track', 'disc'] satisfies readonly (keyof Tag)[];
 
+// Sound effects can carry a 0 BPM, which audio tags cannot store; it is skipped like a missing BPM.
+const validBpm = (bpm: number | null): bpm is number => bpm !== null && Number.isFinite(bpm) && bpm > 0 && bpm <= 65535;
+
 const readBpm = (tag: Tag): number => {
   if (tag instanceof Id3v2Tag) return Number(tag.getTextAsString(bpmFrame));
   if (tag instanceof XiphComment) return Number(tag.getFieldFirstValue('TEMPO') || tag.getFieldFirstValue('BPM'));
   return tag.beatsPerMinute;
 };
 
-const metadataMatches = (filePath: string, song: SongRow): boolean => {
-  const file = File.createFromPath(filePath, undefined, ReadStyle.None);
-  try {
-    const tag = file.getTag(tagTypeFor(filePath), false);
-    if (!tag) return false;
-    const expected = standardMetadata(song);
-    return standardFields.every((key) => expected[key] === null || JSON.stringify(expected[key]) === JSON.stringify(tag[key])) &&
-      (song.bpm === null || readBpm(tag) === (tag instanceof Mpeg4AppleTag ? Math.round(song.bpm) : song.bpm));
-  } finally {
-    file.dispose();
-  }
+const metadataMatches = ({ metadata }: AudioSnapshot, song: SongRow): boolean => {
+  if (!metadata) return false;
+  const expected = standardMetadata(song);
+  return standardFields.every((key) => expected[key] === null || JSON.stringify(expected[key]) === metadata.fields[key]) &&
+    (!validBpm(song.bpm) || metadata.bpm === (metadata.apple ? Math.round(song.bpm) : song.bpm));
 };
 
 const updateTags = (filePath: string, tags: ReadonlyMap<string, Buffer>, song?: SongRow): void => {
@@ -147,10 +176,15 @@ const updateTags = (filePath: string, tags: ReadonlyMap<string, Buffer>, song?: 
   try {
     const tag = file.getTag(tagTypeFor(filePath), true);
     if (!tag) throw new Error(`Cannot create audio metadata in ${filePath}`);
+    // taglib cannot render UFID frames it failed to parse (no or several separators), and their data is already lost.
+    if (tag instanceof Id3v2Tag) {
+      for (const frame of tag.getFramesByClassType<Id3v2UniqueFileIdentifierFrame>(Id3v2FrameClassType.UniqueFileIdentifierFrame)) {
+        if (frame.owner === undefined) tag.removeFrame(frame);
+      }
+    }
     if (song) {
       Object.assign(tag, Object.fromEntries(Object.entries(standardMetadata(song)).filter(([, value]) => value !== null)));
-      if (song.bpm !== null) {
-        if (!Number.isFinite(song.bpm) || song.bpm <= 0 || song.bpm > 65535) throw new Error('Invalid BPM for audio metadata.');
+      if (validBpm(song.bpm)) {
         if (tag instanceof Id3v2Tag) tag.setTextFrame(bpmFrame, String(song.bpm));
         else if (tag instanceof XiphComment) {
           tag.setFieldAsStrings('BPM', String(song.bpm));
@@ -187,12 +221,6 @@ const updateTags = (filePath: string, tags: ReadonlyMap<string, Buffer>, song?: 
   }
 };
 
-const fingerprintFor = async (filePath: string): Promise<string> => {
-  const hash = createHash('sha256');
-  for await (const data of createReadStream(filePath)) hash.update(data);
-  return hash.digest('hex');
-};
-
 export const writeSeratoTags = async (
   filePath: string,
   tags: ReadonlyMap<string, Buffer>,
@@ -201,30 +229,34 @@ export const writeSeratoTags = async (
   if (tags.size === 0 && !song) return { backupPaths: [] };
   tagTypeFor(filePath);
   const target = await realpath(filePath);
-  const original = await readSeratoTags(target);
+  const current = await inspectAudioFile(target);
+  const original = current.tags;
   const updates = new Map(tags);
   const autotags = updates.get('Serato Autotags') ?? original.get('Serato Autotags');
-  if (song?.bpm !== null && song?.bpm !== undefined && autotags) {
+  if (song && validBpm(song.bpm) && autotags) {
     const bpmEnd = autotags.indexOf(0, 2);
     if (autotags[0] !== 1 || autotags[1] !== 1 || bpmEnd < 2) throw new Error('Unsupported Serato Autotags data.');
     updates.set('Serato Autotags', Buffer.concat([autotags.subarray(0, 2), Buffer.from(`${song.bpm.toFixed(2)}\0`, 'ascii'), autotags.subarray(bpmEnd + 1)]));
   }
-  if ([...updates].every(([name, data]) => original.get(name)?.equals(data)) && (!song || metadataMatches(target, song))) return { backupPaths: [] };
+  if ([...updates].every(([name, data]) => original.get(name)?.equals(data)) && (!song || metadataMatches(current, song))) return { backupPaths: [] };
   if (!(await stat(target)).isFile()) throw new Error(`Not an audio file: ${filePath}`);
-  const expectedFingerprint = await fingerprintFor(target);
+  // Size, times and inode detect outside edits without hashing the whole audio file.
+  const expectedIdentity = await fileIdentity(target);
+  // Clones are instant on APFS and fall back to a normal copy elsewhere.
+  const copyMode = constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE;
   const temporaryDirectory = await mkdtemp(join(dirname(target), '.arsenal-tags-'));
   const temporaryPath = join(temporaryDirectory, basename(target));
   try {
-    await copyFile(target, temporaryPath, constants.COPYFILE_EXCL);
-    if (await fingerprintFor(temporaryPath) !== expectedFingerprint) throw new Error(`Audio file changed before saving: ${filePath}`);
+    await copyFile(target, temporaryPath, copyMode);
+    if (await fileIdentity(target) !== expectedIdentity) throw new Error(`Audio file changed before saving: ${filePath}`);
     updateTags(temporaryPath, updates, song);
-    const written = await readSeratoTags(temporaryPath);
-    if (![...updates].every(([name, data]) => written.get(name)?.equals(data)) || song && !metadataMatches(temporaryPath, song)) throw new Error(`Could not verify saved audio tags: ${filePath}`);
+    const written = await inspectAudioFile(temporaryPath, false);
+    if (![...updates].every(([name, data]) => written.tags.get(name)?.equals(data)) || song && !metadataMatches(written, song)) throw new Error(`Could not verify saved audio tags: ${filePath}`);
     const temporaryFile = await open(temporaryPath, 'r+');
     try { await temporaryFile.sync(); } finally { await temporaryFile.close(); }
     const backupPath = `${target}.arsenal-backup-${Date.now()}-${randomUUID()}`;
-    await copyFile(target, backupPath, constants.COPYFILE_EXCL);
-    if (await fingerprintFor(backupPath) !== expectedFingerprint || await fingerprintFor(target) !== expectedFingerprint) {
+    await copyFile(target, backupPath, copyMode);
+    if (await fileIdentity(target) !== expectedIdentity) {
       throw new Error(`Audio file changed while saving: ${filePath}`);
     }
     await rename(temporaryPath, target);

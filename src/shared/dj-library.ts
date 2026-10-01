@@ -16,7 +16,6 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   importBackup: 'dj-library:import-backup',
   connectLibrary: 'dj-library:connect-library',
   manageLibraryConnection: 'dj-library:manage-library-connection',
-  selectSyncLibrary: 'dj-library:select-sync-library',
   importExport: 'dj-library:import-export',
   importSerato: 'dj-library:import-serato',
   syncLibraries: 'dj-library:sync-libraries',
@@ -24,7 +23,6 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   syncPreferences: 'dj-library:sync-preferences',
   syncActivity: 'dj-library:sync-activity',
   syncActivityChanged: 'dj-library:sync-activity-changed',
-  stopOngoingSync: 'dj-library:stop-ongoing-sync',
   libraryChanged: 'dj-library:library-changed',
   chooseSyncLibrary: 'dj-library:choose-sync-library',
   listSongs: 'dj-library:list-songs',
@@ -284,6 +282,10 @@ export type SyncRequest = Readonly<{
   timingOffsetMs: number;
 }>;
 
+// Connected libraries always sync everything with Arsenal as it changes.
+export const ONGOING_SYNC_REQUEST: SyncRequest = Object.freeze({ direction: 'both', cadence: 'ongoing', mode: 'merge', conflictSource: 'rekordbox',
+  fields: Object.freeze({ tracks: true, metadata: true, playlists: true, hotCues: true, loops: true, beatgrids: true }), timingOffsetMs: 0 });
+
 export type SyncPreferences = Readonly<{
   request: SyncRequest | null;
   rekordboxPath: string | null;
@@ -363,6 +365,8 @@ export type SyncResult =
       message: string;
       warnings: readonly string[];
       backupPaths: readonly string[];
+      // Connections whose own changes must be imported into Arsenal before sync can continue.
+      importConnectionIds?: readonly string[];
     }>;
 
 export type SyncActivity = Readonly<{
@@ -523,14 +527,12 @@ export type DjLibraryApi = Readonly<{
   importBackup(mode?: 'folder' | 'snapshot'): Promise<LibraryConnectionResult>;
   connectLibrary(kind: LibrarySourceKind): Promise<LibraryConnectionResult>;
   manageLibraryConnection(action: LibraryConnectionAction): Promise<LibraryConnectionResult>;
-  selectSyncLibrary(id: string): Promise<SyncPreferences>;
   importRekordboxExport(): Promise<ImportResult>;
   importSeratoLibrary(): Promise<ImportResult>;
   syncLibraries(request: SyncRequest): Promise<SyncResult>;
   resolveSyncMissingFile(action: SyncMissingFileAction): Promise<SyncResult>;
   syncPreferences(): Promise<SyncPreferences>;
   syncActivity(): Promise<SyncActivity>;
-  stopOngoingSync(): Promise<SyncActivity>;
   onSyncActivity(listener: (activity: SyncActivity) => void): () => void;
   onLibraryChanged(listener: (status: LibraryStatus) => void): () => void;
   chooseSyncLibrary(kind: LibrarySourceKind, direction: SyncDirection): Promise<SyncPreferences | null>;
