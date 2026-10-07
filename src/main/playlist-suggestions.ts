@@ -1,4 +1,4 @@
-import { MAX_MOOD_LENGTH, type PlaylistSuggestionRequest } from '../shared/playlist-suggestions';
+import { MAX_MOOD_LENGTH, SUGGESTION_MODELS, type PlaylistSuggestionRequest } from '../shared/playlist-suggestions';
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -9,8 +9,9 @@ const isSongIds = (value: unknown): value is string[] =>
   new Set(value).size === value.length;
 
 export const readPlaylistSuggestionRequest = (value: unknown): PlaylistSuggestionRequest | null => {
+  const model = isRecord(value) ? SUGGESTION_MODELS.find(({ id }) => id === value.model)?.id : undefined;
   if (
-    !isRecord(value) ||
+    !isRecord(value) || model === undefined ||
     typeof value.revision !== 'string' || value.revision.length === 0 ||
     typeof value.mood !== 'string' || value.mood.length > MAX_MOOD_LENGTH ||
     !isSongIds(value.seedSongIds) ||
@@ -19,6 +20,7 @@ export const readPlaylistSuggestionRequest = (value: unknown): PlaylistSuggestio
   ) return null;
   return {
     revision: value.revision,
+    model,
     mood: value.mood.trim(),
     seedSongIds: value.seedSongIds,
     excludedSongIds: value.excludedSongIds,
