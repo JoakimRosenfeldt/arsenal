@@ -130,7 +130,7 @@ export const suggestJevPlaylist = async (
         const detail = redact(`OpenRouter HTTP ${response.status}${code !== response.status ? ` (error ${code})` : ''}: ${message}`);
         const reason = serviceFailure(response.ok ? code : response.status, message);
         logPlaylistDebug('Decisions failed', { status: response.status, code, detail });
-        if (reason === 'context-too-large' && batch.length > 1) {
+        if ((reason === 'context-too-large' || reason === 'timed-out') && batch.length > 1) {
           batchLimit = Math.max(1, Math.floor(batch.length / 2));
           logPlaylistDebug('Decisions smaller batch', { tracks: batchLimit });
           continue;
@@ -155,7 +155,13 @@ export const suggestJevPlaylist = async (
       logPlaylistDebug('Decisions response', { tracks: batch.length, inputTokens: isRecord(result.usage) ? result.usage.input_tokens : undefined });
     } catch (error: unknown) {
       if (signal.aborted) return { kind: 'rejected', reason: 'cancelled' };
-      if (timeout.aborted || deadline.aborted) return { kind: 'rejected', reason: 'timed-out' };
+      if (deadline.aborted) return { kind: 'rejected', reason: 'timed-out' };
+      if (timeout.aborted && batch.length > 1) {
+        batchLimit = Math.max(1, Math.floor(batch.length / 2));
+        logPlaylistDebug('Decisions smaller batch', { tracks: batchLimit });
+        continue;
+      }
+      if (timeout.aborted) return { kind: 'rejected', reason: 'timed-out' };
       const cause = error instanceof Error && isRecord(error.cause) && typeof error.cause.code === 'string' ? ` (${error.cause.code})` : '';
       const detail = redact(`${error instanceof Error ? error.message : 'Network request failed'}${cause}`);
       logPlaylistDebug('Decisions connection failed', { detail });
