@@ -6,6 +6,7 @@ import {
   type PlaylistSuggestionRequest,
   type PlaylistSuggestionResult,
   type SuggestionModel,
+  SUGGESTION_MODELS,
 } from '../shared/playlist-suggestions';
 import { logPlaylistDebug } from './playlist-debug';
 import { matchesTempo, orderPlaylist, tempoFromMood } from './rank-playlist';
@@ -97,7 +98,7 @@ export const suggestJevPlaylist = async (
   const candidates = songs.filter((song) => !excludedIds.has(song.id) && matchesTempo(song, tempo));
   const scored: Omit<PlaylistSuggestion, 'reason'>[] = [];
   const deadline = AbortSignal.timeout(300_000);
-  let batchLimit = Infinity;
+  let batchLimit = SUGGESTION_MODELS.find(({ id }) => id === request.model)?.maxQuestions ?? Infinity;
   for (let offset = 0; offset < candidates.length;) {
     if (signal.aborted) return { kind: 'rejected', reason: 'cancelled' };
     if (deadline.aborted) return { kind: 'rejected', reason: 'timed-out' };
