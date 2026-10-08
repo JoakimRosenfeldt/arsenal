@@ -5,9 +5,11 @@ import type { SongRow } from './shared/dj-library';
 import {
   MAX_MOOD_LENGTH,
   PLAYLIST_DEBUG_PREFIX,
+  SUGGESTION_MODELS,
   type PlaylistSuggestionFailure,
   type PlaylistSuggestionProgress,
   type PlaylistSuggestionResult,
+  type SuggestionModel,
 } from './shared/playlist-suggestions';
 
 const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
@@ -27,6 +29,8 @@ const failureMessages: Readonly<Record<PlaylistSuggestionFailure, string>> = {
   'invalid-request': 'Describe a mood or select tracks first.',
   failed: 'Could not find suggestions. Try again.',
 };
+
+const MODEL_KEY = 'arsenal.suggestionModel';
 
 const progressMessage = (progress: PlaylistSuggestionProgress | null): string => {
   return progress?.phase === 'scoring'
@@ -48,6 +52,8 @@ export const PlaylistSuggestions = ({
   revision: string;
 }>): JSX.Element => {
   const [mood, setMood] = useState('');
+  const [model, setModel] = useState<SuggestionModel>(() =>
+    SUGGESTION_MODELS.find(({ id }) => id === localStorage.getItem(MODEL_KEY))?.id ?? SUGGESTION_MODELS[0].id);
   const [progress, setProgress] = useState<PlaylistSuggestionProgress | null>(null);
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState<Extract<PlaylistSuggestionResult, { kind: 'ready' }> | null>(null);
@@ -88,6 +94,7 @@ export const PlaylistSuggestions = ({
     try {
       const response = await window.djLibrary.suggestPlaylist({
         revision,
+        model,
         mood,
         seedSongIds: [...chosenSongs.keys()],
         excludedSongIds: [...chosenSongs.keys()],
@@ -137,6 +144,18 @@ export const PlaylistSuggestions = ({
           disabled={busy || generating}
           placeholder="e.g. sunset house at 115 BPM"
         />
+        <div className="ai-model-picker">
+          <label>Model
+            <select value={model} disabled={busy || generating} onChange={(event) => {
+              const next = SUGGESTION_MODELS.find(({ id }) => id === event.currentTarget.value);
+              if (!next) return;
+              setModel(next.id);
+              localStorage.setItem(MODEL_KEY, next.id);
+            }}>
+              {SUGGESTION_MODELS.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+            </select>
+          </label>
+        </div>
         <div className="playlist-helper-actions">
           {chosenSongs.size > 0 && <span>{chosenSongs.size} starting {chosenSongs.size === 1 ? 'track' : 'tracks'}</span>}
           {generating ? (
