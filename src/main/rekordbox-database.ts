@@ -5,6 +5,7 @@ import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
 import type { LibraryFilesRepairResult, MissingFileRepair } from './repair-library-files';
+import { seratoMediaPathKey } from './serato-paths';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
 type Row = Record<string, unknown>;
@@ -287,7 +288,7 @@ const renderSidecar = (source: string, changed: ReadonlyMap<string, Row>, remove
 export const writeRekordboxDatabase = async (
   path: string,
   incoming: SyncLibrary,
-  options: Readonly<{ fields: SyncFields; mode: 'merge' | 'replace'; removePlaylistPaths?: readonly (readonly string[])[] }>,
+  options: Readonly<{ fields: SyncFields; mode: 'merge' | 'replace'; removePlaylistPaths?: readonly (readonly string[])[]; removeTrackPaths?: readonly string[] }>,
 ): Promise<{ trackCount: number; playlistCount: number; skippedTrackCount: number; backupPaths: string[]; warnings: string[] }> => {
   if (!options.fields.tracks && !options.fields.metadata && !options.fields.playlists && !options.fields.hotCues && !options.fields.loops) {
     throw new Error('Native Rekordbox sync supports tracks, track metadata, playlists, hot cues and loops. Select at least one of those categories.');
@@ -369,15 +370,21 @@ export const writeRekordboxDatabase = async (
       entries.byName.set(value, created);
       return id(created.ID);
     };
+    // Keys by file identity, so differently spelled paths to one file (case, Unicode form, symlinks) match one Collection row.
+    const fileKeys = new Map<string, Promise<string>>();
+    const fileKey = (path: string): Promise<string> => {
+      let key = fileKeys.get(path);
+      if (!key) { key = seratoMediaPathKey(path); fileKeys.set(path, key); }
+      return key;
+    };
     const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0');
-    const byPath = new Map<string, Row>();
-    const ambiguousPaths = new Set<string>();
-    for (const row of contents) {
-      const path = text(row.FolderPath);
-      if (!path) continue;
-      const key = normalizePath(path);
-      if (byPath.has(key)) ambiguousPaths.add(key);
-      else byPath.set(key, row);
+    const located = contents.flatMap((row) => { const path = text(row.FolderPath); return path ? [{ row, path }] : []; });
+    const contentKeys = await Promise.all(located.map(({ path }) => fileKey(path)));
+    await Promise.all(incoming.tracks.map((track) => fileKey(track.location ?? track.path)));
+    const rowsByFile = new Map<string, Row[]>();
+    for (const [index, { row }] of located.entries()) {
+      const key = contentKeys[index] ?? '';
+      rowsByFile.set(key, [...rowsByFile.get(key) ?? [], row]);
     }
     const contentColumns = new Set(rows(db, 'PRAGMA table_info("djmdContent")').map((row) => row.name));
     let contentDefaults: Values | null = null;
@@ -403,6 +410,52 @@ export const writeRekordboxDatabase = async (
       const group = cuesByContent.get(id(cue.ContentID)) ?? [];
       group.push(cue);
       cuesByContent.set(id(cue.ContentID), group);
+    }
+    const native = nativePlaylists(db);
+    const members = rows(db, 'SELECT * FROM djmdSongPlaylist WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY TrackNo, ID');
+    const membersByPlaylist = new Map<string, Row[]>();
+    for (const member of members) {
+      const playlistId = id(member.PlaylistID);
+      const group = membersByPlaylist.get(playlistId) ?? [];
+      group.push(member);
+      membersByPlaylist.set(playlistId, group);
+    }
+    const byPath = new Map<string, Row>();
+    const ambiguousPaths = new Set<string>();
+    const contentTables = rows(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'djmdContent'").map((row) => String(row.name))
+      .filter((table) => rows(db, `PRAGMA table_info("${table}")`).some((column) => column.name === 'ContentID'));
+    const playlistsById = new Map(native.all.map((row) => [id(row.ID), row]));
+    // Deletes a Collection row with its cues and other per-track rows. Its playlist places move to replacement, or are removed.
+    const removeContent = (content: Row, replacement: Row | null): void => {
+      for (const [playlistId, playlistMembers] of membersByPlaylist) {
+        const affected = playlistMembers.filter((member) => id(member.ContentID) === id(content.ID));
+        if (!affected.length) continue;
+        if (replacement) for (const member of affected) update('djmdSongPlaylist', member, { ContentID: id(replacement.ID) });
+        else membersByPlaylist.set(playlistId, playlistMembers.filter((member) => !affected.includes(member)));
+        const playlist = playlistsById.get(playlistId);
+        if (playlist) update('djmdPlaylist', playlist, { updated_at: now });
+      }
+      for (const table of contentTables) {
+        nextRevision();
+        statements.push({ sql: `DELETE FROM "${table}" WHERE ContentID = ?`, values: [id(content.ID)] });
+      }
+      remove('djmdContent', content);
+      cuesByContent.delete(id(content.ID));
+    };
+    let mergedTracks = 0;
+    for (const [key, group] of rowsByFile) {
+      if (group.length > 1 && !options.fields.tracks) { ambiguousPaths.add(key); continue; }
+      // With Tracks on, extra Collection rows for one file are merged into the row with encrypted cloud data, analysis or the most cues.
+      const rank = (row: Row): number => (Object.values(row).some(encrypted) ? 2e9 : 0) + (text(row.AnalysisDataPath) !== null ? 1e9 : 0)
+        + (cuesByContent.get(id(row.ID))?.length ?? 0);
+      const [kept, ...extras] = group.sort((left, right) => rank(right) - rank(left));
+      if (!kept) continue;
+      byPath.set(key, kept);
+      for (const extra of extras) {
+        if (Object.values(extra).some(encrypted)) continue;
+        removeContent(extra, kept);
+        mergedTracks++;
+      }
     }
     // Replaces the selected cue kinds of one track. Frames are 1/150 s; MPEG seek fields stay 0 as for non-VBR files.
     const syncCues = (content: Row, performance: SyncPerformance): void => {
@@ -450,7 +503,7 @@ export const writeRekordboxDatabase = async (
     let changedAnalysedBpm = false;
     for (const track of incoming.tracks) {
       const location = track.location ?? track.path;
-      const key = normalizePath(location);
+      const key = await fileKey(location);
       if (ambiguousPaths.has(key)) { conflicts.push(`${track.song.title}: Rekordbox has this file more than once`); continue; }
       let row = byPath.get(key);
       const added = !row && options.fields.tracks;
@@ -460,7 +513,7 @@ export const writeRekordboxDatabase = async (
       }
       if (!row) { skippedTracks.add(key); continue; }
       if (syncedTracks.has(id(row.ID))) { conflicts.push(`${track.song.title}: Arsenal has this file more than once`); continue; }
-      byPath.set(normalizePath(track.path), row);
+      byPath.set(await fileKey(track.path), row);
       syncedTracks.add(id(row.ID));
       const cues = options.fields.hotCues || options.fields.loops ? track.performance : undefined;
       if (!options.fields.metadata && !added && !cues) continue;
@@ -489,7 +542,15 @@ export const writeRekordboxDatabase = async (
       changedAnalysedBpm ||= values.BPM !== number(row.BPM) && text(row.AnalysisDataPath) !== null;
       update('djmdContent', row, values);
     }
-    const native = nativePlaylists(db);
+    // Tracks removed in Arsenal since the last sync leave the Collection, unless Arsenal still has another entry for the file.
+    let removedTracks = 0;
+    if (options.fields.tracks) for (const key of new Set(await Promise.all((options.removeTrackPaths ?? []).map(fileKey)))) {
+      const row = byPath.get(key);
+      if (!row || syncedTracks.has(id(row.ID)) || Object.values(row).some(encrypted)) continue;
+      removeContent(row, null);
+      byPath.delete(key);
+      removedTracks++;
+    }
     const playlistsByPath = new Map<string, Row>();
     const duplicateNative = new Set<string>();
     for (const entry of native.ordered) {
@@ -525,14 +586,6 @@ export const writeRekordboxDatabase = async (
     for (const entry of desired.values()) {
       if (entry.folder && entry.playlist?.trackPaths.length) conflicts.push(`${entry.path.join(' / ')}: Rekordbox folders cannot hold tracks, so its tracks were not synced`);
     }
-    const members = rows(db, 'SELECT * FROM djmdSongPlaylist WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY TrackNo, ID');
-    const membersByPlaylist = new Map<string, Row[]>();
-    for (const member of members) {
-      const playlistId = id(member.PlaylistID);
-      const group = membersByPlaylist.get(playlistId) ?? [];
-      group.push(member);
-      membersByPlaylist.set(playlistId, group);
-    }
     const explicitRemovals = new Set((options.fields.playlists ? options.removePlaylistPaths ?? [] : []).map(pathKey));
     for (const { row, path } of native.ordered) {
       if (number(row.Attribute) === 4) continue;
@@ -540,14 +593,13 @@ export const writeRekordboxDatabase = async (
       const removePath = explicitRemovals.has(pathKey(path));
       if (options.fields.playlists && !desired.has(pathKey(path)) && (options.mode === 'replace' || removePath)) removedPlaylists.add(id(row.ID));
     }
-    const nativeById = new Map(native.all.map((row) => [id(row.ID), row]));
     let retainedFolders = false;
     for (const row of native.all) {
       if (removedPlaylists.has(id(row.ID))) continue;
       let parent = id(row.ParentID);
       while (removedPlaylists.delete(parent)) {
         retainedFolders = true;
-        const ancestor = nativeById.get(parent);
+        const ancestor = playlistsById.get(parent);
         if (!ancestor) break;
         parent = id(ancestor.ParentID);
       }
@@ -583,8 +635,7 @@ export const writeRekordboxDatabase = async (
       desiredOrder.set(id(row.ID), desiredOrder.size);
       materializedSmart ||= entry.playlist?.kind === 'smart';
       if (!entry.playlist && !entry.folder) continue;
-      const desiredMembers = entry.folder ? [] : (entry.playlist?.trackPaths ?? []).flatMap((path) => {
-        const key = normalizePath(path);
+      const desiredMembers = entry.folder ? [] : (await Promise.all((entry.playlist?.trackPaths ?? []).map(fileKey))).flatMap((key) => {
         if (ambiguousPaths.has(key)) return [];
         const content = byPath.get(key);
         if (!content) { skippedTracks.add(key); return []; }
@@ -636,6 +687,8 @@ export const writeRekordboxDatabase = async (
     if (materializedSmart) warnings.push('Arsenal smart playlists were saved as regular Rekordbox playlists with their current tracks.');
     if (skippedTracks.size) warnings.push(`${skippedTracks.size} track${skippedTracks.size === 1 ? ' is' : 's are'} not in the Rekordbox Collection and could not be synced. ${options.fields.tracks ? `Rekordbox does not support ${skippedTracks.size === 1 ? 'its' : 'their'} file type.` : `Turn on Tracks to add ${skippedTracks.size === 1 ? 'it' : 'them'}.`}`);
     if (conflicts.length) warnings.push(`Skipped ${conflicts.length} item${conflicts.length === 1 ? '' : 's'} that could not sync: ${conflicts.join('; ')}.`);
+    if (mergedTracks) warnings.push(`Removed ${mergedTracks} duplicate Collection ${mergedTracks === 1 ? 'entry' : 'entries'} that pointed to the same file as another track. ${mergedTracks === 1 ? 'Its' : 'Their'} playlist places moved to the kept track.`);
+    if (removedTracks) warnings.push(`${removedTracks} track${removedTracks === 1 ? ' was' : 's were'} removed from the Rekordbox Collection because ${removedTracks === 1 ? 'it was' : 'they were'} removed in Arsenal.`);
     if (addedTracks) warnings.push(`${addedTracks} track${addedTracks === 1 ? ' was' : 's were'} added to the Rekordbox Collection. Rekordbox analyses ${addedTracks === 1 ? 'it' : 'them'} when opened.`);
     if (encryptedTracks) warnings.push(`${encryptedTracks} track${encryptedTracks === 1 ? ' has' : 's have'} encrypted details in Rekordbox and ${encryptedTracks === 1 ? 'was' : 'were'} left unchanged.`);
     const backupPaths: string[] = [];

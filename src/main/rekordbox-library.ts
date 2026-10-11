@@ -63,7 +63,7 @@ import { findSeratoSource, moveSeratoNode, readSeratoLibrary, repairSeratoMissin
 import { mergeRekordboxXml, rekordboxSyncLibrary, repairRekordboxMissingFiles } from './sync-rekordbox-xml';
 import { readSeratoWithPerformance, saveLibraryXml, syncArsenalLibraryToConnection } from './sync-libraries';
 import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
-import { resolveSeratoMediaPath } from './serato-paths';
+import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
 import { PORTABLE_LIBRARY_FILENAME, readLibraryModel, readPortableLibrary, readPortableLibraryFingerprint, readPortableLibraryFolder, resolvePortableLibrary, writePortableLibrary } from './portable-library';
 import { readLibrarySource, type PortableLibrarySource } from './library-source';
@@ -103,6 +103,7 @@ type StoredLibraryConnection = Readonly<{
   sourceFingerprint?: string;
   sourceSyncFingerprint?: string;
   syncedPlaylistPaths?: readonly (readonly string[])[];
+  syncedTrackPaths?: readonly string[];
   workspaceFingerprint?: string;
   portableSource?: PortableLibrarySource;
 }>;
@@ -216,6 +217,8 @@ const readRememberedLibrary = async (
         ...(typeof value.sourceSyncFingerprint === 'string' ? { sourceSyncFingerprint: value.sourceSyncFingerprint } : {}),
         ...(Array.isArray(value.syncedPlaylistPaths) && value.syncedPlaylistPaths.every((path) => Array.isArray(path) && path.every((part) => typeof part === 'string'))
           ? { syncedPlaylistPaths: value.syncedPlaylistPaths } : {}),
+        ...(Array.isArray(value.syncedTrackPaths) && value.syncedTrackPaths.every((path) => typeof path === 'string')
+          ? { syncedTrackPaths: value.syncedTrackPaths } : {}),
         ...(typeof value.workspaceFingerprint === 'string' ? { workspaceFingerprint: value.workspaceFingerprint } : {}),
         ...(value.origin === 'portable' && isRecord(value.portableSource) && typeof value.portableSource.manifestPath === 'string' &&
           isAbsolute(value.portableSource.manifestPath) && Array.isArray(value.portableSource.searchRoots) &&
@@ -279,6 +282,9 @@ const compareCatalogTracks = (
     collator.compare(left.song.title, right.song.title)
   );
 };
+
+const localTrackPaths = (library: SyncLibrary): string[] =>
+  library.tracks.filter((track) => track.song.source === 'local').map((track) => track.location ?? track.path);
 
 const searchTextFor = (song: SongRow): string =>
   [song.title, song.artist, song.album, song.genre, song.musicalKey]
@@ -1441,14 +1447,20 @@ export class RekordboxLibrary {
     this.suggestionController = null;
   }
 
-  findDuplicates(mode: DuplicateMatchMode): DuplicateScan {
+  async findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan> {
     const catalog = this.requireCatalog();
     const cached = catalog.duplicateScans.get(mode);
     if (cached !== undefined) {
       return cached;
     }
 
-    const unfiltered = findDuplicateScan(catalog.songs, mode);
+    const fileKeys = new Map<string, string>();
+    if (mode === 'same-file') {
+      const tracks = catalog.tracks.filter((track) => track.mediaPath !== null && this.includesSong(track.song));
+      const keys = await Promise.all(tracks.map((track) => seratoMediaPathKey(track.mediaPath ?? '')));
+      for (const [index, track] of tracks.entries()) fileKeys.set(track.song.id, keys[index] ?? '');
+    }
+    const unfiltered = findDuplicateScan(catalog.songs, mode, fileKeys);
     const groups = unfiltered.groups.filter((group) => {
       const ignored = this.ignoredDuplicateGroups[JSON.stringify([catalog.sourcePath, group.key])];
       return ignored === undefined || hasNewTrack(trackKeysFor(catalog, group), ignored);
@@ -1553,8 +1565,9 @@ export class RekordboxLibrary {
       : connection.sourceSyncFingerprint ?? (await readLibrarySource(connection)).syncFingerprint;
     this.pendingRekordboxSync = { connectionId: connection.id, path: connection.path, fingerprint, request,
       ...(request.cadence === 'ongoing' ? {} : { library: this.arsenalLibrary }) };
-    if (connection.syncedPlaylistPaths === undefined) this.connectedLibraries = this.connectedLibraries.map((candidate) => candidate.id === connection.id
-      ? { ...candidate, syncedPlaylistPaths: this.arsenalLibrary.playlists.map((playlist) => playlist.path) } : candidate);
+    if (connection.syncedPlaylistPaths === undefined || connection.syncedTrackPaths === undefined) this.connectedLibraries = this.connectedLibraries.map((candidate) => candidate.id === connection.id
+      ? { ...candidate, syncedPlaylistPaths: candidate.syncedPlaylistPaths ?? this.arsenalLibrary.playlists.map((playlist) => playlist.path),
+        syncedTrackPaths: candidate.syncedTrackPaths ?? localTrackPaths(this.arsenalLibrary) } : candidate);
     if (!await this.remember(this.rememberedPath)) {
       this.pendingRekordboxSync = previous;
       this.connectedLibraries = previousConnections;
@@ -1725,7 +1738,10 @@ export class RekordboxLibrary {
         const paths = new Set(library.playlists.map((playlist) => JSON.stringify(playlist.path)));
         const removePlaylistPaths = nativeRekordbox && request.fields.playlists
           ? (this.connectedLibraries.find((connection) => connection.id === target.id)?.syncedPlaylistPaths ?? []).filter((path) => !paths.has(JSON.stringify(path))) : [];
-        const result = await syncArsenalLibraryToConnection({ library, target, request, protectedMediaRoots, removePlaylistPaths });
+        const trackPaths = new Set(localTrackPaths(library).map(normalizePath));
+        const removeTrackPaths = nativeRekordbox && request.fields.tracks
+          ? (this.connectedLibraries.find((connection) => connection.id === target.id)?.syncedTrackPaths ?? []).filter((path) => !trackPaths.has(normalizePath(path))) : [];
+        const result = await syncArsenalLibraryToConnection({ library, target, request, protectedMediaRoots, removePlaylistPaths, removeTrackPaths });
         warnings.push(...('warnings' in result ? result.warnings : []));
         backupPaths.push(...('backupPaths' in result ? result.backupPaths : []));
         if (result.kind === 'queued') { queued = true; continue; }
@@ -1743,7 +1759,8 @@ export class RekordboxLibrary {
         playlistCount = Math.max(playlistCount, result.playlistCount);
         skippedTrackCount = Math.max(skippedTrackCount, result.skippedTrackCount);
         this.connectedLibraries = this.connectedLibraries.map((connection) => connection.id === target.id ? { ...connection, dirty: false,
-          ...(nativeRekordbox && request.fields.playlists ? { syncedPlaylistPaths: library.playlists.map((playlist) => playlist.path) } : {}) } : connection);
+          ...(nativeRekordbox && request.fields.playlists ? { syncedPlaylistPaths: library.playlists.map((playlist) => playlist.path) } : {}),
+          ...(nativeRekordbox && request.fields.tracks ? { syncedTrackPaths: localTrackPaths(library) } : {}) } : connection);
         if (nativeRekordbox) this.pendingRekordboxSync = null;
         await this.acknowledgeWrites([target.id], true);
       }
@@ -1991,7 +2008,7 @@ export class RekordboxLibrary {
     catalog: CurrentCatalog,
     change: Extract<LibraryMutation, { kind: 'ignore-duplicate-group' }>,
   ): Promise<LibraryMutationResult> {
-    const group = this.findDuplicates(change.mode).groups.find(
+    const group = (await this.findDuplicates(change.mode)).groups.find(
       (candidate) => candidate.key === change.groupKey,
     );
     if (group === undefined) {
@@ -2009,7 +2026,7 @@ export class RekordboxLibrary {
     return {
       kind: 'duplicate-ignored',
       library: summaryFor(catalog),
-      scan: this.findDuplicates(change.mode),
+      scan: await this.findDuplicates(change.mode),
     };
   }
 
@@ -2041,6 +2058,9 @@ export class RekordboxLibrary {
     this.catalog = reload.catalog;
     const handledPaths = new Set<string>();
     const fileActions: LocalFileAction[] = [];
+    // A remaining entry may reach the same file through a differently spelled path.
+    const remainingFiles = change.removeLocalFile ? new Set(await Promise.all(remaining.flatMap((track) =>
+      track.mediaPath === null ? [] : [seratoMediaPathKey(track.mediaPath)]))) : new Set<string>();
     for (const track of tracks) {
       if (track.mediaPath === null && track.song.source !== 'local') {
         continue;
@@ -2057,7 +2077,7 @@ export class RekordboxLibrary {
         sharedLocation: remaining.some((candidate) =>
           (track.mediaPath !== null && candidate.mediaPath === track.mediaPath) ||
           (track.rawLocation !== null && candidate.rawLocation === track.rawLocation),
-        ),
+        ) || (track.mediaPath !== null && remainingFiles.has(await seratoMediaPathKey(track.mediaPath))),
       }));
     }
     if (fileActions.includes('trashed') && this.activeConnectionId !== null) await this.acknowledgeWrites([this.activeConnectionId]);

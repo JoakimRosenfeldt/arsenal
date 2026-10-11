@@ -113,12 +113,13 @@ export const libraryForDjApp = (library: SyncLibrary, kind: LibrarySourceKind): 
   }) };
 };
 
-export const syncArsenalLibraryToConnection = async ({ library, target, request, protectedMediaRoots = [], removePlaylistPaths = [] }: Readonly<{
+export const syncArsenalLibraryToConnection = async ({ library, target, request, protectedMediaRoots = [], removePlaylistPaths = [], removeTrackPaths = [] }: Readonly<{
   library: SyncLibrary;
   target: Readonly<{ kind: LibrarySourceKind; path: string }>;
   request: Pick<SyncRequest, 'fields' | 'mode' | 'timingOffsetMs'>;
   protectedMediaRoots?: readonly string[];
   removePlaylistPaths?: readonly (readonly string[])[];
+  removeTrackPaths?: readonly string[];
 }>): Promise<SyncResult> => {
   const backupPaths: string[] = [];
   const warnings: string[] = [];
@@ -130,7 +131,7 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
       const incoming = { tracks: projected.tracks.filter((track) => track.song.source === 'local')
         .map((track) => ({ ...track, path: track.location ?? track.path })),
         playlists: projected.playlists.map((playlist) => ({ ...playlist, trackPaths: playlist.trackPaths.map((path) => locations.get(path) ?? path) })) };
-      const saved = await writeRekordboxDatabase(target.path, incoming, { fields: request.fields, mode: request.mode ?? 'merge', removePlaylistPaths });
+      const saved = await writeRekordboxDatabase(target.path, incoming, { fields: request.fields, mode: request.mode ?? 'merge', removePlaylistPaths, removeTrackPaths });
       return { kind: 'synced', ...saved,
         skippedTrackCount: saved.skippedTrackCount,
         message: 'Rekordbox Collection updated. Your changes appear when you open Rekordbox.' };
