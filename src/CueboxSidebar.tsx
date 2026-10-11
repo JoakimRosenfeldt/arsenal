@@ -285,6 +285,7 @@ export const CueboxSidebar = ({
   onPlaylistSelect,
   playlists,
   selectedPlaylistId,
+  syncing,
 }: Readonly<{
   activePage: PageId;
   busy: boolean;
@@ -298,6 +299,7 @@ export const CueboxSidebar = ({
   onPlaylistSelect: (playlistId: string) => void;
   playlists: readonly RekordboxPlaylist[] | null;
   selectedPlaylistId: string | null;
+  syncing: boolean;
 }>): JSX.Element => {
   const [preferredWidth, setPreferredWidth] = useState<number | null>(() => {
     try {
@@ -376,6 +378,7 @@ export const CueboxSidebar = ({
   };
 
   const collection = collectionItems.map((item) => {
+    if (item.page === 'connections') return syncing ? { ...item, badge: 'Syncing…' } : item;
     if (item.page !== 'duplicates') {
       return item;
     }

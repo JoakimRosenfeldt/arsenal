@@ -1111,6 +1111,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         onPlaylistSelect={selectPlaylist}
         playlists={playlists}
         selectedPlaylistId={playlistEditor === null ? selectedPlaylistId : null}
+        syncing={backgroundSyncing}
       />}
       <main className="workspace" id="main-content">
         {feedback !== null && (
