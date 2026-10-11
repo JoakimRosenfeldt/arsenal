@@ -1456,9 +1456,30 @@ export class RekordboxLibrary {
 
     const fileKeys = new Map<string, string>();
     if (mode === 'same-file') {
-      const tracks = catalog.tracks.filter((track) => track.mediaPath !== null && this.includesSong(track.song));
-      const keys = await Promise.all(tracks.map((track) => seratoMediaPathKey(track.mediaPath ?? '')));
-      for (const [index, track] of tracks.entries()) fileKeys.set(track.song.id, keys[index] ?? '');
+      const tracks = catalog.tracks.filter((track) => this.includesSong(track.song));
+      const files = await Promise.all(tracks.map(async (track) => {
+        if (track.mediaPath === null) return null;
+        try { const file = await stat(track.mediaPath, { bigint: true }); return file.isFile() ? file : null; } catch { return null; }
+      }));
+      const alias = (size: bigint | number, song: SongRow): string => `${size}:${song.title.normalize('NFC').toLocaleLowerCase()}`;
+      const aliases = new Map<string, string>();
+      for (const [index, track] of tracks.entries()) {
+        const file = files[index];
+        if (!file) continue;
+        const key = `file:${file.dev}:${file.ino}`;
+        fileKeys.set(track.song.id, key);
+        if (!aliases.has(alias(file.size, track.song))) aliases.set(alias(file.size, track.song), key);
+      }
+      // Rekordbox Cloud Library Sync entries have no local path, so they match a file by size and title.
+      for (const [index, track] of tracks.entries()) {
+        if (files[index]) continue;
+        const size = track.song.fileSizeBytes;
+        if (size !== null && size > 0) {
+          const key = aliases.get(alias(size, track.song)) ?? `size:${alias(size, track.song)}`;
+          aliases.set(alias(size, track.song), key);
+          fileKeys.set(track.song.id, key);
+        } else if (track.mediaPath !== null) fileKeys.set(track.song.id, `path:${normalizePath(track.mediaPath)}`);
+      }
     }
     const unfiltered = findDuplicateScan(catalog.songs, mode, fileKeys);
     const groups = unfiltered.groups.filter((group) => {

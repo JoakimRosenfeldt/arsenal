@@ -5,7 +5,6 @@ import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
 import type { LibraryFilesRepairResult, MissingFileRepair } from './repair-library-files';
-import { seratoMediaPathKey } from './serato-paths';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
 type Row = Record<string, unknown>;
@@ -371,21 +370,46 @@ export const writeRekordboxDatabase = async (
       return id(created.ID);
     };
     // Keys by file identity, so differently spelled paths to one file (case, Unicode form, symlinks) match one Collection row.
-    const fileKeys = new Map<string, Promise<string>>();
-    const fileKey = (path: string): Promise<string> => {
-      let key = fileKeys.get(path);
-      if (!key) { key = seratoMediaPathKey(path); fileKeys.set(path, key); }
-      return key;
+    // Cloud Library Sync rows store a virtual "/contents_<id>/..." path instead, so rows without a file on disk match by file name and size.
+    const sizeName = (size: number | null, name: string | null): string | null =>
+      size !== null && size > 0 && name ? `${size}:${name.normalize('NFC').toLowerCase()}` : null;
+    const identities = new Map<string, Promise<{ key: string; alias: string | null }>>();
+    const identity = (path: string): Promise<{ key: string; alias: string | null }> => {
+      let result = identities.get(path);
+      if (!result) {
+        result = (async () => {
+          try {
+            const file = await stat(path, { bigint: true });
+            if (file.isFile() && file.ino !== 0n) return { key: `file:${file.dev}:${file.ino}`, alias: sizeName(Number(file.size), basename(path)) };
+          } catch (error) {
+            if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
+          }
+          return { key: `path:${normalizePath(path)}`, alias: null };
+        })();
+        identities.set(path, result);
+      }
+      return result;
     };
     const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0');
     const located = contents.flatMap((row) => { const path = text(row.FolderPath); return path ? [{ row, path }] : []; });
-    const contentKeys = await Promise.all(located.map(({ path }) => fileKey(path)));
-    await Promise.all(incoming.tracks.map((track) => fileKey(track.location ?? track.path)));
+    const contentIdentities = await Promise.all(located.map(({ path }) => identity(path)));
+    await Promise.all(incoming.tracks.map((track) => identity(track.location ?? track.path)));
+    const aliases = new Map<string, string>();
+    for (const { key, alias } of contentIdentities) if (alias !== null && !aliases.has(alias)) aliases.set(alias, key);
     const rowsByFile = new Map<string, Row[]>();
     for (const [index, { row }] of located.entries()) {
-      const key = contentKeys[index] ?? '';
+      let key = contentIdentities[index]?.key ?? '';
+      const alias = key.startsWith('path:') ? sizeName(number(row.FileSize), text(row.FileNameL)) : null;
+      if (alias !== null) {
+        key = aliases.get(alias) ?? key;
+        if (!aliases.has(alias)) aliases.set(alias, key);
+      }
       rowsByFile.set(key, [...rowsByFile.get(key) ?? [], row]);
     }
+    const fileKey = async (path: string): Promise<string> => {
+      const { key, alias } = await identity(path);
+      return rowsByFile.has(key) || alias === null ? key : aliases.get(alias) ?? key;
+    };
     const contentColumns = new Set(rows(db, 'PRAGMA table_info("djmdContent")').map((row) => row.name));
     let contentDefaults: Values | null = null;
     // New Collection rows follow pyrekordbox's MasterDatabase.add_content.
@@ -445,9 +469,9 @@ export const writeRekordboxDatabase = async (
     let mergedTracks = 0;
     for (const [key, group] of rowsByFile) {
       if (group.length > 1 && !options.fields.tracks) { ambiguousPaths.add(key); continue; }
-      // With Tracks on, extra Collection rows for one file are merged into the row with encrypted cloud data, analysis or the most cues.
-      const rank = (row: Row): number => (Object.values(row).some(encrypted) ? 2e9 : 0) + (text(row.AnalysisDataPath) !== null ? 1e9 : 0)
-        + (cuesByContent.get(id(row.ID))?.length ?? 0);
+      // With Tracks on, extra Collection rows for one file are merged into the cloud synced row, or the one with encrypted data, analysis or the most cues.
+      const rank = (row: Row): number => ((number(row.ServiceID) ?? 0) > 0 ? 4e9 : 0) + (Object.values(row).some(encrypted) ? 2e9 : 0)
+        + (text(row.AnalysisDataPath) !== null ? 1e9 : 0) + (cuesByContent.get(id(row.ID))?.length ?? 0);
       const [kept, ...extras] = group.sort((left, right) => rank(right) - rank(left));
       if (!kept) continue;
       byPath.set(key, kept);
