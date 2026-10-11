@@ -278,8 +278,41 @@ const exactGroupsFor = (
     .sort(compareGroups);
 };
 
+const sameFileGroupsFor = (
+  songs: readonly SongRow[],
+  fileKeys: ReadonlyMap<string, string>,
+): readonly DuplicateGroup[] => {
+  const byFile = new Map<string, SongRow[]>();
+  for (const song of songs) {
+    const key = fileKeys.get(song.id);
+    if (key !== undefined) {
+      byFile.set(key, [...(byFile.get(key) ?? []), song]);
+    }
+  }
+
+  return [...byFile.entries()]
+    .filter((entry) => entry[1].length > 1)
+    .map(([key, tracks]) => {
+      const candidates = tracks.map((song) => parseTitle(song).candidate);
+      const first = tracks[0];
+      if (first === undefined) {
+        throw new Error('Duplicate group unexpectedly has no candidates');
+      }
+
+      return {
+        key: JSON.stringify(['same-file', key]),
+        title: first.title,
+        artist: first.artist ?? 'Unknown artist',
+        matchReason: 'These entries use the same audio file',
+        recommendedKeepSongId: recommendedKeepSongIdFor(candidates),
+        candidates,
+      };
+    })
+    .sort(compareGroups);
+};
+
 const familyReason: Readonly<
-  Record<Exclude<DuplicateMatchMode, 'exact' | 'smart'>, string>
+  Record<Exclude<DuplicateMatchMode, 'exact' | 'smart' | 'same-file'>, string>
 > = {
   versions: 'Same artist and base title with recognized version tags',
   'dj-edits': 'Same artist and base title with a DJ edit tag',
@@ -288,7 +321,7 @@ const familyReason: Readonly<
 
 const familyGroupsFor = (
   songs: readonly SongRow[],
-  mode: Exclude<DuplicateMatchMode, 'exact' | 'smart'>,
+  mode: Exclude<DuplicateMatchMode, 'exact' | 'smart' | 'same-file'>,
 ): readonly DuplicateGroup[] => {
   const byFamily = new Map<string, ParsedTitle[]>();
 
@@ -358,14 +391,18 @@ const familyGroupsFor = (
   return groups.sort(compareGroups);
 };
 
+// fileKeys maps song IDs to file identities and is only used by the same-file mode.
 export const findDuplicateScan = (
   songs: readonly SongRow[],
   mode: DuplicateMatchMode,
+  fileKeys: ReadonlyMap<string, string> = new Map(),
 ): DuplicateScan => {
   const groups =
-    mode === 'exact' || mode === 'smart'
-      ? exactGroupsFor(songs, mode)
-      : familyGroupsFor(songs, mode);
+    mode === 'same-file'
+      ? sameFileGroupsFor(songs, fileKeys)
+      : mode === 'exact' || mode === 'smart'
+        ? exactGroupsFor(songs, mode)
+        : familyGroupsFor(songs, mode);
 
   return {
     mode,

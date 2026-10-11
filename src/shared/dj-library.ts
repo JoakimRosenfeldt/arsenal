@@ -46,6 +46,7 @@ export const SONG_PAGE_SIZE = 100;
 
 export const DUPLICATE_MATCH_MODES = [
   'smart',
+  'same-file',
   'exact',
   'versions',
   'dj-edits',

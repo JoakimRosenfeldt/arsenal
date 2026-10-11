@@ -498,6 +498,10 @@ const duplicateModeCopy: Readonly<Record<DuplicateMatchMode, DuplicateModeCopy>>
     label: 'Smart',
     emptyTitle: 'No smart matches',
   },
+  'same-file': {
+    label: 'Same file',
+    emptyTitle: 'No entries share a file',
+  },
   exact: {
     label: 'Exact',
     emptyTitle: 'No exact matches',
@@ -977,7 +981,7 @@ export const DuplicatesPage = ({
         }}>
           {DUPLICATE_MATCH_MODES.map((option) => <option value={option} key={option}>{option === 'versions' ? 'Versions' : duplicateModeCopy[option].label}</option>)}
         </select>
-        {mode === 'smart' && <button className="quiet-button" type="button" disabled={busy || scanning || suggestedIds.length === 0}
+        {(mode === 'smart' || mode === 'same-file') && <button className="quiet-button" type="button" disabled={busy || scanning || suggestedIds.length === 0}
           onClick={() => {
             if (streamingSources.length > 1) setChoosingService(true);
             else selectSuggested(preferredSource);

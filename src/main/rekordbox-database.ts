@@ -5,6 +5,7 @@ import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
 import type { LibraryFilesRepairResult, MissingFileRepair } from './repair-library-files';
+import { isCloudPath } from './cloud-tracks';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
 type Row = Record<string, unknown>;
@@ -171,10 +172,17 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
       }));
     }
     let encryptedTracks = 0;
+    // A cloud synced track reads as the local file it was uploaded from, when that file is on this computer.
+    const uploadedFrom = new Map<Row, string>();
+    await Promise.all(contents.map(async (row) => {
+      const original = isCloudPath(text(row.FolderPath) ?? '') ? text(row.OrgFolderPath) : null;
+      if (original !== null && await stat(original).then((file) => file.isFile(), () => false)) uploadedFrom.set(row, original);
+    }));
     const tracks = contents.flatMap((row) => {
       const trackId = id(row.ID);
       if (encrypted(row.FolderPath) || !text(row.FolderPath) && Object.values(row).some(encrypted)) { encryptedTracks++; return []; }
-      const path = text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
+      const original = uploadedFrom.get(row);
+      const path = original ?? text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
       const title = text(row.Title) ?? basename(path);
       const linked = (field: keyof typeof links): string | null => {
         const [table, column] = links[field];
@@ -191,7 +199,7 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
         durationSeconds: number(row.Length), fileKind: fileTypes[number(row.FileType) ?? 0] ?? null, fileSizeBytes: number(row.FileSize),
         bitRateKbps: number(row.BitRate), sampleRateHz: number(row.SampleRate), trackNumber: number(row.TrackNo), discNumber: number(row.DiscNo),
         playCount: number(row.DJPlayCount), rating: rating === null ? null : rating * 51, dateAdded: text(row.StockDate), comments: text(row.Commnt),
-        artworkUrl: null, audioUrl: null, source: /^(?:\/|[a-z]:[\\/])/i.test(path) && !number(row.ServiceID) ? 'local' : 'streaming',
+        artworkUrl: null, audioUrl: null, source: original !== undefined || /^(?:\/|[a-z]:[\\/])/i.test(path) && !number(row.ServiceID) ? 'local' : 'streaming',
         cuePointCount: performance ? performance.hotCues.length + performance.memoryCues.length + performance.loops.length : 0,
         hotCueCount: performance ? performance.hotCues.length + performance.loops.filter((loop) => loop.hotCue).length : 0,
       };
@@ -287,7 +295,8 @@ const renderSidecar = (source: string, changed: ReadonlyMap<string, Row>, remove
 export const writeRekordboxDatabase = async (
   path: string,
   incoming: SyncLibrary,
-  options: Readonly<{ fields: SyncFields; mode: 'merge' | 'replace'; removePlaylistPaths?: readonly (readonly string[])[] }>,
+  options: Readonly<{ fields: SyncFields; mode: 'merge' | 'replace'; removePlaylistPaths?: readonly (readonly string[])[];
+    removeTrackPaths?: readonly string[]; retainTrackPaths?: readonly string[] }>,
 ): Promise<{ trackCount: number; playlistCount: number; skippedTrackCount: number; backupPaths: string[]; warnings: string[] }> => {
   if (!options.fields.tracks && !options.fields.metadata && !options.fields.playlists && !options.fields.hotCues && !options.fields.loops) {
     throw new Error('Native Rekordbox sync supports tracks, track metadata, playlists, hot cues and loops. Select at least one of those categories.');
@@ -369,16 +378,37 @@ export const writeRekordboxDatabase = async (
       entries.byName.set(value, created);
       return id(created.ID);
     };
+    // Keys by file identity, so differently spelled paths to one file (case, Unicode form, symlinks) match one Collection row.
+    const identities = new Map<string, Promise<string>>();
+    const identity = (path: string): Promise<string> => {
+      let result = identities.get(path);
+      if (!result) {
+        result = (async () => {
+          try {
+            const file = await stat(path, { bigint: true });
+            if (file.isFile() && file.ino !== 0n) return `file:${file.dev}:${file.ino}`;
+          } catch (error) {
+            if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
+          }
+          return `path:${normalizePath(path)}`;
+        })();
+        identities.set(path, result);
+      }
+      return result;
+    };
     const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0');
-    const byPath = new Map<string, Row>();
-    const ambiguousPaths = new Set<string>();
-    for (const row of contents) {
-      const path = text(row.FolderPath);
-      if (!path) continue;
-      const key = normalizePath(path);
-      if (byPath.has(key)) ambiguousPaths.add(key);
-      else byPath.set(key, row);
+    const located = contents.flatMap((row) => { const path = text(row.FolderPath); return path ? [{ row, path }] : []; });
+    // Cloud Library Sync rows keep the file they were uploaded from in OrgFolderPath, so they group with that file.
+    const contentKeys = await Promise.all(located.map(({ row, path }) => identity(isCloudPath(path) ? text(row.OrgFolderPath) ?? path : path)));
+    await Promise.all(incoming.tracks.map((track) => identity(track.location ?? track.path)));
+    const rowsByFile = new Map<string, Row[]>();
+    for (const [index, { row }] of located.entries()) {
+      const key = contentKeys[index] ?? '';
+      rowsByFile.set(key, [...rowsByFile.get(key) ?? [], row]);
     }
+    const resolvedKeys = new Map<string, string>();
+    for (const [key, group] of rowsByFile) for (const row of group) resolvedKeys.set(normalizePath(text(row.FolderPath) ?? ''), key);
+    const fileKey = async (path: string): Promise<string> => resolvedKeys.get(normalizePath(path)) ?? identity(path);
     const contentColumns = new Set(rows(db, 'PRAGMA table_info("djmdContent")').map((row) => row.name));
     let contentDefaults: Values | null = null;
     // New Collection rows follow pyrekordbox's MasterDatabase.add_content.
@@ -403,6 +433,54 @@ export const writeRekordboxDatabase = async (
       const group = cuesByContent.get(id(cue.ContentID)) ?? [];
       group.push(cue);
       cuesByContent.set(id(cue.ContentID), group);
+    }
+    const native = nativePlaylists(db);
+    const members = rows(db, 'SELECT * FROM djmdSongPlaylist WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY TrackNo, ID');
+    const membersByPlaylist = new Map<string, Row[]>();
+    for (const member of members) {
+      const playlistId = id(member.PlaylistID);
+      const group = membersByPlaylist.get(playlistId) ?? [];
+      group.push(member);
+      membersByPlaylist.set(playlistId, group);
+    }
+    const byPath = new Map<string, Row>();
+    const ambiguousPaths = new Set<string>();
+    const contentTables = rows(db, "SELECT name FROM sqlite_master WHERE type = 'table' AND name != 'djmdContent'").map((row) => String(row.name))
+      .filter((table) => rows(db, `PRAGMA table_info("${table}")`).some((column) => column.name === 'ContentID'));
+    const playlistsById = new Map(native.all.map((row) => [id(row.ID), row]));
+    // Deletes a Collection row with its cues and other per-track rows. Its playlist places move to replacement, or are removed.
+    const removeContent = (content: Row, replacement: Row | null): void => {
+      for (const [playlistId, playlistMembers] of membersByPlaylist) {
+        const affected = playlistMembers.filter((member) => id(member.ContentID) === id(content.ID));
+        if (!affected.length) continue;
+        if (replacement) for (const member of affected) update('djmdSongPlaylist', member, { ContentID: id(replacement.ID) });
+        else membersByPlaylist.set(playlistId, playlistMembers.filter((member) => !affected.includes(member)));
+        const playlist = playlistsById.get(playlistId);
+        if (playlist) update('djmdPlaylist', playlist, { updated_at: now });
+      }
+      for (const table of contentTables) {
+        nextRevision();
+        statements.push({ sql: `DELETE FROM "${table}" WHERE ContentID = ?`, values: [id(content.ID)] });
+      }
+      remove('djmdContent', content);
+      cuesByContent.delete(id(content.ID));
+    };
+    let mergedTracks = 0;
+    for (const [key, group] of rowsByFile) {
+      const hasCloud = group.some((row) => isCloudPath(text(row.FolderPath) ?? ''));
+      if (group.length > 1 && !options.fields.tracks && !hasCloud) { ambiguousPaths.add(key); continue; }
+      // With Tracks on, extra Collection rows for one file are merged into the cloud synced row, or the one with encrypted data, analysis or the most cues.
+      const rank = (row: Row): number => ((number(row.ServiceID) ?? 0) > 0 ? 4e9 : 0) + (Object.values(row).some(encrypted) ? 2e9 : 0)
+        + (text(row.AnalysisDataPath) !== null ? 1e9 : 0) + (cuesByContent.get(id(row.ID))?.length ?? 0);
+      const [kept, ...extras] = group.sort((left, right) => rank(right) - rank(left));
+      if (!kept) continue;
+      byPath.set(key, kept);
+      // Cloud rows are never removed; a local row next to one was added by an earlier Arsenal sync. Without Tracks, the cloud row is only preferred.
+      for (const extra of extras) {
+        if (!options.fields.tracks || Object.values(extra).some(encrypted) || isCloudPath(text(extra.FolderPath) ?? '')) continue;
+        removeContent(extra, kept);
+        mergedTracks++;
+      }
     }
     // Replaces the selected cue kinds of one track. Frames are 1/150 s; MPEG seek fields stay 0 as for non-VBR files.
     const syncCues = (content: Row, performance: SyncPerformance): void => {
@@ -450,7 +528,7 @@ export const writeRekordboxDatabase = async (
     let changedAnalysedBpm = false;
     for (const track of incoming.tracks) {
       const location = track.location ?? track.path;
-      const key = normalizePath(location);
+      const key = await fileKey(location);
       if (ambiguousPaths.has(key)) { conflicts.push(`${track.song.title}: Rekordbox has this file more than once`); continue; }
       let row = byPath.get(key);
       const added = !row && options.fields.tracks;
@@ -460,7 +538,7 @@ export const writeRekordboxDatabase = async (
       }
       if (!row) { skippedTracks.add(key); continue; }
       if (syncedTracks.has(id(row.ID))) { conflicts.push(`${track.song.title}: Arsenal has this file more than once`); continue; }
-      byPath.set(normalizePath(track.path), row);
+      byPath.set(await fileKey(track.path), row);
       syncedTracks.add(id(row.ID));
       const cues = options.fields.hotCues || options.fields.loops ? track.performance : undefined;
       if (!options.fields.metadata && !added && !cues) continue;
@@ -489,7 +567,16 @@ export const writeRekordboxDatabase = async (
       changedAnalysedBpm ||= values.BPM !== number(row.BPM) && text(row.AnalysisDataPath) !== null;
       update('djmdContent', row, values);
     }
-    const native = nativePlaylists(db);
+    // Tracks removed in Arsenal leave the Collection, unless Arsenal still has another entry for the same file.
+    let removedTracks = 0;
+    const retained = new Set(await Promise.all((options.retainTrackPaths ?? []).map(fileKey)));
+    if (options.fields.tracks) for (const key of new Set(await Promise.all((options.removeTrackPaths ?? []).map(fileKey)))) {
+      const row = byPath.get(key);
+      if (!row || retained.has(key) || syncedTracks.has(id(row.ID))) continue;
+      removeContent(row, null);
+      byPath.delete(key);
+      removedTracks++;
+    }
     const playlistsByPath = new Map<string, Row>();
     const duplicateNative = new Set<string>();
     for (const entry of native.ordered) {
@@ -525,14 +612,6 @@ export const writeRekordboxDatabase = async (
     for (const entry of desired.values()) {
       if (entry.folder && entry.playlist?.trackPaths.length) conflicts.push(`${entry.path.join(' / ')}: Rekordbox folders cannot hold tracks, so its tracks were not synced`);
     }
-    const members = rows(db, 'SELECT * FROM djmdSongPlaylist WHERE COALESCE(rb_local_deleted, 0) = 0 ORDER BY TrackNo, ID');
-    const membersByPlaylist = new Map<string, Row[]>();
-    for (const member of members) {
-      const playlistId = id(member.PlaylistID);
-      const group = membersByPlaylist.get(playlistId) ?? [];
-      group.push(member);
-      membersByPlaylist.set(playlistId, group);
-    }
     const explicitRemovals = new Set((options.fields.playlists ? options.removePlaylistPaths ?? [] : []).map(pathKey));
     for (const { row, path } of native.ordered) {
       if (number(row.Attribute) === 4) continue;
@@ -540,14 +619,13 @@ export const writeRekordboxDatabase = async (
       const removePath = explicitRemovals.has(pathKey(path));
       if (options.fields.playlists && !desired.has(pathKey(path)) && (options.mode === 'replace' || removePath)) removedPlaylists.add(id(row.ID));
     }
-    const nativeById = new Map(native.all.map((row) => [id(row.ID), row]));
     let retainedFolders = false;
     for (const row of native.all) {
       if (removedPlaylists.has(id(row.ID))) continue;
       let parent = id(row.ParentID);
       while (removedPlaylists.delete(parent)) {
         retainedFolders = true;
-        const ancestor = nativeById.get(parent);
+        const ancestor = playlistsById.get(parent);
         if (!ancestor) break;
         parent = id(ancestor.ParentID);
       }
@@ -583,8 +661,7 @@ export const writeRekordboxDatabase = async (
       desiredOrder.set(id(row.ID), desiredOrder.size);
       materializedSmart ||= entry.playlist?.kind === 'smart';
       if (!entry.playlist && !entry.folder) continue;
-      const desiredMembers = entry.folder ? [] : (entry.playlist?.trackPaths ?? []).flatMap((path) => {
-        const key = normalizePath(path);
+      const desiredMembers = entry.folder ? [] : (await Promise.all((entry.playlist?.trackPaths ?? []).map(fileKey))).flatMap((key) => {
         if (ambiguousPaths.has(key)) return [];
         const content = byPath.get(key);
         if (!content) { skippedTracks.add(key); return []; }
@@ -636,6 +713,8 @@ export const writeRekordboxDatabase = async (
     if (materializedSmart) warnings.push('Arsenal smart playlists were saved as regular Rekordbox playlists with their current tracks.');
     if (skippedTracks.size) warnings.push(`${skippedTracks.size} track${skippedTracks.size === 1 ? ' is' : 's are'} not in the Rekordbox Collection and could not be synced. ${options.fields.tracks ? `Rekordbox does not support ${skippedTracks.size === 1 ? 'its' : 'their'} file type.` : `Turn on Tracks to add ${skippedTracks.size === 1 ? 'it' : 'them'}.`}`);
     if (conflicts.length) warnings.push(`Skipped ${conflicts.length} item${conflicts.length === 1 ? '' : 's'} that could not sync: ${conflicts.join('; ')}.`);
+    if (mergedTracks) warnings.push(`Removed ${mergedTracks} duplicate Collection ${mergedTracks === 1 ? 'entry' : 'entries'} that pointed to the same file as another track. ${mergedTracks === 1 ? 'Its' : 'Their'} playlist places moved to the kept track.`);
+    if (removedTracks) warnings.push(`${removedTracks} track${removedTracks === 1 ? ' was' : 's were'} removed from the Rekordbox Collection because ${removedTracks === 1 ? 'it was' : 'they were'} removed in Arsenal.`);
     if (addedTracks) warnings.push(`${addedTracks} track${addedTracks === 1 ? ' was' : 's were'} added to the Rekordbox Collection. Rekordbox analyses ${addedTracks === 1 ? 'it' : 'them'} when opened.`);
     if (encryptedTracks) warnings.push(`${encryptedTracks} track${encryptedTracks === 1 ? ' has' : 's have'} encrypted details in Rekordbox and ${encryptedTracks === 1 ? 'was' : 'were'} left unchanged.`);
     const backupPaths: string[] = [];
