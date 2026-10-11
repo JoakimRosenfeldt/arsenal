@@ -131,7 +131,9 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
       const incoming = { tracks: projected.tracks.filter((track) => track.song.source === 'local')
         .map((track) => ({ ...track, path: track.location ?? track.path })),
         playlists: projected.playlists.map((playlist) => ({ ...playlist, trackPaths: playlist.trackPaths.map((path) => locations.get(path) ?? path) })) };
-      const saved = await writeRekordboxDatabase(target.path, incoming, { fields: request.fields, mode: request.mode ?? 'merge', removePlaylistPaths, removeTrackPaths });
+      const saved = await writeRekordboxDatabase(target.path, incoming, { fields: request.fields, mode: request.mode ?? 'merge', removePlaylistPaths, removeTrackPaths,
+        // Streaming and cloud entries are not synced as tracks, but removals must not delete their Collection rows.
+        retainTrackPaths: projected.tracks.filter((track) => track.song.source !== 'local').map((track) => track.location ?? track.path) });
       return { kind: 'synced', ...saved,
         skippedTrackCount: saved.skippedTrackCount,
         message: 'Rekordbox Collection updated. Your changes appear when you open Rekordbox.' };

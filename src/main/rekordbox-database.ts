@@ -287,7 +287,8 @@ const renderSidecar = (source: string, changed: ReadonlyMap<string, Row>, remove
 export const writeRekordboxDatabase = async (
   path: string,
   incoming: SyncLibrary,
-  options: Readonly<{ fields: SyncFields; mode: 'merge' | 'replace'; removePlaylistPaths?: readonly (readonly string[])[]; removeTrackPaths?: readonly string[] }>,
+  options: Readonly<{ fields: SyncFields; mode: 'merge' | 'replace'; removePlaylistPaths?: readonly (readonly string[])[];
+    removeTrackPaths?: readonly string[]; retainTrackPaths?: readonly string[] }>,
 ): Promise<{ trackCount: number; playlistCount: number; skippedTrackCount: number; backupPaths: string[]; warnings: string[] }> => {
   if (!options.fields.tracks && !options.fields.metadata && !options.fields.playlists && !options.fields.hotCues && !options.fields.loops) {
     throw new Error('Native Rekordbox sync supports tracks, track metadata, playlists, hot cues and loops. Select at least one of those categories.');
@@ -406,7 +407,11 @@ export const writeRekordboxDatabase = async (
       }
       rowsByFile.set(key, [...rowsByFile.get(key) ?? [], row]);
     }
+    const groupByPath = new Map<string, string>();
+    for (const [key, group] of rowsByFile) for (const row of group) groupByPath.set(normalizePath(text(row.FolderPath) ?? ''), key);
     const fileKey = async (path: string): Promise<string> => {
+      const exact = groupByPath.get(normalizePath(path));
+      if (exact !== undefined) return exact;
       const { key, alias } = await identity(path);
       return rowsByFile.has(key) || alias === null ? key : aliases.get(alias) ?? key;
     };
@@ -566,11 +571,12 @@ export const writeRekordboxDatabase = async (
       changedAnalysedBpm ||= values.BPM !== number(row.BPM) && text(row.AnalysisDataPath) !== null;
       update('djmdContent', row, values);
     }
-    // Tracks removed in Arsenal since the last sync leave the Collection, unless Arsenal still has another entry for the file.
+    // Tracks removed in Arsenal leave the Collection, unless Arsenal still has another entry for the same file.
     let removedTracks = 0;
+    const retained = new Set(await Promise.all((options.retainTrackPaths ?? []).map(fileKey)));
     if (options.fields.tracks) for (const key of new Set(await Promise.all((options.removeTrackPaths ?? []).map(fileKey)))) {
       const row = byPath.get(key);
-      if (!row || syncedTracks.has(id(row.ID)) || Object.values(row).some(encrypted)) continue;
+      if (!row || retained.has(key) || syncedTracks.has(id(row.ID))) continue;
       removeContent(row, null);
       byPath.delete(key);
       removedTracks++;
