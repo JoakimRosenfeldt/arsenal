@@ -60,7 +60,8 @@ import {
   isSupportedAudioPath,
 } from './track-artwork';
 import { findSeratoSource, moveSeratoNode, readSeratoLibrary, repairSeratoMissingFile, type SeratoSource } from './serato-library';
-import { mergeRekordboxXml, rekordboxSyncLibrary, repairRekordboxMissingFiles } from './sync-rekordbox-xml';
+import { mergeRekordboxXml, pathFromLocation, rekordboxSyncLibrary, repairRekordboxMissingFiles } from './sync-rekordbox-xml';
+import { cloudMatcher, isCloudPath } from './cloud-tracks';
 import { readSeratoWithPerformance, saveLibraryXml, syncArsenalLibraryToConnection } from './sync-libraries';
 import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
 import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
@@ -1458,24 +1459,18 @@ export class RekordboxLibrary {
         if (track.mediaPath === null) return null;
         try { const file = await stat(track.mediaPath, { bigint: true }); return file.isFile() ? file : null; } catch { return null; }
       }));
-      const alias = (size: bigint | number, song: SongRow): string => `${size}:${song.title.normalize('NFC').toLocaleLowerCase()}`;
-      const aliases = new Map<string, string>();
       for (const [index, track] of tracks.entries()) {
         const file = files[index];
-        if (!file) continue;
-        const key = `file:${file.dev}:${file.ino}`;
-        fileKeys.set(track.song.id, key);
-        if (!aliases.has(alias(file.size, track.song))) aliases.set(alias(file.size, track.song), key);
+        if (file) fileKeys.set(track.song.id, `file:${file.dev}:${file.ino}`);
       }
-      // Rekordbox Cloud Library Sync entries have no local path, so they match a file by size and title.
+      const localFile = cloudMatcher(tracks.flatMap((track, index) => track.mediaPath !== null && files[index]
+        ? [{ name: basename(track.mediaPath), length: track.song.durationSeconds, value: fileKeys.get(track.song.id) ?? '' }] : []), false);
       for (const [index, track] of tracks.entries()) {
         if (files[index]) continue;
-        const size = track.song.fileSizeBytes;
-        if (size !== null && size > 0) {
-          const key = aliases.get(alias(size, track.song)) ?? `size:${alias(size, track.song)}`;
-          aliases.set(alias(size, track.song), key);
-          fileKeys.set(track.song.id, key);
-        } else if (track.mediaPath !== null) fileKeys.set(track.song.id, `path:${normalizePath(track.mediaPath)}`);
+        const path = track.mediaPath ?? pathFromLocation(track.rawLocation) ?? track.rawLocation;
+        const cloud = path !== null && isCloudPath(path) ? localFile(basename(path), track.song.durationSeconds) : undefined;
+        if (cloud !== undefined) fileKeys.set(track.song.id, cloud);
+        else if (track.mediaPath !== null) fileKeys.set(track.song.id, `path:${normalizePath(track.mediaPath)}`);
       }
     }
     const unfiltered = findDuplicateScan(catalog.songs, mode, fileKeys);

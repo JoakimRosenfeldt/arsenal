@@ -5,6 +5,7 @@ import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
 import type { LibraryFilesRepairResult, MissingFileRepair } from './repair-library-files';
+import { isCloudPath } from './cloud-tracks';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
 type Row = Record<string, unknown>;
@@ -171,10 +172,17 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
       }));
     }
     let encryptedTracks = 0;
+    // A cloud synced track reads as the local file it was uploaded from, when that file is on this computer.
+    const uploadedFrom = new Map<Row, string>();
+    await Promise.all(contents.map(async (row) => {
+      const original = isCloudPath(text(row.FolderPath) ?? '') ? text(row.OrgFolderPath) : null;
+      if (original !== null && await stat(original).then((file) => file.isFile(), () => false)) uploadedFrom.set(row, original);
+    }));
     const tracks = contents.flatMap((row) => {
       const trackId = id(row.ID);
       if (encrypted(row.FolderPath) || !text(row.FolderPath) && Object.values(row).some(encrypted)) { encryptedTracks++; return []; }
-      const path = text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
+      const original = uploadedFrom.get(row);
+      const path = original ?? text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
       const title = text(row.Title) ?? basename(path);
       const linked = (field: keyof typeof links): string | null => {
         const [table, column] = links[field];
@@ -191,7 +199,7 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
         durationSeconds: number(row.Length), fileKind: fileTypes[number(row.FileType) ?? 0] ?? null, fileSizeBytes: number(row.FileSize),
         bitRateKbps: number(row.BitRate), sampleRateHz: number(row.SampleRate), trackNumber: number(row.TrackNo), discNumber: number(row.DiscNo),
         playCount: number(row.DJPlayCount), rating: rating === null ? null : rating * 51, dateAdded: text(row.StockDate), comments: text(row.Commnt),
-        artworkUrl: null, audioUrl: null, source: /^(?:\/|[a-z]:[\\/])/i.test(path) && !number(row.ServiceID) ? 'local' : 'streaming',
+        artworkUrl: null, audioUrl: null, source: original !== undefined || /^(?:\/|[a-z]:[\\/])/i.test(path) && !number(row.ServiceID) ? 'local' : 'streaming',
         cuePointCount: performance ? performance.hotCues.length + performance.memoryCues.length + performance.loops.length : 0,
         hotCueCount: performance ? performance.hotCues.length + performance.loops.filter((loop) => loop.hotCue).length : 0,
       };
@@ -371,21 +379,18 @@ export const writeRekordboxDatabase = async (
       return id(created.ID);
     };
     // Keys by file identity, so differently spelled paths to one file (case, Unicode form, symlinks) match one Collection row.
-    // Cloud Library Sync rows store a virtual "/contents_<id>/..." path instead, so rows without a file on disk match by file name and size.
-    const sizeName = (size: number | null, name: string | null): string | null =>
-      size !== null && size > 0 && name ? `${size}:${name.normalize('NFC').toLowerCase()}` : null;
-    const identities = new Map<string, Promise<{ key: string; alias: string | null }>>();
-    const identity = (path: string): Promise<{ key: string; alias: string | null }> => {
+    const identities = new Map<string, Promise<string>>();
+    const identity = (path: string): Promise<string> => {
       let result = identities.get(path);
       if (!result) {
         result = (async () => {
           try {
             const file = await stat(path, { bigint: true });
-            if (file.isFile() && file.ino !== 0n) return { key: `file:${file.dev}:${file.ino}`, alias: sizeName(Number(file.size), basename(path)) };
+            if (file.isFile() && file.ino !== 0n) return `file:${file.dev}:${file.ino}`;
           } catch (error) {
             if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
           }
-          return { key: `path:${normalizePath(path)}`, alias: null };
+          return `path:${normalizePath(path)}`;
         })();
         identities.set(path, result);
       }
@@ -393,28 +398,17 @@ export const writeRekordboxDatabase = async (
     };
     const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0');
     const located = contents.flatMap((row) => { const path = text(row.FolderPath); return path ? [{ row, path }] : []; });
-    const contentIdentities = await Promise.all(located.map(({ path }) => identity(path)));
+    // Cloud Library Sync rows keep the file they were uploaded from in OrgFolderPath, so they group with that file.
+    const contentKeys = await Promise.all(located.map(({ row, path }) => identity(isCloudPath(path) ? text(row.OrgFolderPath) ?? path : path)));
     await Promise.all(incoming.tracks.map((track) => identity(track.location ?? track.path)));
-    const aliases = new Map<string, string>();
-    for (const { key, alias } of contentIdentities) if (alias !== null && !aliases.has(alias)) aliases.set(alias, key);
     const rowsByFile = new Map<string, Row[]>();
     for (const [index, { row }] of located.entries()) {
-      let key = contentIdentities[index]?.key ?? '';
-      const alias = key.startsWith('path:') ? sizeName(number(row.FileSize), text(row.FileNameL)) : null;
-      if (alias !== null) {
-        key = aliases.get(alias) ?? key;
-        if (!aliases.has(alias)) aliases.set(alias, key);
-      }
+      const key = contentKeys[index] ?? '';
       rowsByFile.set(key, [...rowsByFile.get(key) ?? [], row]);
     }
-    const groupByPath = new Map<string, string>();
-    for (const [key, group] of rowsByFile) for (const row of group) groupByPath.set(normalizePath(text(row.FolderPath) ?? ''), key);
-    const fileKey = async (path: string): Promise<string> => {
-      const exact = groupByPath.get(normalizePath(path));
-      if (exact !== undefined) return exact;
-      const { key, alias } = await identity(path);
-      return rowsByFile.has(key) || alias === null ? key : aliases.get(alias) ?? key;
-    };
+    const resolvedKeys = new Map<string, string>();
+    for (const [key, group] of rowsByFile) for (const row of group) resolvedKeys.set(normalizePath(text(row.FolderPath) ?? ''), key);
+    const fileKey = async (path: string): Promise<string> => resolvedKeys.get(normalizePath(path)) ?? identity(path);
     const contentColumns = new Set(rows(db, 'PRAGMA table_info("djmdContent")').map((row) => row.name));
     let contentDefaults: Values | null = null;
     // New Collection rows follow pyrekordbox's MasterDatabase.add_content.
@@ -473,15 +467,17 @@ export const writeRekordboxDatabase = async (
     };
     let mergedTracks = 0;
     for (const [key, group] of rowsByFile) {
-      if (group.length > 1 && !options.fields.tracks) { ambiguousPaths.add(key); continue; }
+      const hasCloud = group.some((row) => isCloudPath(text(row.FolderPath) ?? ''));
+      if (group.length > 1 && !options.fields.tracks && !hasCloud) { ambiguousPaths.add(key); continue; }
       // With Tracks on, extra Collection rows for one file are merged into the cloud synced row, or the one with encrypted data, analysis or the most cues.
       const rank = (row: Row): number => ((number(row.ServiceID) ?? 0) > 0 ? 4e9 : 0) + (Object.values(row).some(encrypted) ? 2e9 : 0)
         + (text(row.AnalysisDataPath) !== null ? 1e9 : 0) + (cuesByContent.get(id(row.ID))?.length ?? 0);
       const [kept, ...extras] = group.sort((left, right) => rank(right) - rank(left));
       if (!kept) continue;
       byPath.set(key, kept);
+      // Cloud rows are never removed; a local row next to one was added by an earlier Arsenal sync. Without Tracks, the cloud row is only preferred.
       for (const extra of extras) {
-        if (Object.values(extra).some(encrypted)) continue;
+        if (!options.fields.tracks || Object.values(extra).some(encrypted) || isCloudPath(text(extra.FolderPath) ?? '')) continue;
         removeContent(extra, kept);
         mergedTracks++;
       }
