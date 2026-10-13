@@ -26,7 +26,7 @@ const api: DjLibraryApi = Object.freeze({
   backupNow: (id) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.backupNow, id),
   stopBackup: (id) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.stopBackup, id),
   importBackup: (mode) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importBackup, mode),
-  connectLibrary: (kind) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.connectLibrary, kind),
+  connectLibrary: (kind, seratoVersion) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.connectLibrary, kind, seratoVersion),
   manageLibraryConnection: (action) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.manageLibraryConnection, action),
   importRekordboxExport: () =>
     ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.importExport),

@@ -983,7 +983,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         return <LibraryConnectionsPage busy={busy} state={connections}
           initialSyncResult={startupSyncResult} onError={reportError}
           onImportBackup={(mode) => manageConnection(() => window.djLibrary.importBackup(mode), true)}
-          onConnect={(kind) => manageConnection(() => window.djLibrary.connectLibrary(kind), true)}
+          onConnect={(kind, seratoVersion) => manageConnection(() => window.djLibrary.connectLibrary(kind, seratoVersion), true)}
           onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open', action.kind === 'disconnect' ? action.id : undefined)}
           onImportChanges={(id) => manageConnection(() => window.djLibrary.manageLibraryConnection({ kind: 'open', id }))}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
