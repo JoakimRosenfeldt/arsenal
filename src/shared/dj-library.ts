@@ -445,10 +445,6 @@ export type LibraryMutation =
       parentFolderId: string | null;
       playlistId: string | null;
       definition: SmartPlaylistDefinition;
-    }>
-  | Readonly<{
-      kind: 'restore-hot-loops';
-      revision: string;
     }>;
 
 export type LocalFileAction =
@@ -513,13 +509,6 @@ export type LibraryMutationResult = (
       kind: 'smart-playlist-saved';
       library: LibrarySummary;
       playlistId: string;
-    }>
-  | Readonly<{
-      kind: 'hot-loops-restored';
-      library: LibrarySummary;
-      restoredCount: number;
-      skippedCount: number;
-      trackCount: number;
     }>
   | Readonly<{
       kind: 'rejected';

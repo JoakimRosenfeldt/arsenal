@@ -10,7 +10,7 @@ const libraryKinds = [
   { kind: 'serato', label: 'Serato library' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string }[];
 
-export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImportChanges, onSync, onRestoreHotLoops, onResolveMissing, onImportBackup, initialSyncResult, onError }: Readonly<{
+export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImportChanges, onSync, onResolveMissing, onImportBackup, initialSyncResult, onError }: Readonly<{
   busy: boolean;
   onError: (message: string) => void;
   state: LibraryConnections | null;
@@ -18,7 +18,6 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImp
   onManage: (action: LibraryConnectionAction) => Promise<LibraryConnectionResult>;
   onImportChanges: (id: string) => Promise<LibraryConnectionResult>;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
-  onRestoreHotLoops: () => Promise<boolean>;
   onResolveMissing: (action: SyncMissingFileAction) => Promise<SyncResult>;
   onImportBackup: (mode: 'folder' | 'snapshot') => Promise<LibraryConnectionResult>;
   initialSyncResult?: Exclude<SyncResult, { kind: 'cancelled' }> | null;
@@ -28,15 +27,12 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImp
   const removeDialogRef = useRef<HTMLDialogElement>(null);
   const [resetSource, setResetSource] = useState<string | null>(null);
   const resetDialogRef = useRef<HTMLDialogElement>(null);
-  const [restoringLoops, setRestoringLoops] = useState(false);
-  const restoreLoopsDialogRef = useRef<HTMLDialogElement>(null);
   const [adding, setAdding] = useState(false);
   const [connectingFolder, setConnectingFolder] = useState(false);
   const addDialogRef = useRef<HTMLDialogElement>(null);
   const working = busy || pending !== null;
   const connections = state?.connections ?? [];
   const arsenal = connections.find((connection) => connection.origin === 'arsenal');
-  const hasRekordbox = connections.some((connection) => connection.kind === 'rekordbox' && connection.origin === undefined);
   const resetSources = connections.filter((connection) => connection.origin !== 'arsenal' && connection.available);
   useEffect(() => {
     if (removing !== null && removeDialogRef.current && !removeDialogRef.current.open) removeDialogRef.current.showModal();
@@ -47,9 +43,6 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImp
   useEffect(() => {
     if (resetSource !== null && resetDialogRef.current && !resetDialogRef.current.open) resetDialogRef.current.showModal();
   }, [resetSource]);
-  useEffect(() => {
-    if (restoringLoops && restoreLoopsDialogRef.current && !restoreLoopsDialogRef.current.open) restoreLoopsDialogRef.current.showModal();
-  }, [restoringLoops]);
 
   const run = async (operation: () => Promise<LibraryConnectionResult>, progress: string): Promise<void> => {
     if (working) return;
@@ -98,7 +91,6 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImp
       <header className="page-header">
         <div className="page-title-line"><h1 id="library-connections-title">Connections</h1></div>
         {arsenal && <div className="header-actions">
-          {hasRekordbox && <button className="quiet-button" type="button" disabled={working} onClick={() => setRestoringLoops(true)}>Restore hot loops…</button>}
           <button className="quiet-button" type="button" disabled={working} onClick={() => setResetSource(arsenal.id)}>Reset library…</button>
         </div>}
       </header>
@@ -164,22 +156,6 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImp
             addDialogRef.current?.close();
             setConnectingFolder(true);
           }}>Backup folder</button>
-        </div>
-      </dialog>}
-
-      {restoringLoops && <dialog className="tracklist-export-dialog library-connection-remove-dialog" ref={restoreLoopsDialogRef}
-        aria-labelledby="library-restore-loops-title" aria-describedby="library-restore-loops-description" onClose={() => setRestoringLoops(false)}>
-        <div className="tracklist-export-heading">
-          <h2 id="library-restore-loops-title">Restore hot loops?</h2>
-          <button className="inspector-close" type="button" onClick={() => restoreLoopsDialogRef.current?.close()} aria-label="Cancel restore"><UiIcon name="close" size={16} /></button>
-        </div>
-        <p id="library-restore-loops-description">Every memory loop becomes a hot loop in Arsenal, then syncs to your connected libraries. A loop returns to its saved hot cue slot (A–H) when known and free, otherwise it takes the first free slot. Memory loops you set on purpose will also become hot loops. Loops on tracks with all eight slots taken stay memory cues.</p>
-        <div className="library-connection-remove-actions">
-          <button className="quiet-button" type="button" autoFocus onClick={() => restoreLoopsDialogRef.current?.close()}>Cancel</button>
-          <button className="accent-button" type="button" onClick={() => {
-            restoreLoopsDialogRef.current?.close();
-            void onRestoreHotLoops();
-          }}>Restore hot loops</button>
         </div>
       </dialog>}
 
