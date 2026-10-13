@@ -213,7 +213,7 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
       }
     }
     return { kind: 'synced', trackCount: selected.tracks.length, playlistCount: selected.playlists.length,
-      skippedTrackCount: Math.max(0, local.tracks.length - selected.tracks.length), backupPaths, warnings,
+      skippedTrackCount: Math.max(0, source.tracks.length - selected.tracks.length), backupPaths, warnings,
       message: target.kind === 'serato' ? 'Arsenal library synced to Serato. Reopen Serato to load the changes.'
         : 'Rekordbox XML updated. Rekordbox Collection needs a separate import. Refresh "rekordbox xml" in its sidebar, open "All Tracks", and drag the changed tracks into Collection. Import changed XML playlists into Playlists separately.' };
   } catch (error) {
