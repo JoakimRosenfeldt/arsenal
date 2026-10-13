@@ -41,6 +41,30 @@ export const normalizePath = (path: string): string => {
   return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
 };
 
+const sameLoop = (left: SyncLoop, right: SyncLoop): boolean =>
+  Math.round(left.start * 1000) === Math.round(right.start * 1000) &&
+  Math.round(left.end * 1000) === Math.round(right.end * 1000);
+
+// Serato tags cannot store that a loop sits in a hot cue slot, so loops read from them carry no
+// hotCue flag. Such a loop keeps the hot slot of the matching loop that is already known, instead
+// of being demoted to a memory loop on the next Rekordbox sync.
+export const preserveHotLoops = (incoming: SyncPerformance, existing: SyncPerformance | undefined): SyncPerformance => {
+  if (existing === undefined) return incoming;
+  const occupied = new Set([...incoming.hotCues.map((cue) => cue.index),
+    ...incoming.loops.filter((loop) => loop.hotCue).map((loop) => loop.index)]);
+  let changed = false;
+  const loops = incoming.loops.map((loop) => {
+    if (loop.hotCue !== undefined) return loop;
+    const matches = existing.loops.filter((candidate) => candidate.hotCue && sameLoop(candidate, loop) && !occupied.has(candidate.index));
+    const match = matches.length === 1 ? matches[0] : undefined;
+    if (match === undefined) return loop;
+    changed = true;
+    occupied.add(match.index);
+    return { ...loop, index: match.index, hotCue: true };
+  });
+  return changed ? { ...incoming, loops } : incoming;
+};
+
 export const mergeLibraries = (preferred: SyncLibrary, other: SyncLibrary): SyncLibrary => {
   const tracks = new Map(other.tracks.map((track) => [normalizePath(track.path), track]));
   for (const track of preferred.tracks) {

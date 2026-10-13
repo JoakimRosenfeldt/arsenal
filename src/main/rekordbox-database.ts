@@ -3,7 +3,7 @@ import { readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
-import { normalizePath, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
+import { normalizePath, preserveHotLoops, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
 import type { LibraryFilesRepairResult, MissingFileRepair } from './repair-library-files';
 import { isCloudPath } from './cloud-tracks';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
@@ -483,11 +483,18 @@ export const writeRekordboxDatabase = async (
       }
     }
     // Replaces the selected cue kinds of one track. Frames are 1/150 s; MPEG seek fields stay 0 as for non-VBR files.
-    const syncCues = (content: Row, performance: SyncPerformance): void => {
+    const syncCues = (content: Row, source: SyncPerformance): void => {
       const loop = (cue: Row): boolean => (number(cue.OutMsec) ?? -1) > (number(cue.InMsec) ?? 0);
+      const current = cuesByContent.get(id(content.ID)) ?? [];
+      // A loop whose source has no hot slot concept keeps the hot slot Collection already has for it.
+      const performance = preserveHotLoops(source, { hotCues: [], beatgrids: [],
+        loops: current.flatMap((cue): SyncLoop[] => {
+          const kind = number(cue.Kind) ?? 0;
+          return loop(cue) && kind > 0 ? [{ index: kind - 1, name: '', start: (number(cue.InMsec) ?? 0) / 1000,
+            end: (number(cue.OutMsec) ?? -1) / 1000, locked: false, hotCue: true, color: loopColor }] : [];
+        }) });
       const managed = (cue: Row): boolean => loop(cue) ? options.fields.loops
         : options.fields.hotCues && ((number(cue.Kind) ?? 0) > 0 || performance.memoryCues !== undefined);
-      const current = cuesByContent.get(id(content.ID)) ?? [];
       const existing = current.filter(managed);
       const occupied = new Set(current.filter((cue) => !managed(cue)).map((cue) => number(cue.Kind) ?? 0));
       const kind = (index: number, hotCue: boolean): number | null => {
