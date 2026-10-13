@@ -22,12 +22,14 @@ export const portableLibraryPreview = (current: SyncLibrary, manifest: PortableL
     ...(playlist.smart === undefined ? {} : { smart: playlist.smart }) })) };
 };
 
-export const describeLibraryChanges = (current: SyncLibrary, updated: SyncLibrary): readonly string[] => {
+export const describeLibraryChanges = (before: SyncLibrary, after: SyncLibrary): readonly string[] => {
+  // Compare JSON forms so a field set to undefined matches the same field read back from disk without it.
+  const current = JSON.parse(JSON.stringify(before)) as SyncLibrary;
+  const updated = JSON.parse(JSON.stringify(after)) as SyncLibrary;
   const previousTracks = new Map(current.tracks.map((track) => [normalizePath(track.path), track]));
   let added = 0;
   let metadata = 0;
   let cues = 0;
-  let grids = 0;
   for (const track of updated.tracks) {
     const previous = previousTracks.get(normalizePath(track.path));
     if (!previous) { added += 1; continue; }
@@ -37,14 +39,12 @@ export const describeLibraryChanges = (current: SyncLibrary, updated: SyncLibrar
     if (!isDeepStrictEqual(previous.performance?.hotCues ?? [], track.performance?.hotCues ?? []) ||
       !isDeepStrictEqual(previous.performance?.memoryCues ?? [], track.performance?.memoryCues ?? []) ||
       !isDeepStrictEqual(previous.performance?.loops ?? [], track.performance?.loops ?? [])) cues += 1;
-    if (!isDeepStrictEqual(previous.performance?.beatgrids ?? [], track.performance?.beatgrids ?? [])) grids += 1;
   }
   const count = (value: number, singular: string, plural = `${singular}s`) => `${value.toLocaleString()} ${value === 1 ? singular : plural}`;
   const changes = [
     ...(added ? [`${count(added, 'track')} added`] : []),
     ...(metadata ? [`Metadata updated on ${count(metadata, 'track')}`] : []),
     ...(cues ? [`Cue points or loops updated on ${count(cues, 'track')}`] : []),
-    ...(grids ? [`Beatgrids updated on ${count(grids, 'track')}`] : []),
   ];
   const previousPlaylists = new Map(current.playlists.map((playlist) => [JSON.stringify(playlist.path), playlist]));
   for (const playlist of updated.playlists) {
@@ -54,5 +54,5 @@ export const describeLibraryChanges = (current: SyncLibrary, updated: SyncLibrar
     const name = playlist.path.join(' / ');
     changes.push(`${kind} ${previous ? 'updated' : 'added'}: ${name}${playlist.kind === 'folder' ? '' : ` (${count(playlist.trackPaths.length, 'track')})`}`);
   }
-  return changes.length ? changes : ['No new track or playlist changes to import.'];
+  return changes;
 };

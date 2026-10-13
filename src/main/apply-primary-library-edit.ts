@@ -11,7 +11,7 @@ import { seratoMediaPathKey } from './serato-paths';
 import { mergeRekordboxXml, rekordboxSyncLibrary } from './sync-rekordbox-xml';
 import { saveLibraryXml } from './sync-libraries';
 
-const structureFields = { tracks: true, playlists: true, metadata: false, hotCues: false, loops: false, beatgrids: false };
+const structureFields = { tracks: true, playlists: true, metadata: false, hotCues: false, loops: false };
 const pathKey = (path: readonly string[]): string => JSON.stringify(path.map((part) => part.toLocaleLowerCase()));
 const playlistPath = (playlist: ParsedPlaylist): readonly string[] => playlist.seratoCrateTracks
   ? playlist.folderPath : [...playlist.folderPath, playlist.name];
@@ -87,7 +87,7 @@ export const preparePrimaryLibraryEdit = async ({ sourcePath, expectedFingerprin
       }
       if (additions.length) {
         targetXml = mergeRekordboxXml({ tracks: additions, playlists: [] }, targetXml,
-          { ...structureFields, playlists: false, hotCues: true, loops: true, beatgrids: true });
+          { ...structureFields, playlists: false, hotCues: true, loops: true });
         await parseTarget();
         return mapReferences(selected, false);
       }

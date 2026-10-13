@@ -53,7 +53,8 @@ export const LibraryChangesDialog = ({ preview, busy, onResolve }: Readonly<{
         {preview.libraries.map((library) => (
           <section key={library.id} aria-label={library.name}>
             <h3>{library.name}</h3>
-            <ul>{library.changes.map((change, index) => <li key={index}>{change}</li>)}</ul>
+            <ul>{library.changes.length ? library.changes.map((change, index) => <li key={index}>{change}</li>)
+              : <li>No new track or playlist changes to import.</li>}</ul>
           </section>
         ))}
       </div>

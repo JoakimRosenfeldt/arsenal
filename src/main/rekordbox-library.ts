@@ -551,8 +551,15 @@ export class RekordboxLibrary {
           this.connectedLibraries = this.connectedLibraries.map((candidate) => candidate.id === connection.id ? updated : candidate);
         } else if (connection.sourceFingerprint !== source.fingerprint && !(this.pendingRekordboxSync?.connectionId === connection.id &&
           this.pendingRekordboxSync.fingerprint === source.syncFingerprint)) {
-          this.startupChanges.add(connection.id);
-          this.startupSources.set(connection.id, source);
+          // DJ apps rewrite their files on launch, so only content edits since the last accepted snapshot need a review.
+          const changes = source.syncFingerprint === connection.sourceSyncFingerprint ? [] : await this.sourceChanges(connection, source);
+          if (changes === null || changes.length) {
+            this.startupChanges.add(connection.id);
+            this.startupSources.set(connection.id, source);
+          } else {
+            const updated = await this.acceptedSource(connection, source);
+            this.connectedLibraries = this.connectedLibraries.map((candidate) => candidate.id === connection.id ? updated : candidate);
+          }
         }
       } catch (error) {
         this.startupUnreadable.add(connection.id);
@@ -675,7 +682,8 @@ export class RekordboxLibrary {
           const incoming = source.library ?? (source.portableManifestPath === null ? null
             : portableLibraryPreview(this.arsenalLibrary, await readPortableLibrary(source.portableManifestPath)));
           libraries.push({ id: connection.id, name, changes: incoming === null
-            ? ['Library changes are ready to import.'] : describeLibraryChanges(this.arsenalLibrary, mergeArsenalLibrary(this.arsenalLibrary, incoming)) });
+            ? ['Library changes are ready to import.'] : await this.sourceChanges(connection, source)
+              ?? describeLibraryChanges(this.arsenalLibrary, mergeArsenalLibrary(this.arsenalLibrary, incoming)) });
         } catch {
           libraries.push({ id: connection.id, name, changes: ['Changes could not be read. Try importing again once the library is available.'] });
         }
@@ -817,9 +825,24 @@ export class RekordboxLibrary {
       message: imported ? `Imported changes from ${imported} ${imported === 1 ? 'library' : 'libraries'}.` : null };
   }
 
+  private sourceSnapshotPath(id: string): string {
+    return join(dirname(this.arsenalPath), `source-${id}.json`);
+  }
+
+  // Changes in a source since Arsenal last accepted it, or null when no snapshot was saved yet.
+  private async sourceChanges(connection: StoredLibraryConnection, source: LibrarySourceSnapshot): Promise<readonly string[] | null> {
+    if (source.library === null) return null;
+    let snapshot: SyncLibrary;
+    try { snapshot = JSON.parse(await readFile(this.sourceSnapshotPath(connection.id), 'utf8')) as SyncLibrary; } catch { return null; }
+    return describeLibraryChanges(snapshot, source.library);
+  }
+
   private async acceptedSource(connection: StoredLibraryConnection, source: LibrarySourceSnapshot,
     expectedManifest?: Awaited<ReturnType<typeof readPortableLibrary>>): Promise<StoredLibraryConnection> {
-    if (!connection.portableSource) return { ...connection, sourceFingerprint: source.fingerprint, sourceSyncFingerprint: source.syncFingerprint };
+    if (!connection.portableSource) {
+      if (source.library !== null) await writeFile(this.sourceSnapshotPath(connection.id), JSON.stringify(source.library));
+      return { ...connection, sourceFingerprint: source.fingerprint, sourceSyncFingerprint: source.syncFingerprint };
+    }
     const portableSource = { ...connection.portableSource, manifestPath: source.portableManifestPath ?? connection.portableSource.manifestPath };
     if (expectedManifest !== undefined && JSON.stringify(await readPortableLibrary(portableSource.manifestPath)) !== JSON.stringify(expectedManifest)) {
       throw new Error('The portable library changed during import. Try again after the cloud folder finishes syncing.');
@@ -1281,6 +1304,7 @@ export class RekordboxLibrary {
           await this.saveConnections({ connections,
             catalog: this.catalog,
             syncPreferences: { ...preferences, [key]: preferences[key] === connection.path ? nextPath : preferences[key] } });
+          await rm(this.sourceSnapshotPath(connection.id), { force: true });
         } else if (action.kind === 'replace') {
           const selected = await this.chooseSyncPath(owner, connection.kind, 'rekordbox-to-serato');
           if (selected === null) return { kind: 'cancelled' };
