@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, open, readFile, rename, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { normalizePath, type SyncLibrary, type SyncTrack } from './library-sync-model';
+import { normalizePath, preserveHotLoops, type SyncLibrary, type SyncTrack } from './library-sync-model';
 import { readLibraryModel } from './portable-library';
 
 const missing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT';
@@ -70,7 +70,7 @@ export const mergeArsenalLibrary = (existing: SyncLibrary, incoming: SyncLibrary
       saved = { ...current,
         song: { ...current.song, ...Object.fromEntries(Object.entries(track.song).filter(([, value]) => value !== null && value !== '')),
           id: current.song.id },
-        ...(track.performance === undefined ? {} : { performance: track.performance }) };
+        ...(track.performance === undefined ? {} : { performance: preserveHotLoops(track.performance, current.performance) }) };
     } else {
       let path = track.path;
       while (tracks.has(normalizePath(path))) path = `library-track:${randomUUID()}`;

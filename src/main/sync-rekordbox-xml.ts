@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { isSmartPlaylistNode, type ParsedRekordboxLibrary } from './parse-rekordbox-xml';
-import { normalizePath, type SyncLibrary, type SyncPlaylist, type SyncTrack } from './library-sync-model';
+import { normalizePath, preserveHotLoops, type SyncLibrary, type SyncLoop, type SyncPlaylist, type SyncTrack } from './library-sync-model';
 import { repairRekordboxXmlLocations } from './edit-rekordbox-xml';
 import { assertMissingFileRepair, saveRepairedLibraryFiles, type LibraryFilesRepairResult, type MissingFileRepair } from './repair-library-files';
 import { seratoMediaPathKey } from './serato-paths';
@@ -259,16 +259,25 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
       else node.attributes[metadataFields[key]] = String(value);
     }
     if (track.performance) {
+      // A loop whose source has no hot slot concept keeps the hot slot this file already has for it.
+      const performance = preserveHotLoops(track.performance, { hotCues: [], beatgrids: [],
+        loops: children(node, 'POSITION_MARK').flatMap((mark): SyncLoop[] => {
+          const index = Number(mark.attributes.Num);
+          const start = Number(mark.attributes.Start);
+          const end = Number(mark.attributes.End);
+          return mark.attributes.Type === '4' && Number.isInteger(index) && index >= 0 && Number.isFinite(start) && Number.isFinite(end)
+            ? [{ index, name: '', start, end, locked: false, hotCue: true, color: [0, 0, 0] }] : [];
+        }) });
       node.parts = node.parts.filter((part) => typeof part === 'string' ||
         (!(part.name === 'TEMPO' && fields?.beatgrids !== false) && (part.name !== 'POSITION_MARK' ||
           !(part.attributes.Type === '4' && fields?.loops !== false) &&
           !(part.attributes.Type === '0' && fields?.hotCues !== false &&
-            (Number(part.attributes.Num) >= 0 || Number(part.attributes.Num) === -1 && track.performance?.memoryCues !== undefined)))));
-      for (const cue of fields?.hotCues === false ? [] : [...track.performance.hotCues, ...track.performance.memoryCues ?? []]) node.parts.push({ name: 'POSITION_MARK', parts: [], attributes: {
+            (Number(part.attributes.Num) >= 0 || Number(part.attributes.Num) === -1 && performance.memoryCues !== undefined)))));
+      for (const cue of fields?.hotCues === false ? [] : [...performance.hotCues, ...performance.memoryCues ?? []]) node.parts.push({ name: 'POSITION_MARK', parts: [], attributes: {
         Name: cue.name, Type: '0', Num: String(cue.index), Start: String(cue.start),
         Red: String(cue.color[0]), Green: String(cue.color[1]), Blue: String(cue.color[2]),
       } });
-      for (const loop of fields?.loops === false ? [] : track.performance.loops) node.parts.push({ name: 'POSITION_MARK', parts: [], attributes: {
+      for (const loop of fields?.loops === false ? [] : performance.loops) node.parts.push({ name: 'POSITION_MARK', parts: [], attributes: {
         Name: loop.name, Type: '4', Num: String(loop.hotCue ? loop.index : -1), Start: String(loop.start), End: String(loop.end),
         Red: String(loop.color[0]), Green: String(loop.color[1]), Blue: String(loop.color[2]),
         ...(loop.locked ? { ArsenalLocked: '1' } : {}),

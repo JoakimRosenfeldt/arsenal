@@ -63,7 +63,7 @@ import { findSeratoSource, moveSeratoNode, readSeratoLibrary, repairSeratoMissin
 import { mergeRekordboxXml, pathFromLocation, rekordboxSyncLibrary, repairRekordboxMissingFiles } from './sync-rekordbox-xml';
 import { cloudMatcher, isCloudPath } from './cloud-tracks';
 import { readSeratoWithPerformance, saveLibraryXml, syncArsenalLibraryToConnection } from './sync-libraries';
-import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
+import { normalizePath, promoteHotLoops, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
 import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
 import { PORTABLE_LIBRARY_FILENAME, readLibraryModel, readPortableLibrary, readPortableLibraryFingerprint, readPortableLibraryFolder, resolvePortableLibrary, writePortableLibrary } from './portable-library';
@@ -2011,11 +2011,24 @@ export class RekordboxLibrary {
       case 'create-folder':
       case 'save-smart-playlist':
         return this.createPlaylistNode(catalog, change);
+      case 'restore-hot-loops':
+        return this.restoreHotLoops(catalog);
       default: {
         const exhaustiveChange: never = change;
         return exhaustiveChange;
       }
     }
+  }
+
+  private async restoreHotLoops(
+    catalog: CurrentCatalog,
+  ): Promise<LibraryMutationResult> {
+    const { library, restored, skipped, tracks } = promoteHotLoops(this.arsenalLibrary);
+    if (restored === 0) {
+      return { kind: 'hot-loops-restored', library: summaryFor(catalog), restoredCount: 0, skippedCount: skipped, trackCount: 0 };
+    }
+    this.catalog = await this.saveArsenalState(library);
+    return { kind: 'hot-loops-restored', library: summaryFor(this.catalog), restoredCount: restored, skippedCount: skipped, trackCount: tracks };
   }
 
   private async ignoreDuplicateGroup(

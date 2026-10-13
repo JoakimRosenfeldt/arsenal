@@ -50,7 +50,7 @@ import type { SmartPlaylistDefinition } from './shared/smart-playlists';
 type DisplayError = ImportFailure | MutationFailure | 'unexpected';
 
 type Feedback = Readonly<{
-  tone: 'warning';
+  tone: 'warning' | 'info';
   message: string;
 }>;
 
@@ -810,6 +810,12 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         if (playlistWindow) { window.close(); return true; }
         if (result.warning) setFeedback({ tone: 'warning', message: result.warning });
         else if (result.kind === 'songs-removed') setFeedback(feedbackForRemoval(result));
+        else if (result.kind === 'hot-loops-restored') setFeedback({
+          tone: result.restoredCount ? 'info' : 'warning',
+          message: result.restoredCount
+            ? `Restored ${result.restoredCount} hot ${result.restoredCount === 1 ? 'loop' : 'loops'} on ${result.trackCount} ${result.trackCount === 1 ? 'track' : 'tracks'}.${result.skippedCount ? ` ${result.skippedCount} ${result.skippedCount === 1 ? 'loop was' : 'loops were'} left as memory cues because the hot cue slot is taken.` : ''} Sync will update your connected libraries.`
+            : 'No memory loops with a saved hot cue slot were found. Loops that lost their slot number can only come back from a backup.',
+        });
         if (result.kind === 'duplicate-ignored') {
           setDuplicateState({ kind: 'ready', libraryVersion: result.library.revision, scan: result.scan });
           return true;
@@ -987,6 +993,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           onManage={(action) => manageConnection(() => window.djLibrary.manageLibraryConnection(action), action.kind === 'open', action.kind === 'disconnect' ? action.id : undefined)}
           onImportChanges={(id) => manageConnection(() => window.djLibrary.manageLibraryConnection({ kind: 'open', id }))}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
+          onRestoreHotLoops={() => applyMutation((revision) => ({ kind: 'restore-hot-loops', revision }))}
           onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />;
       case 'preferences':
         return <Preferences onCancel={() => navigate('library')} onError={reportError} />;

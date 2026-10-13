@@ -193,6 +193,12 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
       groupKey: value.groupKey,
     };
   }
+  if (value.kind === 'restore-hot-loops') {
+    if (typeof value.revision !== 'string' || value.revision.length === 0) {
+      throw new Error('Invalid hot loop restore');
+    }
+    return { kind: 'restore-hot-loops', revision: value.revision };
+  }
   if (value.kind === 'remove-songs') {
     if (
       typeof value.revision !== 'string' ||

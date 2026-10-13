@@ -369,7 +369,9 @@ export const parseRekordboxXml = async (
             }] } : {}),
             ...(type === '4' && end !== null ? { loops: [...track.performance.loops, {
               index: slot === -1 && savedLoopSlot !== null && Number.isInteger(savedLoopSlot) && savedLoopSlot <= 2147483647 ? savedLoopSlot : slot,
-              name: tag.attributes.Name ?? '', start, end, locked: isEnabledMarker(tag.attributes.ArsenalLocked), hotCue: slot >= 0,
+              name: tag.attributes.Name ?? '', start, end, locked: isEnabledMarker(tag.attributes.ArsenalLocked),
+              // ArsenalLoopIndex marks a loop Arsenal wrote from a source with no hot slot concept, so its hot status stays unknown.
+              ...(slot >= 0 ? { hotCue: true } : savedLoopSlot === null ? { hotCue: false } : {}),
               color: [Number(tag.attributes.Red ?? 39), Number(tag.attributes.Green ?? 170), Number(tag.attributes.Blue ?? 225)] as const,
             }] } : {}),
           },
