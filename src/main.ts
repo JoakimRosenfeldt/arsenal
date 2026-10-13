@@ -202,7 +202,9 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
       value.songIds.length > 10_000 ||
       !value.songIds.every((songId) => typeof songId === 'string' && songId.length > 0) ||
       new Set(value.songIds).size !== value.songIds.length ||
-      typeof value.removeLocalFile !== 'boolean'
+      typeof value.removeLocalFile !== 'boolean' ||
+      (value.keepSongIds !== undefined && (!isRecord(value.keepSongIds) ||
+        !Object.values(value.keepSongIds).every((songId) => typeof songId === 'string' && songId.length > 0)))
     ) {
       throw new Error('Invalid song removal');
     }
@@ -211,6 +213,7 @@ const readLibraryMutation = (value: unknown): LibraryMutation => {
       revision: value.revision,
       songIds: value.songIds,
       removeLocalFile: value.removeLocalFile,
+      ...(isRecord(value.keepSongIds) ? { keepSongIds: Object.fromEntries(Object.entries(value.keepSongIds).map(([id, keepId]) => [id, String(keepId)])) } : {}),
     };
   }
   if (value.kind === 'create-playlist' || value.kind === 'create-folder' || value.kind === 'save-smart-playlist') {

@@ -877,8 +877,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     void loadEditor();
   };
 
-  const removeSongs = (songIds: readonly string[], removeLocalFile: boolean, songs: readonly SongRow[] = []): Promise<boolean> =>
-    applyMutation((revision) => ({ kind: 'remove-songs', revision, songIds, removeLocalFile }), songs);
+  const removeSongs = (songIds: readonly string[], removeLocalFile: boolean, songs: readonly SongRow[] = [],
+    keepSongIds?: Readonly<Record<string, string>>): Promise<boolean> =>
+    applyMutation((revision) => ({ kind: 'remove-songs', revision, songIds, removeLocalFile, ...(keepSongIds ? { keepSongIds } : {}) }), songs);
 
   const createPlaylist = (name: string, songIds: readonly string[], parentFolderId: string | null = null, songs: readonly SongRow[] = []): Promise<boolean> =>
     applyMutation((revision) => ({ kind: 'create-playlist', parentFolderId, revision, name, songIds }), songs);
