@@ -266,8 +266,10 @@ export const encodeSeratoPerformance = (
     updates.set(MARKERS2, writeMarkers2(retained, existing.get(MARKERS2)?.length ?? 0));
     if (includeLegacy) updates.set(MARKERS, writeLegacy(existing.get(MARKERS), performance, fields));
   }
-  // Without an incoming grid, keep Serato's own grid instead of erasing it.
-  if (fields.beatgrids && (performance.beatgrids.length || !existing.has(BEATGRID))) updates.set(BEATGRID, writeBeatgrid(performance.beatgrids, existing.get(BEATGRID)));
+  // Without an incoming grid, or with one Serato cannot represent, keep Serato's own grid instead of failing the track.
+  if (fields.beatgrids && (performance.beatgrids.length || !existing.has(BEATGRID))) {
+    try { updates.set(BEATGRID, writeBeatgrid(performance.beatgrids, existing.get(BEATGRID))); } catch { /* Serato keeps its own analysis. */ }
+  }
   for (const [name, bytes] of updates) if (existing.get(name)?.equals(bytes)) updates.delete(name);
   return updates;
 };

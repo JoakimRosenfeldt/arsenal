@@ -544,7 +544,8 @@ export const writeRekordboxDatabase = async (
         if (row) { byPath.set(key, row); addedTracks++; }
       }
       if (!row) { skippedTracks.add(key); continue; }
-      if (syncedTracks.has(id(row.ID))) { conflicts.push(`${track.song.title}: Arsenal has this file more than once`); continue; }
+      // Rekordbox keeps one Collection row per file, so the first Arsenal entry for a file wins, as in Serato.
+      if (syncedTracks.has(id(row.ID))) continue;
       byPath.set(await fileKey(track.path), row);
       syncedTracks.add(id(row.ID));
       const cues = options.fields.hotCues || options.fields.loops ? track.performance : undefined;

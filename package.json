@@ -9,6 +9,7 @@
     "node": "24.x"
   },
   "scripts": {
+    "postinstall": "node scripts/patch-node-taglib-sharp.mjs",
     "start": "electron-forge start",
     "typecheck": "tsc --noEmit",
     "package": "electron-forge package",
