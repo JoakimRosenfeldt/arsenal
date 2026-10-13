@@ -269,7 +269,7 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
             ? [{ index, name: '', start, end, locked: false, hotCue: true, color: [0, 0, 0] }] : [];
         }) });
       node.parts = node.parts.filter((part) => typeof part === 'string' ||
-        (!(part.name === 'TEMPO' && fields?.beatgrids !== false) && (part.name !== 'POSITION_MARK' ||
+        (!(part.name === 'TEMPO' && fields === undefined) && (part.name !== 'POSITION_MARK' ||
           !(part.attributes.Type === '4' && fields?.loops !== false) &&
           !(part.attributes.Type === '0' && fields?.hotCues !== false &&
             (Number(part.attributes.Num) >= 0 || Number(part.attributes.Num) === -1 && performance.memoryCues !== undefined)))));
@@ -283,7 +283,7 @@ export const mergeRekordboxXml = (incoming: SyncLibrary, source = blankXml, fiel
         ...(loop.locked ? { ArsenalLocked: '1' } : {}),
         ...(!loop.hotCue && loop.index >= 0 ? { ArsenalLoopIndex: String(loop.index) } : {}),
       } });
-      for (const grid of fields?.beatgrids === false ? [] : track.performance.beatgrids) node.parts.push({ name: 'TEMPO', parts: [], attributes: {
+      for (const grid of fields === undefined ? track.performance.beatgrids : []) node.parts.push({ name: 'TEMPO', parts: [], attributes: {
         Inizio: String(grid.start), Bpm: String(grid.bpm), Metro: grid.meter ?? '4/4', Battito: String(grid.beat),
       } });
       const slots = new Set<number>();

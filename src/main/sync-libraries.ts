@@ -75,7 +75,7 @@ const selectedSource = (source: SyncLibrary, target: SyncLibrary, fields: SyncFi
         hotCues: fields.hotCues ? performance.hotCues : previous?.performance?.hotCues ?? [],
         memoryCues: fields.hotCues ? performance.memoryCues ?? previous?.performance?.memoryCues ?? [] : previous?.performance?.memoryCues ?? [],
         loops: fields.loops ? performance.loops : previous?.performance?.loops ?? [],
-        beatgrids: fields.beatgrids ? performance.beatgrids : previous?.performance?.beatgrids ?? [],
+        beatgrids: previous?.performance?.beatgrids ?? [],
       } } : {}),
     }];
   });
@@ -98,7 +98,6 @@ const shiftPerformance = (library: SyncLibrary, seconds: number, fields: SyncFie
     ...(track.performance.memoryCues === undefined ? {} : { memoryCues: fields.hotCues
       ? track.performance.memoryCues.map((cue) => ({ ...cue, start: shift(cue.start) })) : track.performance.memoryCues }),
     loops: fields.loops ? track.performance.loops.map((loop) => ({ ...loop, start: shift(loop.start), end: shift(loop.end) })) : track.performance.loops,
-    beatgrids: fields.beatgrids ? track.performance.beatgrids.map((grid) => ({ ...grid, start: shift(grid.start, true) })) : track.performance.beatgrids,
   } } : track) };
 };
 
@@ -146,7 +145,7 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
         if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
       }
     }
-    const hasPerformance = request.fields.hotCues || request.fields.loops || request.fields.beatgrids;
+    const hasPerformance = request.fields.hotCues || request.fields.loops;
     const native = serato === null ? null : await readSeratoWithPerformance(serato, hasPerformance);
     const destination = native?.library ?? (xml === null ? { tracks: [], playlists: [] } : rekordboxSyncLibrary(await parseRekordboxXml(target.path)));
     warnings.push(...native?.warnings ?? []);
@@ -202,7 +201,6 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
             const backup = await writeSeratoPerformance(track.path, track.performance ?? { hotCues: [], loops: [], beatgrids: [] }, {
               hotCues: track.performance !== undefined && request.fields.hotCues,
               loops: track.performance !== undefined && request.fields.loops,
-              beatgrids: track.performance !== undefined && request.fields.beatgrids,
             }, request.fields.metadata ? track.song : undefined);
             if (backup !== null) { backupPaths.push(backup); wroteLibrary = true; }
           } catch (error) {

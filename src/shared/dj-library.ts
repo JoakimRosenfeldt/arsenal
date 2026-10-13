@@ -273,7 +273,6 @@ export type SyncFields = Readonly<{
   playlists: boolean;
   hotCues: boolean;
   loops: boolean;
-  beatgrids: boolean;
 }>;
 
 export type SyncRequest = Readonly<{
@@ -287,7 +286,7 @@ export type SyncRequest = Readonly<{
 
 // Connected libraries always sync everything with Arsenal as it changes.
 export const ONGOING_SYNC_REQUEST: SyncRequest = Object.freeze({ direction: 'both', cadence: 'ongoing', mode: 'merge', conflictSource: 'rekordbox',
-  fields: Object.freeze({ tracks: true, metadata: true, playlists: true, hotCues: true, loops: true, beatgrids: true }), timingOffsetMs: 0 });
+  fields: Object.freeze({ tracks: true, metadata: true, playlists: true, hotCues: true, loops: true }), timingOffsetMs: 0 });
 
 export type SyncPreferences = Readonly<{
   request: SyncRequest | null;
@@ -311,8 +310,7 @@ export const readSyncRequest = (request: unknown): SyncRequest => {
   const fields = request.fields;
   if (!isRecord(fields) || typeof fields.tracks !== 'boolean' || typeof fields.metadata !== 'boolean' ||
     typeof fields.playlists !== 'boolean' || typeof fields.hotCues !== 'boolean' || typeof fields.loops !== 'boolean' ||
-    typeof fields.beatgrids !== 'boolean' ||
-    ![fields.tracks, fields.metadata, fields.playlists, fields.hotCues, fields.loops, fields.beatgrids].some(Boolean)) {
+    ![fields.tracks, fields.metadata, fields.playlists, fields.hotCues, fields.loops].some(Boolean)) {
     throw new Error('Choose at least one category to sync');
   }
   if (typeof request.timingOffsetMs !== 'number' || !Number.isSafeInteger(request.timingOffsetMs) ||
@@ -321,7 +319,7 @@ export const readSyncRequest = (request: unknown): SyncRequest => {
   }
   return { direction: request.direction, mode, cadence, conflictSource: request.conflictSource, timingOffsetMs: request.timingOffsetMs,
     fields: { tracks: fields.tracks, metadata: fields.metadata, playlists: fields.playlists,
-      hotCues: fields.hotCues, loops: fields.loops, beatgrids: fields.beatgrids } };
+      hotCues: fields.hotCues, loops: fields.loops } };
 };
 
 export type SyncMissingFile = Readonly<{

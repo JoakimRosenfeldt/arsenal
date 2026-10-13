@@ -2,7 +2,7 @@ import type { SyncFields } from '../shared/dj-library';
 import type { SyncBeatgrid, SyncCue, SyncLoop, SyncPerformance } from './library-sync-model';
 
 type Marker = Readonly<{ name: string; data: Buffer }>;
-type PerformanceFields = Pick<SyncFields, 'hotCues' | 'loops' | 'beatgrids'>;
+type PerformanceFields = Pick<SyncFields, 'hotCues' | 'loops'>;
 
 const MARKERS2 = 'Serato Markers2';
 const MARKERS = 'Serato Markers_';
@@ -196,40 +196,6 @@ const writeLegacy = (raw: Buffer | undefined, performance: SyncPerformance, fiel
   return Buffer.concat([header, ...records, footer]);
 };
 
-const writeBeatgrid = (grids: readonly SyncBeatgrid[], existing: Buffer | undefined): Buffer => {
-  const normalized = grids.map((grid) => ({ ...grid }));
-  for (const grid of normalized) {
-    if (grid.meter !== undefined && grid.meter !== '4/4') throw new Error(`Serato cannot represent a ${grid.meter} beatgrid without changing its bar markers.`);
-    if (!Number.isFinite(grid.start) || !Number.isFinite(grid.bpm) || grid.bpm <= 0 || !Number.isInteger(grid.beat) || grid.beat < 1 || grid.beat > 4) throw new Error('A beatgrid marker has an invalid time, tempo, or beat number.');
-  }
-  const first = normalized[0];
-  if (first && first.beat !== 1) {
-    first.start -= (first.beat - 1) * 60 / first.bpm;
-    first.beat = 1;
-  }
-  const bytes = Buffer.alloc(normalized.length * 8 + 7);
-  bytes[0] = 1;
-  bytes.writeUInt32BE(normalized.length, 2);
-  let cumulativeBeats = 0;
-  for (const [index, grid] of normalized.entries()) {
-    const offset = 6 + index * 8;
-    bytes.writeFloatBE(grid.start, offset);
-    const next = normalized[index + 1];
-    if (!next) { bytes.writeFloatBE(grid.bpm, offset + 4); continue; }
-    // Nonterminal Serato markers store an integer beat count instead of BPM.
-    const exactBeats = (next.start - grid.start) * grid.bpm / 60;
-    const beats = Math.round(exactBeats);
-    if (beats < 1 || beats > 0xffffffff || Math.abs(exactBeats - beats) > 0.02 || ((cumulativeBeats + beats) % 4) + 1 !== next.beat) {
-      throw new Error('This beatgrid has tempo changes between beats that Serato cannot represent exactly.');
-    }
-    bytes.writeUInt32BE(beats, offset + 4);
-    cumulativeBeats += beats;
-  }
-  bytes[bytes.length - 1] = existing?.at(-1) ?? 0;
-  readBeatgrid(bytes);
-  return bytes;
-};
-
 export const encodeSeratoPerformance = (
   existing: ReadonlyMap<string, Buffer>, incoming: SyncPerformance, fields: PerformanceFields, includeLegacy = true,
 ): Map<string, Buffer> => {
@@ -251,7 +217,7 @@ export const encodeSeratoPerformance = (
   // Serato has 8 hot cue slots; extra cues in a taken or out-of-range slot are left out instead of failing the track.
   const slots = new Set<number>();
   const hotCues = incoming.hotCues.filter((cue) => Number.isInteger(cue.index) && cue.index >= 0 && cue.index <= 7 && !slots.has(cue.index) && slots.add(cue.index));
-  const performance = { hotCues: fields.hotCues ? hotCues : current.hotCues, loops: fields.loops ? loops : current.loops, beatgrids: fields.beatgrids ? incoming.beatgrids : current.beatgrids };
+  const performance = { hotCues: fields.hotCues ? hotCues : current.hotCues, loops: fields.loops ? loops : current.loops, beatgrids: current.beatgrids };
   if (fields.hotCues) validateMarkers(performance.hotCues, 7, 50);
   if (fields.loops) {
     validateMarkers(performance.loops, 7, 32747);
@@ -266,8 +232,6 @@ export const encodeSeratoPerformance = (
     updates.set(MARKERS2, writeMarkers2(retained, existing.get(MARKERS2)?.length ?? 0));
     if (includeLegacy) updates.set(MARKERS, writeLegacy(existing.get(MARKERS), performance, fields));
   }
-  // Without an incoming grid, keep Serato's own grid instead of erasing it.
-  if (fields.beatgrids && (performance.beatgrids.length || !existing.has(BEATGRID))) updates.set(BEATGRID, writeBeatgrid(performance.beatgrids, existing.get(BEATGRID)));
   for (const [name, bytes] of updates) if (existing.get(name)?.equals(bytes)) updates.delete(name);
   return updates;
 };
