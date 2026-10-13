@@ -20,6 +20,7 @@ import type {
   LibraryStartupPreview,
   LibrarySummary,
   LibrarySourceKind,
+  SeratoVersion,
   LocalFileAction,
   MutationFailure,
   PageRequest,
@@ -65,6 +66,7 @@ import { cloudMatcher, isCloudPath } from './cloud-tracks';
 import { readSeratoWithPerformance, saveLibraryXml, syncArsenalLibraryToConnection } from './sync-libraries';
 import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
 import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
+import { seratoSqliteVersion } from './serato-sqlite';
 import { findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
 import { PORTABLE_LIBRARY_FILENAME, readLibraryModel, readPortableLibrary, readPortableLibraryFingerprint, readPortableLibraryFolder, resolvePortableLibrary, writePortableLibrary } from './portable-library';
 import { readLibrarySource, type PortableLibrarySource } from './library-source';
@@ -1090,10 +1092,15 @@ export class RekordboxLibrary {
         ? join(connection.path, 'database V2') : connection.path;
       let available = false;
       try { available = (await stat(location)).isFile(); } catch { /* Keep unavailable connections so they can be located again. */ }
+      let seratoVersion: SeratoVersion | null = null;
+      if (available && connection.kind === 'serato' && connection.path.endsWith('.sqlite')) {
+        try { seratoVersion = seratoSqliteVersion(connection.path); } catch { /* Unreadable libraries keep the generic label. */ }
+      }
       return { id: connection.id, kind: connection.kind, path: connection.path, available,
         ...(connection.origin ? { origin: connection.origin } : {}),
         ...(connection.kind === 'rekordbox' && connection.origin === undefined
           ? { format: isRekordboxDatabasePath(connection.path) ? 'rekordbox-database' as const : 'rekordbox-xml' as const } : {}),
+        ...(seratoVersion !== null ? { format: `serato-${seratoVersion}` as const } : {}),
         name: connection.displayName ?? (connection.kind === 'rekordbox' ? isRekordboxDatabasePath(connection.path) ? 'Rekordbox Collection' : basename(connection.path)
           : `Serato (${basename(connection.path.endsWith('.sqlite') ? dirname(connection.path) : connection.path)})`) };
     }));
@@ -1213,10 +1220,10 @@ export class RekordboxLibrary {
       catalog: null, library: incoming.library, warnings: [...incoming.warnings, ...(backup === null ? [] : [`Previous local library saved to ${backup}`])] };
   }
 
-  connectLibrary(owner: BrowserWindow, kind: LibrarySourceKind): Promise<LibraryConnectionResult> {
+  connectLibrary(owner: BrowserWindow, kind: LibrarySourceKind, seratoVersion?: SeratoVersion): Promise<LibraryConnectionResult> {
     return this.enqueue(async () => {
       try {
-        const selected = await this.chooseSyncPath(owner, kind, 'rekordbox-to-serato');
+        const selected = await this.chooseSyncPath(owner, kind, 'rekordbox-to-serato', seratoVersion);
         if (selected === null) return { kind: 'cancelled' };
         const path = await resolveSeratoMediaPath(selected);
         const existing = this.connectedLibraries.find((connection) => connection.kind === kind && normalizePath(connection.path) === normalizePath(path));
@@ -1612,7 +1619,7 @@ export class RekordboxLibrary {
     });
   }
 
-  private async chooseSyncPath(owner: BrowserWindow, kind: LibrarySourceKind, direction: SyncDirection): Promise<string | null> {
+  private async chooseSyncPath(owner: BrowserWindow, kind: LibrarySourceKind, direction: SyncDirection, seratoVersion?: SeratoVersion): Promise<string | null> {
     const preferences = this.syncPreferences();
     if (kind === 'serato') {
       const remembered = preferences.seratoPath;
@@ -1624,6 +1631,10 @@ export class RekordboxLibrary {
       const selected = choice.filePaths[0];
       if (choice.canceled || selected === undefined) return null;
       const source = await findSeratoSource(selected);
+      if (seratoVersion !== undefined) {
+        const found = source.kind === 'sqlite' ? seratoSqliteVersion(source.path) : 4;
+        if (found !== seratoVersion) throw new Error(`This is a Serato ${found} library. Connect it as Serato ${found}.`);
+      }
       await readSeratoWithPerformance(source, false);
       return source.path;
     }

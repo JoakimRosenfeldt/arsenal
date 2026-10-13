@@ -156,6 +156,8 @@ export type DuplicateScan = Readonly<{
 
 export type LibrarySourceKind = 'rekordbox' | 'serato';
 
+export type SeratoVersion = 4 | 5;
+
 export type LibrarySummary = Readonly<{
   revision: string;
   sourceKind: LibrarySourceKind;
@@ -217,7 +219,7 @@ export type LibraryConnection = Readonly<{
   path: string;
   available: boolean;
   origin?: 'portable' | 'arsenal';
-  format?: 'rekordbox-xml' | 'rekordbox-database';
+  format?: 'rekordbox-xml' | 'rekordbox-database' | 'serato-4' | 'serato-5';
 }>;
 
 export type LibraryConnections = Readonly<{
@@ -526,7 +528,7 @@ export type DjLibraryApi = Readonly<{
   backupNow(id: string): Promise<BackupConnection>;
   stopBackup(id: string): Promise<void>;
   importBackup(mode?: 'folder' | 'snapshot'): Promise<LibraryConnectionResult>;
-  connectLibrary(kind: LibrarySourceKind): Promise<LibraryConnectionResult>;
+  connectLibrary(kind: LibrarySourceKind, seratoVersion?: SeratoVersion): Promise<LibraryConnectionResult>;
   manageLibraryConnection(action: LibraryConnectionAction): Promise<LibraryConnectionResult>;
   importRekordboxExport(): Promise<ImportResult>;
   importSeratoLibrary(): Promise<ImportResult>;

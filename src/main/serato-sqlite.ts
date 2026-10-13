@@ -31,10 +31,22 @@ const id = (value: SQLOutputValue | undefined): number => {
   return value;
 };
 
+// Serato 5 is in beta and its schema is unverified: newer schemas are accepted as Serato 5
+// as long as the tables and columns below are present.
+const schemaVersion = (db: DatabaseSync): 4 | 5 => {
+  const version = db.prepare('PRAGMA user_version').get()?.user_version;
+  if (version === 202) return 4;
+  if (typeof version === 'number' && version > 202) return 5;
+  throw new Error('Unsupported Serato database version. Choose a Serato 4 or Serato 5 library.');
+};
+
+export const seratoSqliteVersion = (rootPath: string): 4 | 5 => {
+  const db = new DatabaseSync(rootPath, { readOnly: true, timeout: 3000 });
+  try { return schemaVersion(db); } finally { db.close(); }
+};
+
 const anchors = (db: DatabaseSync) => {
-  if (db.prepare('PRAGMA user_version').get()?.user_version !== 202) {
-    throw new Error('Unsupported Serato database version. Serato 4 libraries with schema 202 are supported.');
-  }
+  schemaVersion(db);
   const required = {
     serato: ['revision'],
     master: ['revision'],

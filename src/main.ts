@@ -424,13 +424,14 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     try { return await library.importBackup(owner, mode); } finally { libraryActions -= 1; }
   });
 
-  ipc.handle(DJ_LIBRARY_CHANNELS.connectLibrary, async (event, kind: unknown) => {
+  ipc.handle(DJ_LIBRARY_CHANNELS.connectLibrary, async (event, kind: unknown, seratoVersion: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Connect libraries from the library window');
     if (kind !== 'rekordbox' && kind !== 'serato') throw new Error('Choose Rekordbox or Serato');
+    if (seratoVersion !== undefined && seratoVersion !== 4 && seratoVersion !== 5) throw new Error('Choose Serato 4 or Serato 5');
     libraryActions += 1;
     try {
-      return await library.connectLibrary(owner, kind);
+      return await library.connectLibrary(owner, kind, seratoVersion);
     } finally { libraryActions -= 1; }
   });
 

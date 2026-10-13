@@ -3,18 +3,24 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { UiIcon } from './UiIcon';
 import { SyncLibrarySettings } from './SyncLibrarySettings';
 import { LibraryBackupConnections } from './LibraryBackupConnections';
-import type { LibraryConnection, LibraryConnectionAction, LibraryConnectionResult, LibraryConnections, LibrarySourceKind, SyncMissingFileAction, SyncRequest, SyncResult } from './shared/dj-library';
+import type { LibraryConnection, LibraryConnectionAction, LibraryConnectionResult, LibraryConnections, LibrarySourceKind, SeratoVersion, SyncMissingFileAction, SyncRequest, SyncResult } from './shared/dj-library';
 
 const libraryKinds = [
   { kind: 'rekordbox', label: 'Rekordbox Collection' },
   { kind: 'serato', label: 'Serato library' },
 ] satisfies readonly { kind: LibrarySourceKind; label: string }[];
 
+const connectors = [
+  { kind: 'rekordbox', label: 'Rekordbox Collection' },
+  { kind: 'serato', seratoVersion: 4, label: 'Serato 4 library' },
+  { kind: 'serato', seratoVersion: 5, label: 'Serato 5 library' },
+] satisfies readonly { kind: LibrarySourceKind; seratoVersion?: SeratoVersion; label: string }[];
+
 export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImportChanges, onSync, onResolveMissing, onImportBackup, initialSyncResult, onError }: Readonly<{
   busy: boolean;
   onError: (message: string) => void;
   state: LibraryConnections | null;
-  onConnect: (kind: LibrarySourceKind) => Promise<LibraryConnectionResult>;
+  onConnect: (kind: LibrarySourceKind, seratoVersion?: SeratoVersion) => Promise<LibraryConnectionResult>;
   onManage: (action: LibraryConnectionAction) => Promise<LibraryConnectionResult>;
   onImportChanges: (id: string) => Promise<LibraryConnectionResult>;
   onSync: (request: SyncRequest) => Promise<SyncResult>;
@@ -60,7 +66,8 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImp
   };
 
   const connectionCard = (connection: LibraryConnection, kindLabel: string): JSX.Element => {
-    const label = connection.kind === 'rekordbox' && connection.format !== 'rekordbox-database' ? 'Rekordbox XML' : kindLabel;
+    const label = connection.kind === 'rekordbox' && connection.format !== 'rekordbox-database' ? 'Rekordbox XML'
+      : connection.format === 'serato-4' ? 'Serato 4 library' : connection.format === 'serato-5' ? 'Serato 5 library' : kindLabel;
     return (
       <section key={connection.id} className="library-connection-card"
         aria-label={`${connection.origin === 'portable' ? 'Arsenal library' : label}: ${connection.name}`}>
@@ -145,13 +152,13 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImp
             addDialogRef.current?.close();
             void run(() => onImportBackup('snapshot'), 'Connecting Arsenal library…');
           }}>Arsenal library</button>
-          {libraryKinds.filter(({ kind }) => {
+          {connectors.filter(({ kind }) => {
             const connected = connections.filter((connection) => connection.kind === kind && connection.origin === undefined);
             return kind === 'rekordbox' ? !connected.some((connection) => connection.format === 'rekordbox-database') : connected.length === 0;
-          }).map(({ kind, label }) => <button key={kind} className="quiet-button" type="button" onClick={() => {
+          }).map((connector) => <button key={connector.label} className="quiet-button" type="button" onClick={() => {
             addDialogRef.current?.close();
-            void run(() => onConnect(kind), `Connecting ${label}…`);
-          }}>{label}</button>)}
+            void run(() => onConnect(connector.kind, 'seratoVersion' in connector ? connector.seratoVersion : undefined), `Connecting ${connector.label}…`);
+          }}>{connector.label}</button>)}
           <button className="quiet-button" type="button" onClick={() => {
             addDialogRef.current?.close();
             setConnectingFolder(true);
