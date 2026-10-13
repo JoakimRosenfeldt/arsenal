@@ -173,7 +173,7 @@ export const LibraryConnectionsPage = ({ busy, state, onConnect, onManage, onImp
           <h2 id="library-restore-loops-title">Restore hot loops?</h2>
           <button className="inspector-close" type="button" onClick={() => restoreLoopsDialogRef.current?.close()} aria-label="Cancel restore"><UiIcon name="close" size={16} /></button>
         </div>
-        <p id="library-restore-loops-description">Memory loops that kept their hot cue slot (A–H) become hot loops again in Arsenal, then sync to your connected libraries. Loops whose slot is now taken stay memory cues. Saved loops from Serato that carry a slot number will also become hot loops.</p>
+        <p id="library-restore-loops-description">Every memory loop becomes a hot loop in Arsenal, then syncs to your connected libraries. A loop returns to its saved hot cue slot (A–H) when known and free, otherwise it takes the first free slot. Memory loops you set on purpose will also become hot loops. Loops on tracks with all eight slots taken stay memory cues.</p>
         <div className="library-connection-remove-actions">
           <button className="quiet-button" type="button" autoFocus onClick={() => restoreLoopsDialogRef.current?.close()}>Cancel</button>
           <button className="accent-button" type="button" onClick={() => {

@@ -65,8 +65,9 @@ export const preserveHotLoops = (incoming: SyncPerformance, existing: SyncPerfor
   return changed ? { ...incoming, loops } : incoming;
 };
 
-// Promotes every loop that kept a hot cue slot number back into that slot, for libraries where
-// sync already turned hot loops into memory loops. Loops whose slot is taken are skipped.
+// Promotes every memory loop to a hot loop, for libraries where sync already turned hot loops into
+// memory loops. A loop goes back into its own slot when that slot is known and free, otherwise into
+// the first free slot. Loops are skipped only when every hot cue slot on the track is taken.
 export const promoteHotLoops = (library: SyncLibrary): Readonly<{ library: SyncLibrary; restored: number; skipped: number; tracks: number }> => {
   let restored = 0;
   let skipped = 0;
@@ -76,13 +77,24 @@ export const promoteHotLoops = (library: SyncLibrary): Readonly<{ library: SyncL
     if (performance === undefined) return track;
     const occupied = new Set([...performance.hotCues.map((cue) => cue.index),
       ...performance.loops.filter((loop) => loop.hotCue).map((loop) => loop.index)]);
+    const loops: SyncLoop[] = [...performance.loops];
     let promoted = 0;
-    const loops = performance.loops.map((loop) => {
-      if (loop.hotCue || !Number.isInteger(loop.index) || loop.index < 0 || loop.index > 7) return loop;
-      if (occupied.has(loop.index)) { skipped += 1; return loop; }
-      occupied.add(loop.index);
+    const place = (position: number, slot: number): void => {
+      const loop = loops[position];
+      if (loop === undefined) return;
+      loops[position] = { ...loop, index: slot, hotCue: true };
+      occupied.add(slot);
       promoted += 1;
-      return { ...loop, hotCue: true };
+    };
+    // Own slots first, so a fallback placement never steals another loop's original slot.
+    loops.forEach((loop, position) => {
+      if (!loop.hotCue && Number.isInteger(loop.index) && loop.index >= 0 && loop.index <= 7 && !occupied.has(loop.index)) place(position, loop.index);
+    });
+    loops.forEach((loop, position) => {
+      if (loop.hotCue) return;
+      const slot = [0, 1, 2, 3, 4, 5, 6, 7].find((candidate) => !occupied.has(candidate));
+      if (slot === undefined) skipped += 1;
+      else place(position, slot);
     });
     if (promoted === 0) return track;
     restored += promoted;

@@ -813,8 +813,10 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         else if (result.kind === 'hot-loops-restored') setFeedback({
           tone: result.restoredCount ? 'info' : 'warning',
           message: result.restoredCount
-            ? `Restored ${result.restoredCount} hot ${result.restoredCount === 1 ? 'loop' : 'loops'} on ${result.trackCount} ${result.trackCount === 1 ? 'track' : 'tracks'}.${result.skippedCount ? ` ${result.skippedCount} ${result.skippedCount === 1 ? 'loop was' : 'loops were'} left as memory cues because the hot cue slot is taken.` : ''} Sync will update your connected libraries.`
-            : 'No memory loops with a saved hot cue slot were found. Loops that lost their slot number can only come back from a backup.',
+            ? `Restored ${result.restoredCount} hot ${result.restoredCount === 1 ? 'loop' : 'loops'} on ${result.trackCount} ${result.trackCount === 1 ? 'track' : 'tracks'}.${result.skippedCount ? ` ${result.skippedCount} ${result.skippedCount === 1 ? 'loop was' : 'loops were'} left as memory cues because every hot cue slot on the track is taken.` : ''} Sync will update your connected libraries.`
+            : result.skippedCount
+              ? `No hot loops were restored. ${result.skippedCount} memory ${result.skippedCount === 1 ? 'loop' : 'loops'} could not be placed because every hot cue slot on the track is taken.`
+              : 'No memory loops were found to restore.',
         });
         if (result.kind === 'duplicate-ignored') {
           setDuplicateState({ kind: 'ready', libraryVersion: result.library.revision, scan: result.scan });
