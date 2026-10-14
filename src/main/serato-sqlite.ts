@@ -11,7 +11,7 @@ import { normalizePath } from './library-sync-model';
 import type { PlaylistNodeMove, SyncLibrary, SyncPlaylist, SyncTrack } from './library-sync-model';
 import { seratoSmartRules } from './serato-smart-crates';
 import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
-import { assertMissingFileRepair, restoreLibraryFileBackup, currentLibraryFileHash, type LibraryFileBackup, type LibraryFileRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
+import { assertLibraryFileBackup, databaseContentHash, assertMissingFileRepair, restoreLibraryFileBackup, currentLibraryFileHash, type LibraryFileBackup, type LibraryFileRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
 import type { SeratoLibraryWriteOptions } from './serato-library';
 
 // Serato 4.0.9 schema 202: root.sqlite is authoritative; master.sqlite is rebuilt by Serato.
@@ -327,24 +327,14 @@ const metadata = ({ path, song }: SyncTrack): Record<string, SQLInputValue> => {
 };
 
 const backupSeratoDatabases = async (rootPath: string): Promise<string[]> => {
-  const backupPaths: string[] = [];
   const directory = join(dirname(rootPath), 'arsenal-backups', `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
   await mkdir(directory, { recursive: true });
-  for (const path of [rootPath, join(dirname(rootPath), 'master.sqlite')]) {
-    if (path !== rootPath) {
-      try { await stat(path); } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
-        throw error;
-      }
-    }
-    const source = new DatabaseSync(path, { readOnly: true, timeout: 3000 });
-    try {
-      const destination = join(directory, basename(path));
-      await backup(source, destination);
-      backupPaths.push(destination);
-    } finally { source.close(); }
-  }
-  return backupPaths;
+  const source = new DatabaseSync(rootPath, { readOnly: true, timeout: 3000 });
+  try {
+    const destination = join(directory, basename(rootPath));
+    await backup(source, destination);
+    return [destination];
+  } finally { source.close(); }
 };
 
 export const seratoSqliteOrganizationSource = async (rootPath: string) => {
@@ -362,16 +352,22 @@ export const validateSeratoSqliteDestination = (rootPath: string, path: string):
 export const repairSeratoSqliteMissingFile = (rootPath: string, missingPath: string, replacementPath: string | null): Promise<LibraryFileRepairResult> =>
   repairSeratoSqliteMissingFiles(rootPath, [{ missingPath, replacementPath }]);
 
-export const restoreSeratoSqliteBackup = async (path: string, backupPath: string, expectedHash: string | null = null): Promise<void> => {
+export const assertSeratoSqliteBackup = async (backup: LibraryFileBackup): Promise<void> => {
   await assertSeratoClosed();
-  if (await currentLibraryFileHash(path) !== null) {
-    const db = new DatabaseSync(path, { timeout: 3000 });
+  await stat(backup.backupPath);
+  if (backup.databaseHashes && await currentLibraryFileHash(backup.path) !== null) {
+    const db = new DatabaseSync(backup.path, { readOnly: true, timeout: 3000 });
     try {
-      if (db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy !== 0) throw new Error('Serato database is busy. Keep its backup for recovery.');
+      if (!backup.databaseHashes.includes(databaseContentHash((sql) => db.prepare(sql).iterate()))) {
+        throw new Error(`The Serato database has later edits. Kept it unchanged: ${backup.path}`);
+      }
     } finally { db.close(); }
-  }
-  await assertSeratoClosed();
-  await restoreLibraryFileBackup(path, backupPath, expectedHash);
+  } else await assertLibraryFileBackup(backup.path, backup.backupPath, backup.expectedHash, backup.expectedHashes);
+};
+
+export const restoreSeratoSqliteBackup = async (backup: LibraryFileBackup): Promise<void> => {
+  await assertSeratoSqliteBackup(backup);
+  await restoreLibraryFileBackup(backup.path, backup.backupPath, await currentLibraryFileHash(backup.path), true);
 };
 
 export const repairSeratoSqliteMissingFiles = async (
@@ -392,6 +388,7 @@ export const repairSeratoSqliteMissingFiles = async (
   try {
     const { spaceId } = anchors(db);
     if (db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy !== 0) throw new Error('Serato database is busy.');
+    const beforeHash = options.onBackup ? databaseContentHash((sql) => db.prepare(sql).iterate()) : null;
     db.exec('BEGIN IMMEDIATE');
     const targetsByKey = new Map<string, number[]>();
     const assetKeys = new Set<string>();
@@ -423,7 +420,8 @@ export const repairSeratoSqliteMissingFiles = async (
     const backups: LibraryFileBackup[] = [];
     for (const backupPath of backupPaths) {
       const path = join(dirname(rootPath), basename(backupPath));
-      const backup = { path, backupPath, expectedHash: await currentLibraryFileHash(path) };
+      const backup = { path, backupPath, expectedHash: await currentLibraryFileHash(path),
+        ...(beforeHash === null ? {} : { databaseHashes: [beforeHash] }) };
       backups.push(backup);
       await options.onBackup?.(backup);
     }
@@ -452,13 +450,21 @@ export const repairSeratoSqliteMissingFiles = async (
       throw new Error('Serato library verification failed. No changes were saved.');
     }
     await validate();
+    if (beforeHash !== null) {
+      const afterHash = databaseContentHash((sql) => db.prepare(sql).iterate());
+      for (const [index, backup] of backups.entries()) {
+        const guarded = { ...backup, databaseHashes: [beforeHash, afterHash] };
+        backups[index] = guarded;
+        await options.onBackup?.(guarded);
+      }
+    }
     db.exec('COMMIT');
-    if (db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy !== 0) throw new Error('Serato database is busy. Keep the recovery journal and backups.');
-    for (const [index, backup] of backups.entries()) {
+    if (options.onBackup) for (const [index, backup] of backups.entries()) {
       const updated = { ...backup, expectedHash: await currentLibraryFileHash(backup.path) };
       backups[index] = updated;
       await options.onBackup?.(updated);
     }
+    try { db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get(); } catch { /* The committed edit is recoverable with its WAL. */ }
     return { backupPaths, backups, warnings: [] };
   } catch (error) {
     if (db.isTransaction) db.exec('ROLLBACK');

@@ -4,7 +4,7 @@ import { isAbsolute, win32 } from 'node:path';
 
 import { isSupportedAudioPath } from './track-artwork';
 
-export type LibraryFileBackup = Readonly<{ path: string; backupPath: string; expectedHash: string | null }>;
+export type LibraryFileBackup = Readonly<{ path: string; backupPath: string; expectedHash: string | null; databaseHashes?: readonly string[]; expectedHashes?: readonly string[] }>;
 export type LibraryRepairOptions = Readonly<{
   mode?: 'reorganize';
   forceBackup?: boolean;
@@ -23,13 +23,33 @@ export const currentLibraryFileHash = async (path: string): Promise<string | nul
   }
 };
 
-export const restoreLibraryFileBackup = async (path: string, backupPath: string, expectedHash: string | null = null): Promise<void> => {
-  const before = await readFile(backupPath);
+export const databaseContentHash = (query: (sql: string) => Iterable<Record<string, unknown>>): string => {
+  const hash = createHash('sha256');
+  const encode = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
+    typeof item === 'bigint' ? String(item) : item instanceof Uint8Array ? Buffer.from(item).toString('base64') : item);
+  const schema = [...query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")];
+  hash.update(encode(schema));
+  for (const row of schema) {
+    if (row.type !== 'table' || typeof row.name !== 'string') continue;
+    const rows = [...query(`SELECT * FROM "${row.name.replaceAll('"', '""')}"`)]
+      .map((row) => libraryFileHash(Buffer.from(encode(row)))).sort();
+    hash.update(encode(rows));
+  }
+  return hash.digest('hex');
+};
+
+export const assertLibraryFileBackup = async (path: string, backupPath: string, expectedHash: string | null = null, expectedHashes: readonly string[] = []): Promise<string | null> => {
+  const original = libraryFileHash(await readFile(backupPath));
   const current = await currentLibraryFileHash(path);
-  if (current === libraryFileHash(before)) return;
-  if (current !== null && (expectedHash === null || current !== expectedHash)) {
+  if (current !== null && !expectedHashes.includes(current) && current !== original && (expectedHash === null || current !== expectedHash)) {
     throw new Error(`The library has later or unverified edits. Kept it unchanged. Backup: ${backupPath}`);
   }
+  return current;
+};
+
+export const restoreLibraryFileBackup = async (path: string, backupPath: string, expectedHash: string | null = null,
+  database = false, expectedHashes: readonly string[] = []): Promise<void> => {
+  const current = await assertLibraryFileBackup(path, backupPath, expectedHash, expectedHashes);
   const temporary = `${path}.arsenal-${randomUUID()}.restore`;
   try {
     await copyFile(backupPath, temporary);
@@ -38,6 +58,10 @@ export const restoreLibraryFileBackup = async (path: string, backupPath: string,
     const file = await open(temporary, 'r+');
     try { await file.chmod(mode); await file.sync(); } finally { await file.close(); }
     if (await currentLibraryFileHash(path) !== current) throw new Error(`The library changed during recovery: ${path}`);
+    if (database) {
+      await rm(`${path}-wal`, { force: true });
+      await rm(`${path}-shm`, { force: true });
+    }
     await rename(temporary, path);
   } finally { await rm(temporary, { force: true }); }
 };

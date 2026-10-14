@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, preserveHotLoops, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
-import { assertMissingFileRepair, currentLibraryFileHash, type LibraryFileBackup, type LibraryFilesRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
+import { assertMissingFileRepair, databaseContentHash, currentLibraryFileHash, type LibraryFileBackup, type LibraryFilesRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
 import { isCloudPath } from './cloud-tracks';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
@@ -781,8 +781,8 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
     let revision = number(rows(db, "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")[0]?.int_1) ?? 0;
     const statements: { sql: string; values: Value[] }[] = [];
     const failures: { path: string; message: string }[] = [];
-    const originalByPath = new Map(byPath);
     const sourceKeys = new Set(repairs.map((repair) => normalizePath(repair.missingPath)));
+    const occupiedPaths = new Map([...byPath].filter(([key]) => !sourceKeys.has(key)).map(([key, rows]) => [key.normalize('NFC').toLowerCase(), rows[0]]));
     let applied = 0;
     for (const { missingPath, replacementPath } of repairs) {
       if (options.mode === 'reorganize' && replacementPath === null) throw new Error('Reorganization must preserve every Rekordbox entry.');
@@ -793,7 +793,7 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
       }
       const destinationKey = replacementPath === null ? null : normalizePath(replacementPath).normalize('NFC').toLowerCase();
       const existing = options.mode === 'reorganize'
-        ? [...originalByPath].find(([key]) => !sourceKeys.has(key) && key.normalize('NFC').toLowerCase() === destinationKey)?.[1][0]
+        ? destinationKey === null ? undefined : occupiedPaths.get(destinationKey)
         : replacementPath === null ? undefined : byPath.get(normalizePath(replacementPath))?.[0];
       if (options.mode === 'reorganize' && existing !== undefined) throw new Error(`The destination already has a Rekordbox entry: ${replacementPath}`);
       let fileSize: number | null = null;
@@ -826,10 +826,12 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
     if (!statements.length) return { backupPaths: [], backups: [], warnings: [], failures };
     if (options.mode === 'reorganize' && rows(db, 'PRAGMA wal_checkpoint(TRUNCATE)')[0]?.busy !== 0) throw new Error('Rekordbox database is busy.');
     const backupPaths = await backupRekordboxDatabase(db, path, options.forceBackup);
+    const beforeHash = options.onBackup ? databaseContentHash((sql) => rows(db, sql)) : null;
     const backups: LibraryFileBackup[] = [];
     for (const backupPath of backupPaths) {
       const target = join(dirname(path), basename(backupPath));
-      const backup = { path: target, backupPath, expectedHash: await currentLibraryFileHash(target) };
+      const backup = { path: target, backupPath, expectedHash: await currentLibraryFileHash(target),
+        ...(beforeHash !== null && target === path ? { databaseHashes: [beforeHash] } : {}) };
       backups.push(backup);
       await options.onBackup?.(backup);
     }
@@ -842,13 +844,21 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
     if (rows(db, 'PRAGMA quick_check')[0]?.quick_check !== 'ok') throw new Error('Rekordbox database verification failed.');
     if (options.mode === 'reorganize') for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
     assertRekordboxClosedSync();
+    if (beforeHash !== null) {
+      const afterHash = databaseContentHash((sql) => rows(db, sql));
+      for (const backup of backups) if (backup.path === path) {
+        const guarded = { ...backup, databaseHashes: [beforeHash, afterHash] };
+        backups[backups.indexOf(backup)] = guarded;
+        await options.onBackup?.(guarded);
+      }
+    }
     db.exec('COMMIT');
-    if (rows(db, 'PRAGMA wal_checkpoint(TRUNCATE)')[0]?.busy !== 0) throw new Error('Rekordbox database is busy. Keep the recovery journal and backups.');
-    for (const [index, backup] of backups.entries()) {
+    if (options.onBackup) for (const [index, backup] of backups.entries()) {
       const updated = { ...backup, expectedHash: await currentLibraryFileHash(backup.path) };
       backups[index] = updated;
       await options.onBackup?.(updated);
     }
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* The committed edit is recoverable with its WAL. */ }
     return { backupPaths, backups, warnings: [], failures };
   } catch (error) {
     if (db.inTransaction) db.exec('ROLLBACK');

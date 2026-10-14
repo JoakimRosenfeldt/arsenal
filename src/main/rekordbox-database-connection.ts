@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import Database from 'better-sqlite3-multiple-ciphers';
 import { app } from 'electron';
 import { SaxesParser } from 'saxes';
-import { currentLibraryFileHash, restoreLibraryFileBackup } from './repair-library-files';
+import { assertLibraryFileBackup, currentLibraryFileHash, databaseContentHash, restoreLibraryFileBackup, type LibraryFileBackup } from './repair-library-files';
 
 export type RekordboxDatabase = Database.Database;
 
@@ -151,16 +151,20 @@ export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: strin
   return backupPaths;
 };
 
-export const restoreRekordboxDatabaseBackup = async (path: string, backupPath: string, expectedHash: string | null = null): Promise<void> => {
+export const assertRekordboxDatabaseBackup = async (backup: LibraryFileBackup): Promise<void> => {
   await assertRekordboxClosed();
-  if (await currentLibraryFileHash(path) !== null) {
-    const db = await openRekordboxDatabase(path, { readonly: false });
+  await readFile(backup.backupPath);
+  if (backup.databaseHashes && await currentLibraryFileHash(backup.path) !== null) {
+    const db = await openRekordboxDatabase(backup.path);
     try {
-      const results: unknown = db.pragma('wal_checkpoint(TRUNCATE)');
-      const result: unknown = Array.isArray(results) ? results[0] : null;
-      if (typeof result !== 'object' || result === null || !('busy' in result) || result.busy !== 0) throw new Error('Rekordbox database is busy. Keep its backup for recovery.');
+      if (!backup.databaseHashes.includes(databaseContentHash((sql) => db.prepare<[], Record<string, unknown>>(sql).iterate()))) {
+        throw new Error(`The Rekordbox database has later edits. Kept it unchanged: ${backup.path}`);
+      }
     } finally { db.close(); }
-  }
-  await assertRekordboxClosed();
-  await restoreLibraryFileBackup(path, backupPath, expectedHash);
+  } else await assertLibraryFileBackup(backup.path, backup.backupPath, backup.expectedHash, backup.expectedHashes);
+};
+
+export const restoreRekordboxDatabaseBackup = async (backup: LibraryFileBackup): Promise<void> => {
+  await assertRekordboxDatabaseBackup(backup);
+  await restoreLibraryFileBackup(backup.path, backup.backupPath, await currentLibraryFileHash(backup.path), true);
 };

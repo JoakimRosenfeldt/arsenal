@@ -54,7 +54,11 @@ const parseOrganizationJournal = (bytes: string, path: string): OrganizationJour
         !('backupPath' in restore) || typeof restore.backupPath !== 'string' || !('expectedHash' in restore) ||
         restore.expectedHash !== null && typeof restore.expectedHash !== 'string' || !('kind' in restore) ||
         restore.kind !== 'rekordbox-database' && restore.kind !== 'xml' && restore.kind !== 'sqlite' && restore.kind !== 'legacy' && restore.kind !== 'portable' && restore.kind !== 'arsenal') throw invalid();
-    journal.restores.push({ path: restore.path, backupPath: restore.backupPath, expectedHash: restore.expectedHash, kind: restore.kind });
+    const expectedHashes = 'expectedHashes' in restore ? restore.expectedHashes : undefined;
+    if (expectedHashes !== undefined && (!Array.isArray(expectedHashes) || !expectedHashes.every((hash: unknown) => typeof hash === 'string'))) throw invalid();
+    const databaseHashes = 'databaseHashes' in restore ? restore.databaseHashes : undefined;
+    if (databaseHashes !== undefined && (!Array.isArray(databaseHashes) || !databaseHashes.every((hash: unknown) => typeof hash === 'string'))) throw invalid();
+    journal.restores.push({ ...(Array.isArray(expectedHashes) ? { expectedHashes: expectedHashes.filter((hash): hash is string => typeof hash === 'string') } : {}), ...(Array.isArray(databaseHashes) ? { databaseHashes: databaseHashes.filter((hash): hash is string => typeof hash === 'string') } : {}), path: restore.path, backupPath: restore.backupPath, expectedHash: restore.expectedHash, kind: restore.kind });
   }
   for (const directory of value.createdDirectories) {
     if (typeof directory !== 'string') throw invalid();
@@ -91,13 +95,13 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
   const total = journal.restores.length + journal.moves.length;
   for (const restore of [...journal.restores].reverse()) {
     try {
-      if (restore.kind === 'rekordbox-database' && isRekordboxDatabasePath(restore.path)) await restoreRekordboxDatabaseBackup(restore.path, restore.backupPath, restore.expectedHash);
-      else if (restore.kind === 'sqlite') await restoreSeratoSqliteBackup(restore.path, restore.backupPath, restore.expectedHash);
+      if (restore.kind === 'rekordbox-database' && isRekordboxDatabasePath(restore.path)) await restoreRekordboxDatabaseBackup(restore);
+      else if (restore.kind === 'sqlite') await restoreSeratoSqliteBackup(restore);
       else {
         if (restore.kind === 'legacy') await assertSeratoClosed();
         if (restore.kind === 'rekordbox-database') await assertRekordboxClosed();
         if (restore.kind === 'xml') { await assertRekordboxClosed(); await assertSeratoClosed(); }
-        await restoreLibraryFileBackup(restore.path, restore.backupPath, restore.expectedHash);
+        await restoreLibraryFileBackup(restore.path, restore.backupPath, restore.expectedHash, false, restore.expectedHashes);
       }
     } catch (error) { failures.push(`${restore.path}: ${error instanceof Error ? error.message : 'Could not restore backup.'}`); }
     progress(++completed, total);
