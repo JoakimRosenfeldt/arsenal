@@ -2060,7 +2060,8 @@ export class RekordboxLibrary {
         if (manifestPath !== undefined) portablePaths.add(source.portableManifestPath ?? manifestPath);
       } catch (error) {
         if (manifestPath !== undefined && (journal === undefined || required.has(normalizePath(manifestPath)))) throw error;
-        this.startupUnreadable.add(connection.id);
+        if (journal !== undefined) this.startupUnreadable.add(connection.id);
+        else throw new Error(`Could not read ${connection.displayName ?? basename(connection.path)} for reorganization. ${error instanceof Error ? error.message : ''}`);
       }
     }
     const targetState = journal === undefined ? await this.organizationTargetState({ libraries: targets.map((target) => ({ target })),

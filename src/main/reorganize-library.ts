@@ -146,7 +146,7 @@ export const planLibraryOrganization = async (
     };
     let suffix = 2;
     while (await occupied(to) && !await ownDestination(to)) to = join(directory, `${stem} (${suffix++})${extension}`);
-    if (process.platform === 'win32' && to.length > 259) { skip('Destination path exceeds the Windows 259-character limit'); continue; }
+    if (process.platform === 'win32' && Math.max(to.length, join(directory, `.arsenal-${randomUUID()}.tmp`).length) > 259) { skip('Destination path exceeds the Windows 259-character limit'); continue; }
     if (canonicalSource.normalize('NFC') === to.normalize('NFC') ||
         await ownDestination(to) && (portableKey(canonicalSource) !== portableKey(to) || (await readdir(directory)).includes(basename(to)))) {
       skip('Already in place'); continue;
