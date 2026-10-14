@@ -364,15 +364,14 @@ const applyReplacements = (
     }
   }
 
-  return ordered
-    .reverse()
-    .reduce(
-      (result, replacement) =>
-        `${result.slice(0, replacement.start)}${replacement.text}${result.slice(
-          replacement.end,
-        )}`,
-      source,
-    );
+  const parts: string[] = [];
+  let offset = 0;
+  for (const replacement of ordered) {
+    parts.push(source.slice(offset, replacement.start), replacement.text);
+    offset = replacement.end;
+  }
+  parts.push(source.slice(offset));
+  return parts.join('');
 };
 
 const removeTracks = (
@@ -718,6 +717,25 @@ export const removeRekordboxPlaylistReferences = (source: string, tracks: readon
       openingReplacement(source, playlist, 'Entries', String(playlist.trackReferences.length - removed.length)));
   }
   return applyReplacements(source, replacements);
+};
+
+export const relocateRekordboxXmlLocations = (source: string, locations: ReadonlyMap<string, string>): string => {
+  const index = scanXml(source);
+  const replacements = [];
+  for (const track of index.collectionTracks) {
+    const location = locations.get(track.attributes.Location ?? '');
+    if (location !== undefined) replacements.push(openingReplacement(source, track, 'Location', location));
+  }
+  for (const playlist of index.playlistNodes) {
+    if (playlist.keyType !== '1') continue;
+    for (const track of playlist.trackReferences) {
+      const location = locations.get(track.attributes.Key ?? '');
+      if (location !== undefined) replacements.push(openingReplacement(source, track, 'Key', location));
+    }
+  }
+  const result = applyReplacements(source, replacements);
+  scanXml(result);
+  return result;
 };
 
 export const repairRekordboxXmlLocations = (
