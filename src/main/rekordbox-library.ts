@@ -773,7 +773,7 @@ export class RekordboxLibrary {
           }
           const targets = await this.organizationTargets(owner, journal, replacements);
           await this.assertOrganizationClosed(targets);
-          warnings.push(...await this.relinkOrganization(owner, targets, replacements, journal));
+          warnings.push(...await this.relinkOrganization(owner, targets, replacements, journal, true));
           for (const move of journal.moves) {
             let state = await organizationMoveState(move);
             if (state.to && state.fromStamp !== null && move.from !== move.to) {
@@ -1381,6 +1381,9 @@ export class RekordboxLibrary {
   manageLibraryConnection(owner: BrowserWindow, action: LibraryConnectionAction): Promise<LibraryConnectionResult> {
     return this.enqueue(async () => {
       try {
+        if (this.organizationRecovery !== null && (action.kind === 'disconnect' || action.kind === 'replace' || action.kind === 'reset' || action.kind === 'locate')) {
+          throw new Error('Undo or keep the unfinished reorganization before changing library connections.');
+        }
         const connection = this.connectedLibraries.find((candidate) => candidate.id === action.id);
         if (!connection) throw new Error('This library is no longer connected.');
         const stopOngoing = (preferences: SyncPreferences): SyncPreferences => ({ ...preferences,
@@ -2174,12 +2177,16 @@ export class RekordboxLibrary {
     } catch (error) { throw new Error(this.organizationError(error)); }
   }
 
-  private registerOrganizationBackup(journal: OrganizationJournal, kind: OrganizationRestore['kind'], libraryKind?: OrganizationRestore['libraryKind']) {
+  private registerOrganizationBackup(journal: OrganizationJournal, kind: OrganizationRestore['kind'], libraryKind?: OrganizationRestore['libraryKind'], keepRecovery = false) {
     return async (backup: LibraryFileBackup): Promise<void> => {
       const index = journal.restores.findIndex((restore) => restore.path === backup.path);
-      const previous = journal.restores[index];
+      let previous = journal.restores[index];
       if (previous !== undefined && previous.backupPath !== backup.backupPath) {
-        await assertOrganizationRestore({ ...previous, path: backup.backupPath });
+        try { await assertOrganizationRestore({ ...previous, path: backup.backupPath }); } catch (error) {
+          if (!keepRecovery) throw error;
+          // Preserve later edits in the fresh Undo backup.
+          previous = undefined;
+        }
       }
       const restore: OrganizationRestore = { ...backup, kind, ...(libraryKind === undefined ? {} : { libraryKind }),
         backupPath: previous?.backupPath ?? backup.backupPath,
@@ -2194,8 +2201,7 @@ export class RekordboxLibrary {
   }
 
   private async relinkOrganization(owner: BrowserWindow, targets: Awaited<ReturnType<RekordboxLibrary['organizationTargets']>>,
-    replacements: ReadonlyMap<string, string>, journal: OrganizationJournal): Promise<string[]> {
-    for (const restore of journal.restores) await assertOrganizationRestore(restore);
+    replacements: ReadonlyMap<string, string>, journal: OrganizationJournal, keepRecovery = false): Promise<string[]> {
     const warnings: string[] = [];
     const progress = (phase: LibraryOrganizationProgress['phase'], completed: number, total: number) => this.organizationProgress(owner, phase, completed, total);
     const assertClosed = () => this.assertOrganizationClosed(targets);
@@ -2208,7 +2214,7 @@ export class RekordboxLibrary {
       });
       if (repairs.length) {
         await assertClosed();
-        const options = { mode: 'reorganize', forceBackup: true, onBackup: this.registerOrganizationBackup(journal, target.kind, target.kind === 'xml' ? target.libraryKind : undefined) } satisfies Parameters<typeof repairRekordboxDatabaseFiles>[2];
+        const options = { mode: 'reorganize', forceBackup: true, onBackup: this.registerOrganizationBackup(journal, target.kind, target.kind === 'xml' ? target.libraryKind : undefined, keepRecovery) } satisfies Parameters<typeof repairRekordboxDatabaseFiles>[2];
         const result: LibraryFilesRepairResult = target.kind === 'rekordbox-database' ? await repairRekordboxDatabaseFiles(target.path, repairs, options)
           : target.kind === 'xml' ? await repairRekordboxMissingFiles(target.path, repairs, options) : { ...await repairSeratoMissingFiles(target, repairs, options), failures: [] };
         warnings.push(...result.warnings);
@@ -2220,11 +2226,11 @@ export class RekordboxLibrary {
       const tracks = portable.manifest.tracks.map((track) => {
         if (track.media.kind !== 'local') return track;
         const replacement = replacements.get(normalizePath(track.media.originalPath));
-        return replacement === undefined ? track : { ...track, media: { ...track.media, originalPath: replacement } };
+        return replacement === undefined || replacement === track.media.originalPath ? track : { ...track, media: { ...track.media, originalPath: replacement } };
       });
       if (tracks.some((track, index) => track !== portable.manifest.tracks[index])) {
         await saveRepairedLibraryFiles([{ path: portable.path, before: portable.before,
-          after: Buffer.from(`${JSON.stringify({ ...portable.manifest, tracks }, null, 2)}\n`) }], assertClosed, { onBackup: this.registerOrganizationBackup(journal, 'portable') });
+          after: Buffer.from(`${JSON.stringify({ ...portable.manifest, tracks }, null, 2)}\n`) }], assertClosed, { onBackup: this.registerOrganizationBackup(journal, 'portable', undefined, keepRecovery) });
       }
       progress('relinking', ++completed, targets.libraries.length + targets.portable.length + 1);
     }
@@ -2234,7 +2240,7 @@ export class RekordboxLibrary {
       { path: this.arsenalPath, before: await readFile(this.arsenalPath),
         after: Buffer.from(`${JSON.stringify({ format: 'arsenal-library', version: 1, library: readLibraryModel(relocated) })}\n`) },
       { path: this.arsenalWorkspace, before: await readFile(this.arsenalWorkspace), after: Buffer.from(mergeRekordboxXml(relocated)) },
-    ], assertClosed, { onBackup: this.registerOrganizationBackup(journal, 'arsenal') });
+    ].filter(({ before, after }) => !before.equals(after)), assertClosed, { onBackup: this.registerOrganizationBackup(journal, 'arsenal', undefined, keepRecovery) });
     this.arsenalLibrary = relocated;
     progress('relinking', ++completed, targets.libraries.length + targets.portable.length + 1);
     return warnings;
