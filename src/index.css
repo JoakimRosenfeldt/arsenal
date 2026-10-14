@@ -616,10 +616,6 @@ input:disabled {
 .sidebar-playlist.is-drop-after,
 .sidebar-playlist-folder summary.is-drop-after { box-shadow: inset 0 -2px var(--accent); }
 .sidebar-playlist-folder summary.is-drop-inside { background: var(--selected); outline: 1px solid var(--accent); }
-.sidebar-playlist[draggable="true"],
-.sidebar-playlist-folder summary[draggable="true"] { cursor: grab; }
-.sidebar-playlist[draggable="true"]:active,
-.sidebar-playlist-folder summary[draggable="true"]:active { cursor: grabbing; }
 
 .sidebar-playlist.is-active {
   box-shadow: inset 2px 0 var(--accent);
