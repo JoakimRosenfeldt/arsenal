@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { homedir } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
 
 import { dialog, shell, type BrowserWindow } from 'electron';
 import { DJ_LIBRARY_CHANNELS, ARSENAL_LIBRARY_ID, DEFAULT_SONG_FILTERS, ONGOING_SYNC_REQUEST, readSyncRequest, songMetadataGapCount } from '../shared/dj-library';
@@ -71,7 +72,7 @@ import { mergeRekordboxXml, pathFromLocation, rekordboxSyncLibrary, repairRekord
 import { cloudMatcher, isCloudPath } from './cloud-tracks';
 import { readSeratoWithPerformance, saveLibraryXml, syncArsenalLibraryToConnection } from './sync-libraries';
 import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
-import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
+import { resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { seratoSqliteVersion } from './serato-sqlite';
 import { findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
 import { PORTABLE_LIBRARY_FILENAME, readLibraryModel, readPortableLibrary, readPortableLibraryFingerprint, readPortableLibraryFolder, resolvePortableLibrary, writePortableLibrary } from './portable-library';
@@ -83,7 +84,7 @@ import { readRekordboxDatabase, repairRekordboxDatabaseFiles } from './rekordbox
 import { removeSongBackups } from './serato-tag-io';
 import { assertRekordboxClosed, detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
-import { appendOrganizationJournal, clearIncompleteOrganizationDestination, readOrganizationJournal, organizationMoveState, prepareOrganizationRecovery, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
+import { appendOrganizationJournal, assertOrganizationRestore, clearIncompleteOrganizationDestination, readOrganizationJournal, organizationMoveState, prepareOrganizationRecovery, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
 import { createOrganizationDirectory, sameOrganizationFile, organizationFileStamp, installMusicFile, unlinkMusicFile, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
 import { saveRepairedLibraryFiles, type LibraryFileBackup, type LibraryFilesRepairResult } from './repair-library-files';
 
@@ -123,6 +124,9 @@ type StoredLibraryConnection = Readonly<{
 }>;
 
 type LibrarySourceSnapshot = Awaited<ReturnType<typeof readLibrarySource>>;
+
+const organizationManifestHash = (manifest: Awaited<ReturnType<typeof readPortableLibrary>>): string =>
+  createHash('sha256').update(JSON.stringify({ ...manifest, savedAt: undefined })).digest('hex');
 
 type StoredLibraryBackup = Readonly<{
   id: string;
@@ -761,7 +765,7 @@ export class RekordboxLibrary {
           }
           for (const [from, to] of journal.replacements ?? journal.moves.map((move) => [normalizePath(move.from), move.to] as const)) {
             const location = locations.get(to);
-            if (location !== undefined) replacements.set(from, location);
+            if (location !== undefined && location === to) replacements.set(from, location);
           }
           for (const move of journal.moves) {
             const location = locations.get(move.to);
@@ -796,7 +800,7 @@ export class RekordboxLibrary {
             throw new Error(`The audio is unavailable at its recovered location: ${move.from}, ${move.to}`);
           }
         }
-        warnings.push(...await this.finishOrganization(replacements, journal.acceptedConnections ?? []));
+        warnings.push(...await this.finishOrganization(replacements, journal));
       } catch (error) { throw new Error(this.organizationError(error)); }
       await rm(this.organizationJournalPath);
       this.organizationRecovery = null;
@@ -1410,6 +1414,9 @@ export class RekordboxLibrary {
           await this.saveConnections({ connections,
             catalog: this.catalog,
             syncPreferences: { ...preferences, [key]: preferences[key] === connection.path ? nextPath : preferences[key] } });
+          this.startupUnreadable.delete(connection.id);
+          this.startupChanges.delete(connection.id);
+          this.startupSources.delete(connection.id);
           await rm(this.sourceSnapshotPath(connection.id), { force: true });
         } else if (action.kind === 'replace') {
           const selected = await this.chooseSyncPath(owner, connection.kind, 'rekordbox-to-serato');
@@ -2032,6 +2039,10 @@ export class RekordboxLibrary {
       else paths.push(target.path);
     }
     paths.push(this.arsenalPath, this.arsenalWorkspace, ...targets.portable.map((portable) => portable.path));
+    for (const { path } of targets.portable) {
+      const source = await readLibrarySource({ kind: 'rekordbox', path, portableSource: { manifestPath: path, searchRoots: [] } });
+      if (source.portableManifestPath !== null) paths.push(source.portableManifestPath);
+    }
     const states = [];
     const ordered = [...new Set(paths)].sort();
     for (let offset = 0; offset < ordered.length; offset += 32) {
@@ -2166,6 +2177,9 @@ export class RekordboxLibrary {
     return async (backup: LibraryFileBackup): Promise<void> => {
       const index = journal.restores.findIndex((restore) => restore.path === backup.path);
       const previous = journal.restores[index];
+      if (previous !== undefined && previous.backupPath !== backup.backupPath) {
+        await assertOrganizationRestore({ ...previous, path: backup.backupPath });
+      }
       const restore: OrganizationRestore = { ...backup, kind, ...(libraryKind === undefined ? {} : { libraryKind }),
         backupPath: previous?.backupPath ?? backup.backupPath,
         expectedHashes: [...new Set([...previous?.expectedHashes ?? [], ...backup.expectedHashes ?? [],
@@ -2180,6 +2194,7 @@ export class RekordboxLibrary {
 
   private async relinkOrganization(owner: BrowserWindow, targets: Awaited<ReturnType<RekordboxLibrary['organizationTargets']>>,
     replacements: ReadonlyMap<string, string>, journal: OrganizationJournal): Promise<string[]> {
+    for (const restore of journal.restores) await assertOrganizationRestore(restore);
     const warnings: string[] = [];
     const progress = (phase: LibraryOrganizationProgress['phase'], completed: number, total: number) => this.organizationProgress(owner, phase, completed, total);
     const assertClosed = () => this.assertOrganizationClosed(targets);
@@ -2224,7 +2239,36 @@ export class RekordboxLibrary {
     return warnings;
   }
 
-  private async finishOrganization(replacements: ReadonlyMap<string, string>, acceptedConnections: readonly string[]): Promise<string[]> {
+  private async acceptedOrganizationSource(connection: StoredLibraryConnection, source: LibrarySourceSnapshot,
+    replacements: ReadonlyMap<string, string>, journal: OrganizationJournal): Promise<StoredLibraryConnection | null> {
+    if (source.library !== null) {
+      let snapshot: SyncLibrary;
+      try { snapshot = readLibraryModel(JSON.parse(await readFile(this.sourceSnapshotPath(connection.id), 'utf8'))); } catch { return null; }
+      const relocated = relocatedLibrary(snapshot, replacements);
+      const expected = connection.kind === 'serato' ? await resolveSeratoLibraryPaths(relocated) : relocated;
+      if (describeLibraryChanges(expected, source.library).length || describeLibraryChanges(source.library, expected).length) return null;
+      const tracks = new Map(expected.tracks.map((track) => [normalizePath(track.path), track]));
+      if (source.library.tracks.some((track) => {
+        const previous = tracks.get(normalizePath(track.path));
+        return previous === undefined || normalizePath(previous.location ?? previous.path) !== normalizePath(track.location ?? track.path) ||
+          !isDeepStrictEqual(previous.performance?.beatgrids ?? [], track.performance?.beatgrids ?? []);
+      })) return null;
+      return this.acceptedSource(connection, source);
+    }
+    const path = source.portableManifestPath;
+    if (path === null) return null;
+    const target = journal.targets?.find((target) => target.path === path);
+    const restore = journal.restores.find((restore) => restore.kind === 'portable' && restore.path === path);
+    const manifest = await readPortableLibrary(path);
+    const before = restore === undefined ? manifest : await readPortableLibrary(restore.backupPath);
+    const expected = { ...before, tracks: before.tracks.map((track) => track.media.kind !== 'local' ? track
+      : { ...track, media: { ...track.media, originalPath: replacements.get(normalizePath(track.media.originalPath)) ?? track.media.originalPath } }) };
+    const expectedHash = restore === undefined ? target?.manifestHash : organizationManifestHash(expected);
+    if (expectedHash !== organizationManifestHash(manifest)) return null;
+    return this.acceptedSource(connection, source, manifest);
+  }
+
+  private async finishOrganization(replacements: ReadonlyMap<string, string>, journal: OrganizationJournal): Promise<string[]> {
     this.missingSyncContext = null;
     this.cancelSuggestions();
     await this.writeArsenalProjection();
@@ -2239,11 +2283,14 @@ export class RekordboxLibrary {
           .map(([id, path]) => [id, replacements.get(normalizePath(path)) ?? path])) } };
       try {
         const source = await readLibrarySource(updated);
-        if (acceptedConnections.includes(connection.id) && !this.startupChanges.has(connection.id) && !this.startupUnreadable.has(connection.id)) {
-          updated = await this.acceptedSource(updated, source);
+        const accepted = journal.acceptedConnections?.includes(connection.id)
+          ? await this.acceptedOrganizationSource(updated, source, replacements, journal) : null;
+        if (accepted !== null) {
+          updated = accepted;
           this.startupChanges.delete(connection.id);
           this.startupSources.delete(connection.id);
-        } else if (source.fingerprint !== connection.sourceFingerprint) {
+        } else if (source.fingerprint !== connection.sourceFingerprint ||
+          source.portableManifestPath !== null && source.portableManifestPath !== connection.portableSource?.manifestPath) {
           this.startupChanges.add(connection.id);
           this.startupSources.set(connection.id, source);
         }
@@ -2283,7 +2330,8 @@ export class RekordboxLibrary {
         temporary: join(dirname(move.to), `.arsenal-${randomUUID()}.tmp`), sha256: null, stamp: plan.stamps.get(move.from) ?? null,
         destinationStamp: null, rollbackStamp: null, completed: false })), restores: [], createdDirectories: [], replacements: [...replacements], acceptedConnections: targets.acceptedConnections,
         targets: [...targets.libraries.map(({ target, nativePaths }) => ({ path: target.path, paths: nativePaths.filter((path) => replacements.has(normalizePath(path))) })),
-          ...targets.portable.map(({ path, manifest }) => ({ path, paths: manifest.tracks.flatMap((track) => track.media.kind === 'local' && replacements.has(normalizePath(track.media.originalPath)) ? [track.media.originalPath] : []) }))] };
+          ...targets.portable.map(({ path, manifest }) => ({ path, manifestHash: organizationManifestHash(manifest),
+            paths: manifest.tracks.flatMap((track) => track.media.kind === 'local' && replacements.has(normalizePath(track.media.originalPath)) ? [track.media.originalPath] : []) }))] };
       await writeOrganizationJournal(this.organizationJournalPath, journal);
       this.organizationRecovery = journal;
       const warnings: string[] = [];
@@ -2314,7 +2362,7 @@ export class RekordboxLibrary {
         try {
           warnings.push(...await undoOrganization(journal, (completed, total) => progress('rolling-back', completed, total), (move) => appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] })));
           this.arsenalLibrary = originalLibrary;
-          warnings.push(...await this.finishOrganization(new Map(moves.map((move) => [normalizePath(move.to), move.from])), journal.acceptedConnections ?? []));
+          warnings.push(...await this.finishOrganization(new Map(moves.map((move) => [normalizePath(move.to), move.from])), journal));
           await rm(this.organizationJournalPath);
           this.organizationRecovery = null;
         } catch (recoveryError) {
@@ -2327,7 +2375,7 @@ export class RekordboxLibrary {
         }
         throw new Error(`${message} Moved files and connected libraries were restored. ${warnings.join(' ')}`.trim());
       }
-      warnings.push(...await this.finishOrganization(replacements, journal.acceptedConnections ?? []));
+      warnings.push(...await this.finishOrganization(replacements, journal));
       await rm(this.organizationJournalPath);
       this.organizationRecovery = null;
       return { movedCount: moves.length, backupPaths: journal.restores.map((restore) => restore.backupPath), warnings };

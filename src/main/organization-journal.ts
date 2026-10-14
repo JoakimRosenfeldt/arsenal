@@ -16,7 +16,7 @@ export type OrganizationJournal = {
   restores: OrganizationRestore[];
   createdDirectories: string[];
   acceptedConnections?: readonly string[];
-  targets?: readonly Readonly<{ path: string; paths: readonly string[] }>[];
+  targets?: readonly Readonly<{ path: string; paths: readonly string[]; manifestHash?: string }>[];
   replacements?: readonly (readonly [string, string])[];
 };
 
@@ -85,7 +85,9 @@ const parseOrganizationJournal = (bytes: string, path: string): OrganizationJour
     for (const target of rawTargets) {
       if (typeof target !== 'object' || target === null || !('path' in target) || typeof target.path !== 'string' ||
           !('paths' in target) || !Array.isArray(target.paths) || !target.paths.every((path: unknown) => typeof path === 'string')) throw invalid();
-      targets.push({ path: target.path, paths: target.paths.filter((path: unknown): path is string => typeof path === 'string') });
+      if ('manifestHash' in target && typeof target.manifestHash !== 'string') throw invalid();
+      targets.push({ path: target.path, paths: target.paths.filter((path: unknown): path is string => typeof path === 'string'),
+        ...('manifestHash' in target && typeof target.manifestHash === 'string' ? { manifestHash: target.manifestHash } : {}) });
     }
     journal.targets = targets;
   }
@@ -191,15 +193,17 @@ export const prepareOrganizationRecovery = async (journal: OrganizationJournal):
   }
 };
 
+export const assertOrganizationRestore = async (restore: OrganizationRestore): Promise<void> => {
+  if (restore.kind === 'rekordbox-database' && isRekordboxDatabasePath(restore.path)) await assertRekordboxDatabaseBackup(restore);
+  else if (restore.kind === 'sqlite') await assertSeratoSqliteBackup(restore);
+  else await assertLibraryFileBackup(restore.path, restore.backupPath, restore.expectedHash, restore.expectedHashes);
+};
+
 export const undoOrganization = async (journal: OrganizationJournal, progress: (completed: number, total: number) => void = () => undefined,
   persistMove: (move: OrganizationJournal['moves'][number]) => Promise<void> = async () => undefined): Promise<string[]> => {
   await prepareOrganizationRecovery(journal);
   const restores = [...journal.restores].reverse();
-  for (const restore of restores) {
-    if (restore.kind === 'rekordbox-database' && isRekordboxDatabasePath(restore.path)) await assertRekordboxDatabaseBackup(restore);
-    else if (restore.kind === 'sqlite') await assertSeratoSqliteBackup(restore);
-    else await assertLibraryFileBackup(restore.path, restore.backupPath, restore.expectedHash, restore.expectedHashes);
-  }
+  for (const restore of restores) await assertOrganizationRestore(restore);
   for (const move of journal.moves) await organizationMoveState(move);
   // Keep the new audio paths until every library has been restored successfully.
   for (const move of [...journal.moves].reverse()) {
