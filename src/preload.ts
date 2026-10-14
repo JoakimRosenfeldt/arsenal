@@ -86,6 +86,7 @@ const preferences: PreferencesApi = Object.freeze({
   saveOpenRouterKey: (apiKey) => ipcRenderer.invoke(PREFERENCES_CHANNELS.saveOpenRouterKey, apiKey),
   library: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.library),
   saveMinimumSongLength: (seconds) => ipcRenderer.invoke(PREFERENCES_CHANNELS.saveMinimumSongLength, seconds),
+  cleanUpSongBackups: () => ipcRenderer.invoke(PREFERENCES_CHANNELS.cleanUpSongBackups),
   onLibraryChanged: (listener) => {
     const handleChange = (_event: IpcRendererEvent, settings: LibrarySettings): void => listener(settings);
     ipcRenderer.on(PREFERENCES_CHANNELS.libraryChanged, handleChange);

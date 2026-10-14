@@ -198,11 +198,10 @@ export const syncArsenalLibraryToConnection = async ({ library, target, request,
         for (const track of outgoing.tracks) {
           if (!track.performance && !request.fields.metadata) continue;
           try {
-            const backup = await writeSeratoPerformance(track.path, track.performance ?? { hotCues: [], loops: [], beatgrids: [] }, {
+            if (await writeSeratoPerformance(track.path, track.performance ?? { hotCues: [], loops: [], beatgrids: [] }, {
               hotCues: track.performance !== undefined && request.fields.hotCues,
               loops: track.performance !== undefined && request.fields.loops,
-            }, request.fields.metadata ? track.song : undefined);
-            if (backup !== null) { backupPaths.push(backup); wroteLibrary = true; }
+            }, request.fields.metadata ? track.song : undefined)) wroteLibrary = true;
           } catch (error) {
             failed.push(`${basename(track.path)} (${error instanceof Error ? error.message : 'unknown error'})`);
           }
