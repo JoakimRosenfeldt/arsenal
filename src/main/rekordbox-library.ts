@@ -2088,6 +2088,26 @@ export class RekordboxLibrary {
     if (tracks.length === 0 || tracks.length !== change.songIds.length) {
       return { kind: 'rejected', reason: 'song-not-found' };
     }
+    const { keepSongIds, ...removal } = change;
+    if (keepSongIds !== undefined) {
+      const visible = new Set(catalog.songs.map((song) => song.id));
+      for (const playlist of catalog.playlists) {
+        if (playlist.kind !== 'regular') continue;
+        const ids = [...new Set(playlist.tracks.map((song) => song.id).filter((id) => visible.has(id)))];
+        const present = new Set(ids);
+        const next = ids.flatMap((id) => {
+          const keepId = keepSongIds[id];
+          if (keepId === undefined || present.has(keepId) || !visible.has(keepId) || songIds.has(keepId)) return [id];
+          present.add(keepId);
+          return [id, keepId];
+        });
+        if (next.length === ids.length) continue;
+        const result = await this.setPlaylistTracks(this.requireCatalog(),
+          { kind: 'set-playlist-tracks', revision: change.revision, playlistId: playlist.id, songIds: next });
+        if (result.kind === 'rejected') return result;
+      }
+      return this.removeSongs(this.requireCatalog(), removal);
+    }
 
     const remaining = catalog.tracks.filter((track) => !songIds.has(track.song.id));
     const before = this.arsenalLibrary;

@@ -8,6 +8,8 @@ export const PREFERENCES_CHANNELS = Object.freeze({
 });
 
 export const DEFAULT_MINIMUM_SONG_LENGTH_SECONDS = 30;
+// Renderer-only setting kept in localStorage; on unless set to 'false'.
+export const KEEP_DUPLICATES_IN_PLAYLISTS_KEY = 'arsenal.keepDuplicatesInPlaylists';
 export type LibrarySettings = Readonly<{ minimumSongLengthSeconds: number }>;
 
 export type OpenRouterSettings = Readonly<{ hasApiKey: boolean; keyStorage: 'encrypted' | 'session' }>;

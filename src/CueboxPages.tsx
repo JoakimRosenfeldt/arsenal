@@ -14,6 +14,7 @@ import { HelpTooltip } from './HelpTooltip';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
 import { PlaylistIdentity } from './SmartPlaylistEditor';
 import { recommendedKeepSongIdFor } from './shared/duplicate-selection';
+import { KEEP_DUPLICATES_IN_PLAYLISTS_KEY } from './shared/preferences';
 import {
   TrackArtwork,
   type PlaybackController,
@@ -528,7 +529,8 @@ const variantSummaryFor = (group: DuplicateGroup): string => {
   return labels.length > 3 ? `${visible} +${labels.length - 3}` : visible;
 };
 
-type RemoveSongs = (songIds: readonly string[], removeLocalFile: boolean, songs?: readonly SongRow[]) => Promise<boolean>;
+type RemoveSongs = (songIds: readonly string[], removeLocalFile: boolean, songs?: readonly SongRow[],
+  keepSongIds?: Readonly<Record<string, string>>) => Promise<boolean>;
 
 const FileRemovalOption = ({
   busy,
@@ -948,6 +950,19 @@ export const DuplicatesPage = ({
   if (selectionVersion === currentSelectionVersion && selectedGroup !== null && !viewedKeys.has(selectedGroup.key)) {
     setViewedKeys(new Set([...viewedKeys, selectedGroup.key]));
   }
+  const removeDuplicates: RemoveSongs = (songIds, removeLocalFile, songs) => {
+    if (localStorage.getItem(KEEP_DUPLICATES_IN_PLAYLISTS_KEY) === 'false') return onRemove(songIds, removeLocalFile, songs);
+    const removed = new Set(songIds);
+    const keepSongIds: Record<string, string> = {};
+    for (const group of groups) {
+      const kept = group.candidates.filter(({ song }) => !removed.has(song.id));
+      const recommendedId = recommendedKeepSongIdFor(group.candidates, preferredSource);
+      const keepId = kept.find(({ song }) => song.id === recommendedId)?.song.id ?? kept[0]?.song.id;
+      if (keepId === undefined) continue;
+      for (const { song } of group.candidates) if (removed.has(song.id)) keepSongIds[song.id] = keepId;
+    }
+    return onRemove(songIds, removeLocalFile, songs, keepSongIds);
+  };
   const copy = duplicateModeCopy[mode];
   const emptyTitle = (scan?.ignoredGroupCount ?? 0) > 0
     ? 'No groups left to review'
@@ -1058,7 +1073,7 @@ export const DuplicatesPage = ({
                   </div>
                 </div>
               </div>
-              <DuplicateSelectionActions busy={busy} onClear={() => setChosenIds(new Set())} onRemove={onRemove}
+              <DuplicateSelectionActions busy={busy} onClear={() => setChosenIds(new Set())} onRemove={removeDuplicates}
                 songs={chosenSongs} viewedSongs={viewedSongs} key={JSON.stringify([currentSelectionVersion, chosenSongs.map((song) => song.id)])}
                 navigation={
                   <div className="focused-comparison-actions">

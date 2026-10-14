@@ -406,6 +406,8 @@ export type LibraryMutation =
       revision: string;
       songIds: readonly string[];
       removeLocalFile: boolean;
+      // Removed song ID -> kept duplicate ID, added to the removed song's playlists.
+      keepSongIds?: Readonly<Record<string, string>>;
     }>
   | Readonly<{
       kind: 'create-playlist';

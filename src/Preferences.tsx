@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 
 import { AppUpdates } from './AppUpdates';
 import coffeeIconUrl from '../assets/buy-me-a-coffee.svg';
-import type { LibrarySettings, OpenRouterSettings } from './shared/preferences';
+import { KEEP_DUPLICATES_IN_PLAYLISTS_KEY, type LibrarySettings, type OpenRouterSettings } from './shared/preferences';
 import './Preferences.css';
 
 export const Preferences = ({ onCancel, onError }: Readonly<{
@@ -12,6 +12,7 @@ export const Preferences = ({ onCancel, onError }: Readonly<{
   const [library, setLibrary] = useState<LibrarySettings | null>(null);
   const [settings, setSettings] = useState<OpenRouterSettings | null>(null);
   const [seconds, setSeconds] = useState('');
+  const [keepDuplicates, setKeepDuplicates] = useState(() => localStorage.getItem(KEEP_DUPLICATES_IN_PLAYLISTS_KEY) !== 'false');
   const [apiKey, setApiKey] = useState('');
   const [removeKey, setRemoveKey] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -51,6 +52,7 @@ export const Preferences = ({ onCancel, onError }: Readonly<{
     if (saving || !ready || !valid) return;
     setSaving(true);
     setErrors([]);
+    localStorage.setItem(KEEP_DUPLICATES_IN_PLAYLISTS_KEY, String(keepDuplicates));
     const submittedKeyRevision = keyRevision.current;
     const keyChanged = removeKey || apiKey.trim() !== '';
     if (keyChanged) setSettings({ ...settings, hasApiKey: !removeKey });
@@ -117,6 +119,15 @@ export const Preferences = ({ onCancel, onError }: Readonly<{
                 onChange={(event) => setSeconds(event.currentTarget.value)} />
               <span id="minimum-song-length-unit">seconds</span>
             </div>
+          </div>
+          <div className="preferences-setting-row">
+            <div className="preferences-explanation">
+              <label htmlFor="keep-duplicates-in-playlists">Keep playlists when removing duplicates</label>
+              <p id="keep-duplicates-in-playlists-help">Add the kept track to playlists that only had the removed duplicate.</p>
+            </div>
+            <input id="keep-duplicates-in-playlists" type="checkbox" checked={keepDuplicates}
+              aria-describedby="keep-duplicates-in-playlists-help"
+              onChange={(event) => setKeepDuplicates(event.currentTarget.checked)} />
           </div>
         </section>
         <section className="preferences-section" aria-labelledby="ai-preferences-title">
