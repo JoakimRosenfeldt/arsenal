@@ -2139,7 +2139,7 @@ export class RekordboxLibrary {
           const key = await seratoMediaPathKey(from);
           for (const source of seratoTargets) if (source.keys.has(key)) {
             if (source.duplicateKeys.has(key)) throw new Error('Multiple Serato SQLite assets share this audio file; keep their current paths');
-            validateSeratoOrganizationDestination(source.target, to);
+            await validateSeratoOrganizationDestination(source.target, to);
           }
         }, (completed, total) => this.organizationProgress(owner, 'validating', completed, total));
       const destinations = new Map<string, string>();

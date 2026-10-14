@@ -80,10 +80,8 @@ export const writeSeratoLibrary = async (source: SeratoSource, incoming: SyncLib
 export const seratoOrganizationSource = (source: SeratoSource) => source.kind === 'sqlite'
   ? seratoSqliteOrganizationSource(source.path) : seratoLegacyOrganizationSource(source.path);
 
-export const validateSeratoOrganizationDestination = (source: SeratoSource, path: string): void => {
-  if (source.kind === 'sqlite') validateSeratoSqliteDestination(source.path, path);
-  else validateSeratoLegacyDestination(source.path, path);
-};
+export const validateSeratoOrganizationDestination = (source: SeratoSource, path: string): Promise<void> => source.kind === 'sqlite'
+  ? validateSeratoSqliteDestination(source.path, path) : validateSeratoLegacyDestination(source.path, path);
 
 export const seratoOrganizationFiles = async (source: SeratoSource): Promise<string[]> => source.kind === 'legacy'
   ? seratoLegacyOrganizationFiles(source.path) : [source.path, `${source.path}-wal`];

@@ -66,7 +66,7 @@ export const planLibraryOrganization = async (
   const entries: LibraryOrganizationEntry[] = [];
   const stamps = new Map<string, string>();
   const sources = new Set<string>();
-  const used = new Set(reservedPaths.filter(isAbsolute).map(portableKey));
+  const used = new Set(await Promise.all(reservedPaths.filter(isAbsolute).map(async (path) => portableKey(await canonicalOrganizationPath(path)))));
   const namesByDirectory = new Map<string, ReadonlySet<string>>();
   const availableDirectories = new Map<string, boolean>();
   const directoryAvailable = async (directory: string): Promise<boolean> => {
@@ -84,7 +84,7 @@ export const planLibraryOrganization = async (
     return available;
   };
   const occupied = async (path: string): Promise<boolean> => {
-    if (used.has(portableKey(path))) return true;
+    if (used.has(portableKey(await canonicalOrganizationPath(path)))) return true;
     const directory = dirname(path);
     let names = namesByDirectory.get(directory);
     if (names === undefined) {
@@ -150,8 +150,7 @@ export const planLibraryOrganization = async (
     let suffix = 2;
     while (await occupied(to) && !await ownDestination(to)) to = join(directory, `${stem} (${suffix++})${extension}`);
     const temporaryName = `.arsenal-${randomUUID()}.tmp`;
-    if (process.platform === 'win32' && Math.max(to.length, join(directory, `${temporaryName}.copy`).length,
-      join(dirname(from), `${temporaryName}.undo`).length) > 259) { skip('Destination path exceeds the Windows 259-character limit'); continue; }
+    if (process.platform === 'win32' && Math.max(to.length, join(directory, `${temporaryName}.copy`).length) > 259) { skip('Destination path exceeds the Windows 259-character limit'); continue; }
     const canonicalDestination = join(canonicalDirectory, basename(to));
     if (canonicalSource.normalize('NFC') === canonicalDestination.normalize('NFC') ||
         await ownDestination(to) && (portableKey(canonicalSource) !== portableKey(canonicalDestination) || (await readdir(directory)).includes(basename(to)))) {
@@ -160,7 +159,7 @@ export const planLibraryOrganization = async (
     try { await validateDestination(from, to); } catch (error) {
       skip(error instanceof Error ? error.message : 'Destination cannot be stored in a connected library'); continue;
     }
-    used.add(portableKey(to));
+    used.add(portableKey(canonicalDestination));
     entries.push({ kind: 'move', from, to, collision: suffix > 2 });
   }
   progress(library.tracks.length, library.tracks.length);

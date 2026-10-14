@@ -13,6 +13,7 @@ import { seratoSmartRules } from './serato-smart-crates';
 import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { assertLibraryFileBackup, databaseContentHash, assertMissingFileRepair, restoreLibraryFileBackup, currentLibraryFileHash, type LibraryFileBackup, type LibraryFileRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
 import type { SeratoLibraryWriteOptions } from './serato-library';
+import { canonicalOrganizationPath } from './reorganize-library';
 
 // Serato 4.0.9 schema 202: root.sqlite is authoritative; master.sqlite is rebuilt by Serato.
 // https://github.com/Venut-Technologies/serato-dj-mcp/blob/main/tests/fixtures/schema/root-202.sql
@@ -92,9 +93,9 @@ const assetPath = (rootPath: string, row: Row): string => {
     ? `streaming://serato/${encodeURIComponent(portableId)}` : absolutePath(rootPath, portableId);
 };
 
-const portablePath = (rootPath: string, path: string): string => {
+const portablePath = (root: string, path: string): string => {
   const normalized = posix.normalize(path.replaceAll('\\', '/'));
-  const root = volumeRoot(rootPath);
+  root = root.replaceAll('\\', '/');
   const relative = (/^[a-z]:\//i.test(root) ? win32.relative(root, normalized) : posix.relative(root, normalized)).replaceAll('\\', '/');
   if (!path || path.includes('\0') || !posix.isAbsolute(normalized) && !/^[a-z]:\//i.test(normalized) ||
       relative === '..' || relative.startsWith('../') || /^[a-z]:\//i.test(relative) || !relative) {
@@ -355,7 +356,9 @@ export const seratoSqliteOrganizationSource = async (rootPath: string) => {
   } finally { db.close(); }
 };
 
-export const validateSeratoSqliteDestination = (rootPath: string, path: string): void => { portablePath(rootPath, path); };
+export const validateSeratoSqliteDestination = async (rootPath: string, path: string): Promise<void> => {
+  portablePath(await canonicalOrganizationPath(volumeRoot(rootPath)), await canonicalOrganizationPath(path));
+};
 
 export const repairSeratoSqliteMissingFile = (rootPath: string, missingPath: string, replacementPath: string | null): Promise<LibraryFileRepairResult> =>
   repairSeratoSqliteMissingFiles(rootPath, [{ missingPath, replacementPath }]);
@@ -391,10 +394,11 @@ export const repairSeratoSqliteMissingFiles = async (
 ): Promise<LibraryFileRepairResult> => {
   await assertSeratoClosed();
   const prepared: { missingPath: string; replacement: string | null; portableId: string | null; missingKey: string; replacementKey: string | null }[] = [];
+  const root = options.mode === 'reorganize' ? await canonicalOrganizationPath(volumeRoot(rootPath)) : volumeRoot(rootPath);
   for (const repair of repairs) {
     await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
     const replacement = repair.replacementPath === null || options.mode === 'reorganize' ? repair.replacementPath : await resolveSeratoMediaPath(repair.replacementPath);
-    prepared.push({ ...repair, replacement, portableId: replacement === null ? null : portablePath(rootPath, replacement),
+    prepared.push({ ...repair, replacement, portableId: replacement === null ? null : portablePath(root, options.mode === 'reorganize' ? await canonicalOrganizationPath(replacement) : replacement),
       missingKey: options.mode === 'reorganize' ? normalizePath(repair.missingPath) : await seratoMediaPathKey(repair.missingPath),
       replacementKey: replacement === null ? null : await seratoMediaPathKey(replacement) });
   }
@@ -501,7 +505,7 @@ export const writeSeratoSqlite = async (
     const { spaceId, rootId } = anchors(db);
     const smartCrates = new Map(incoming.playlists.map((playlist) => [playlist, seratoSmartRules(playlist)]));
     const smartPaths = new Set(incoming.playlists.filter((playlist) => smartCrates.get(playlist)).map((playlist) => JSON.stringify(playlist.path)));
-    for (const track of incoming.tracks) portablePath(rootPath, track.path);
+    for (const track of incoming.tracks) portablePath(volumeRoot(rootPath), track.path);
     for (const playlist of incoming.playlists) {
       if (!playlist.path.length || playlist.path.some((part) => !part.trim() || /[\0\r\n]/.test(part))) {
         throw new Error('A playlist has an invalid crate name.');
@@ -543,7 +547,7 @@ export const writeSeratoSqlite = async (
       if (portableId) assetsByPath.set(await mediaKeyFor(assetPath(rootPath, row)), id(row.id));
     }
     for (const track of incoming.tracks) {
-      const portableId = portablePath(rootPath, track.path);
+      const portableId = portablePath(volumeRoot(rootPath), track.path);
       const key = await mediaKeyFor(track.path);
       const existing = assetIdsByPath.get(key);
       const values = metadata(track);
