@@ -40,6 +40,11 @@ import {
   type SyncResult,
 } from './shared/dj-library';
 
+import {
+  loadLibraryColumnSettings,
+  saveLibraryColumnSettings,
+  type SongSort,
+} from './shared/library-columns';
 import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
 import { TracklistExportDialog } from './TracklistExportDialog';
 import { LibraryChangesDialog } from './LibraryChangesDialog';
@@ -211,8 +216,10 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const feedbackRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState(DEFAULT_SONG_FILTERS);
+  const [sort, setSort] = useState<SongSort>(() => loadLibraryColumnSettings().sort);
   const [viewQuery, setViewQuery] = useState('');
   const [viewFilters, setViewFilters] = useState(DEFAULT_SONG_FILTERS);
+  const [viewSort, setViewSort] = useState(sort);
   const [searching, setSearching] = useState(false);
   const searchSequence = useRef(0);
   const [duplicateMode, setDuplicateMode] =
@@ -232,8 +239,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [playbackFailed, setPlaybackFailed] = useState(false);
   const hasLibrary = view !== null;
   const libraryVersion = view?.library.revision ?? 'empty';
-  const browseState = useRef({ query, filters, view, playlists });
-  useEffect(() => { browseState.current = { query, filters, view, playlists }; }, [query, filters, view, playlists]);
+  const browseState = useRef({ query, filters, sort, view, playlists });
+  useEffect(() => { browseState.current = { query, filters, sort, view, playlists }; }, [query, filters, sort, view, playlists]);
 
   useEffect(() => {
     if (error === null && feedback === null) return;
@@ -309,6 +316,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           window.djLibrary.listSongs({
             offset: 0,
             limit: SONG_PAGE_SIZE,
+            sort: loadLibraryColumnSettings().sort,
           }),
           loadPlaylistTree(),
         ]);
@@ -456,7 +464,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       const [page, tree] = await Promise.all([
         window.djLibrary.searchSongs({ offset: Math.min(view?.page.offset ?? 0,
           Math.max(0, Math.floor(Math.max(0, library.songCount - 1) / SONG_PAGE_SIZE) * SONG_PAGE_SIZE)),
-        limit: SONG_PAGE_SIZE, query, filters }),
+        limit: SONG_PAGE_SIZE, query, filters, sort }),
         loadPlaylistTree(),
       ]);
       if (!active || sequence !== searchSequence.current) return;
@@ -469,12 +477,13 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       setSelectedPlaylistId((current) => tree.playlists.some((playlist) => playlist.id === current) ? current : null);
       setViewQuery(query);
       setViewFilters(filters);
+      setViewSort(sort);
       setDuplicateRefresh((current) => current + 1);
     }).catch(() => {
       if (active) setFeedback({ tone: 'warning', message: 'Sync finished, but the view could not refresh.' });
     });
     return () => { active = false; };
-  }, [backgroundLibrary, operationBusy, backgroundSyncing, loading, view?.library.revision, view?.page.offset, playlistWindow, query, filters, stopPlayback]);
+  }, [backgroundLibrary, operationBusy, backgroundSyncing, loading, view?.library.revision, view?.page.offset, playlistWindow, query, filters, sort, stopPlayback]);
 
   const playSong = (song: SongRow, preserveQueue = false): void => {
     const audio = audioRef.current;
@@ -531,7 +540,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     const maxOffset = Math.max(0, Math.floor(Math.max(0, library.songCount - 1) / SONG_PAGE_SIZE) * SONG_PAGE_SIZE);
     const [page, tree] = await Promise.all([
       window.djLibrary.searchSongs({ offset: Math.min(browsing.view?.page.offset ?? 0, maxOffset),
-        limit: SONG_PAGE_SIZE, query: browsing.query, filters: browsing.filters }),
+        limit: SONG_PAGE_SIZE, query: browsing.query, filters: browsing.filters, sort: browsing.sort }),
       loadPlaylistTree(),
     ]);
     stopPlayback();
@@ -540,6 +549,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       setView({ library, page });
       setViewQuery(browsing.query);
       setViewFilters(browsing.filters);
+      setViewSort(browsing.sort);
     } else setView((current) => current === null ? null : { ...current, library });
     setPlaylists(tree.playlists);
     setFolders(tree.folders);
@@ -816,7 +826,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         }
         const maxOffset = Math.max(0, Math.floor(Math.max(0, result.library.songCount - 1) / SONG_PAGE_SIZE) * SONG_PAGE_SIZE);
         const [page, tree] = await Promise.all([
-          window.djLibrary.searchSongs({ offset: Math.min(view.page.offset, maxOffset), limit: SONG_PAGE_SIZE, query: viewQuery, filters: viewFilters }),
+          window.djLibrary.searchSongs({ offset: Math.min(view.page.offset, maxOffset), limit: SONG_PAGE_SIZE, query: viewQuery, filters: viewFilters, sort: viewSort }),
           loadPlaylistTree(),
         ]);
         setView({ library: result.library, page });
@@ -889,7 +899,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       songIds: [...new Set([...playlist.tracks.map((song) => song.id), ...songIds])],
     }), songs);
 
-  const changePage = async (offset: number, nextQuery = query, nextFilters: SongFilters = filters): Promise<void> => {
+  const changePage = async (offset: number, nextQuery = query, nextFilters: SongFilters = filters, nextSort: SongSort = sort): Promise<void> => {
     if (view === null || offset < 0) {
       return;
     }
@@ -906,17 +916,21 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         limit: SONG_PAGE_SIZE,
         query: nextQuery,
         filters: nextFilters,
+        sort: nextSort,
       });
       if (sequence === searchSequence.current) {
         setView((current) => current === null ? null : { ...current, page });
         setViewQuery(nextQuery);
         setViewFilters(nextFilters);
+        setViewSort(nextSort);
+        saveLibraryColumnSettings({ layout: loadLibraryColumnSettings().layout, sort: nextSort });
       }
     } catch {
       if (sequence === searchSequence.current) {
         setError('unexpected');
         setQuery(viewQuery);
         setFilters(viewFilters);
+        setSort(viewSort);
       }
     } finally {
       if (sequence === searchSequence.current) {
@@ -1001,6 +1015,11 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
               setQuery(nextQuery);
               setFilters(nextFilters);
               void changePage(0, nextQuery, nextFilters);
+            }}
+            sort={sort}
+            onSort={(nextSort) => {
+              setSort(nextSort);
+              void changePage(0, query, filters, nextSort);
             }}
             onCreate={(songIds, songs) => openPlaylistEditor({ kind: 'playlist', parentFolderId: null, revision: libraryVersion, songIds }, '', songs)}
             onAdd={addToPlaylist}

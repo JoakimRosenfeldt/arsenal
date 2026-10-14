@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 
 import { dialog, shell, type BrowserWindow } from 'electron';
 import { ARSENAL_LIBRARY_ID, DEFAULT_SONG_FILTERS, ONGOING_SYNC_REQUEST, readSyncRequest, songMetadataGapCount } from '../shared/dj-library';
+import { sortSongs } from '../shared/library-columns';
 import { DEFAULT_MINIMUM_SONG_LENGTH_SECONDS, type LibrarySettings } from '../shared/preferences';
 import { MUSIC_ORGANIZATION_OPTIONS, readMusicOrganization, type BackupConfiguration, type BackupConnection, type MusicOrganization } from '../shared/library-backup';
 
@@ -1408,11 +1409,12 @@ export class RekordboxLibrary {
       const text = searchTextFor(song);
       return terms.every((term) => text.includes(term));
     });
-    const total = matches.length;
+    const ordered = request.sort && request.sort.length > 0 ? sortSongs(matches, request.sort) : matches;
+    const total = ordered.length;
     const limit = request.limit;
     const lastOffset = Math.floor(Math.max(0, total - 1) / limit) * limit;
     const offset = Math.min(request.offset, lastOffset);
-    const items = matches.slice(offset, offset + limit);
+    const items = ordered.slice(offset, offset + limit);
     return {
       items,
       offset,

@@ -1,3 +1,4 @@
+import type { SongSort } from './library-columns';
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
 import type { SmartPlaylistDefinition } from './smart-playlists';
 import type { BackupConfiguration, BackupConnection } from './library-backup';
@@ -379,6 +380,7 @@ export type SyncActivity = Readonly<{
 export type PageRequest = Readonly<{
   offset: number;
   limit: number;
+  sort?: SongSort;
 }>;
 
 export type SongPage = Readonly<{

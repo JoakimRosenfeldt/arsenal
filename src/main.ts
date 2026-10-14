@@ -46,6 +46,7 @@ import {
   type LibraryMutationResult,
   type SyncMissingFileAction,
 } from './shared/dj-library';
+import { parseSongSort } from './shared/library-columns';
 import { readSmartDefinition } from './shared/smart-playlists';
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
@@ -142,7 +143,10 @@ const readPageRequest = (value: unknown): PageRequest => {
     throw new Error('Invalid page request');
   }
 
-  return { offset, limit };
+  if (value.sort === undefined) return { offset, limit };
+  const sort = parseSongSort(value.sort);
+  if (sort === null) throw new Error('Invalid page request');
+  return sort.length > 0 ? { offset, limit, sort } : { offset, limit };
 };
 
 const readDuplicateMatchMode = (value: unknown): DuplicateMatchMode => {

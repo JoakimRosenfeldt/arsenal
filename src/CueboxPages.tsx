@@ -13,6 +13,18 @@ import { TrackWaveform } from './TrackWaveform';
 import { HelpTooltip } from './HelpTooltip';
 import { PlaylistSuggestions } from './PlaylistSuggestions';
 import { PlaylistIdentity } from './SmartPlaylistEditor';
+import {
+  DEFAULT_LIBRARY_COLUMN_LAYOUT,
+  LIBRARY_COLUMNS,
+  loadLibraryColumnSettings,
+  ratingStars,
+  saveLibraryColumnSettings,
+  toggleSongSort,
+  type LibraryColumn,
+  type LibraryColumnKey,
+  type LibraryColumnLayout,
+  type SongSort,
+} from './shared/library-columns';
 import { recommendedKeepSongIdFor } from './shared/duplicate-selection';
 import { KEEP_DUPLICATES_IN_PLAYLISTS_KEY } from './shared/preferences';
 import {
@@ -93,40 +105,118 @@ const totalTime = (songs: readonly SongRow[]): string => {
   return `${minutes} min ${String(seconds % 60).padStart(2, '0')} sec`;
 };
 
-const trackColumns = [
-  { key: 'bpm', label: 'BPM', width: 64 },
-  { key: 'key', label: 'KEY', width: 60 },
-  { key: 'time', label: 'Time', width: 66 },
-  { key: 'genre', label: 'Genre', width: 130 },
-  { key: 'album', label: 'Album', width: 146 },
-] as const;
-type TrackColumn = typeof trackColumns[number]['key'];
-const defaultColumns = (): ReadonlySet<TrackColumn> => new Set(trackColumns.map((column) => column.key));
-const trackGrid = (columns: ReadonlySet<TrackColumn>): string =>
-  `20px 28px minmax(180px, 1fr) ${trackColumns.filter((column) => columns.has(column.key)).map((column) => `${column.width}px`).join(' ')} 24px`;
-const TrackFacts = ({ song, columns }: Readonly<{ song: SongRow; columns: ReadonlySet<TrackColumn> }>): JSX.Element => <>
-  {columns.has('bpm') && <span className="numeric" role="cell">{formatBpm(song.bpm)}</span>}
-  {columns.has('key') && <span className="numeric" role="cell">{song.musicalKey ?? '—'}</span>}
-  {columns.has('time') && <span className="numeric" role="cell">{formatDuration(song.durationSeconds)}</span>}
-  {columns.has('genre') && <span className="truncate" role="cell">{song.genre ?? '—'}</span>}
-  {columns.has('album') && <span className="truncate" role="cell">{song.album ?? '—'}</span>}
+const columnByKey = new Map(LIBRARY_COLUMNS.map((column) => [column.key, column]));
+const visibleColumns = (layout: LibraryColumnLayout): LibraryColumn[] =>
+  layout.order.filter((key) => layout.visible.includes(key))
+    .flatMap((key) => columnByKey.get(key) ?? []);
+const trackGrid = (columns: readonly LibraryColumn[]): string =>
+  `20px 28px ${columns.map((column) => column.key === 'title' ? 'minmax(180px, 1fr)' : `${column.width}px`).join(' ')} 24px`;
+
+const useLibraryColumnLayout = (): readonly [LibraryColumnLayout, (layout: LibraryColumnLayout) => void] => {
+  const [layout, setLayoutState] = useState(() => loadLibraryColumnSettings().layout);
+  const setLayout = (next: LibraryColumnLayout): void => {
+    setLayoutState(next);
+    saveLibraryColumnSettings({ layout: next, sort: loadLibraryColumnSettings().sort });
+  };
+  return [layout, setLayout] as const;
+};
+
+const formatRating = (rating: number | null): string => {
+  const stars = ratingStars(rating);
+  return stars === null ? '—' : `${'★'.repeat(stars)}${'☆'.repeat(5 - stars)}`;
+};
+const formatDateAdded = (dateAdded: string | null): string =>
+  dateAdded === null ? '—' : dateAdded.slice(0, 10);
+
+const TrackCells = ({ song, columns }: Readonly<{ song: SongRow; columns: readonly LibraryColumn[] }>): JSX.Element => <>
+  {columns.map((column) => {
+    switch (column.key) {
+      case 'title': return <span className="track-identity" role="cell" key={column.key}><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>;
+      case 'bpm': return <span className="numeric" role="cell" key={column.key}>{formatBpm(song.bpm)}</span>;
+      case 'key': return <span className="numeric" role="cell" key={column.key}>{song.musicalKey ?? '—'}</span>;
+      case 'time': return <span className="numeric" role="cell" key={column.key}>{formatDuration(song.durationSeconds)}</span>;
+      case 'genre': return <span className="truncate" role="cell" key={column.key}>{song.genre ?? '—'}</span>;
+      case 'album': return <span className="truncate" role="cell" key={column.key}>{song.album ?? '—'}</span>;
+      case 'artist': return <span className="truncate" role="cell" key={column.key}>{song.artist ?? '—'}</span>;
+      case 'label': return <span className="truncate" role="cell" key={column.key}>{song.label ?? '—'}</span>;
+      case 'year': return <span className="numeric" role="cell" key={column.key}>{song.year ?? '—'}</span>;
+      case 'rating': return <span className="numeric" role="cell" key={column.key}>{formatRating(song.rating)}</span>;
+      case 'plays': return <span className="numeric" role="cell" key={column.key}>{song.playCount ?? '—'}</span>;
+      case 'dateAdded': return <span className="numeric" role="cell" key={column.key}>{formatDateAdded(song.dateAdded)}</span>;
+      case 'cues': return <span className="truncate" role="cell" key={column.key}>{formatCues(song)}</span>;
+      case 'source': return <span className="truncate" role="cell" key={column.key}>{SONG_SOURCE_LABELS[song.source]}</span>;
+    }
+  })}
 </>;
-const ColumnControl = ({ columns, onChange }: Readonly<{
-  columns: ReadonlySet<TrackColumn>; onChange: (columns: ReadonlySet<TrackColumn>) => void;
-}>): JSX.Element => (
-  <details className="focused-popover">
-    <summary className="quiet-button"><UiIcon name="columns" size={16} /> Columns</summary>
-    <div className="focused-popover-panel">
-      {trackColumns.map((column) => <label key={column.key}>
-        <input type="checkbox" checked={columns.has(column.key)} onChange={(event) => {
-          const next = new Set(columns);
-          if (event.currentTarget.checked) next.add(column.key); else next.delete(column.key);
-          onChange(next);
-        }} />{column.label}
-      </label>)}
-    </div>
-  </details>
-);
+
+const ColumnHeaders = ({ columns, sort, onSort }: Readonly<{
+  columns: readonly LibraryColumn[];
+  sort?: SongSort;
+  onSort?: (column: LibraryColumnKey, secondary: boolean) => void;
+}>): JSX.Element => <>
+  {columns.map((column) => {
+    const sortIndex = sort?.findIndex((entry) => entry.column === column.key) ?? -1;
+    const entry = sortIndex >= 0 ? sort?.[sortIndex] : undefined;
+    return <span role="columnheader" key={column.key}
+      aria-sort={entry ? (entry.direction === 'asc' ? 'ascending' : 'descending') : undefined}>
+      {onSort ? <button type="button" className="column-sort-button"
+        title={`Sort by ${column.label}. Shift-click adds a second sort.`}
+        onClick={(event) => onSort(column.key, event.shiftKey)}>
+        {column.label}{entry && <span className="column-sort-indicator">{entry.direction === 'asc' ? '↑' : '↓'}{(sort?.length ?? 0) > 1 && <sup>{sortIndex + 1}</sup>}</span>}
+      </button> : column.label}
+    </span>;
+  })}
+</>;
+
+const sortSummary = (sort: SongSort): string =>
+  sort.map((entry, index) => `${index === 0 ? 'Sorted by' : 'then'} ${columnByKey.get(entry.column)?.label ?? entry.column} ${entry.direction === 'asc' ? '↑' : '↓'}`).join(', ');
+
+const ColumnControl = ({ layout, onChange, sort, onClearSort }: Readonly<{
+  layout: LibraryColumnLayout;
+  onChange: (layout: LibraryColumnLayout) => void;
+  sort?: SongSort;
+  onClearSort?: () => void;
+}>): JSX.Element => {
+  const move = (key: LibraryColumnKey, delta: -1 | 1): void => {
+    const order = [...layout.order];
+    const index = order.indexOf(key);
+    const target = index + delta;
+    if (index < 0 || target < 0 || target >= order.length) return;
+    [order[index], order[target]] = [order[target] as LibraryColumnKey, order[index] as LibraryColumnKey];
+    onChange({ ...layout, order });
+  };
+  return (
+    <details className="focused-popover">
+      <summary className="quiet-button"><UiIcon name="columns" size={16} /> Columns</summary>
+      <div className="focused-popover-panel column-panel">
+        {layout.order.flatMap((key) => columnByKey.get(key) ?? []).map((column, index) => (
+          <div className="column-panel-row" key={column.key}>
+            <label>
+              <input type="checkbox" checked={layout.visible.includes(column.key)}
+                disabled={column.key === 'title'}
+                onChange={(event) => onChange({
+                  ...layout,
+                  visible: event.currentTarget.checked
+                    ? [...layout.visible, column.key]
+                    : layout.visible.filter((key) => key !== column.key),
+                })} />{column.label}
+            </label>
+            <span className="column-panel-move">
+              <button type="button" aria-label={`Move ${column.label} column left`} disabled={index === 0} onClick={() => move(column.key, -1)}>↑</button>
+              <button type="button" aria-label={`Move ${column.label} column right`} disabled={index === layout.order.length - 1} onClick={() => move(column.key, 1)}>↓</button>
+            </span>
+          </div>
+        ))}
+        {sort !== undefined && sort.length > 0 && <>
+          <p className="column-sort-summary">{sortSummary(sort)}</p>
+          <button type="button" onClick={onClearSort}>Clear sort</button>
+        </>}
+        {sort !== undefined && <p className="column-sort-summary">Click a column header to sort. Shift-click adds a second sort.</p>}
+        <button type="button" onClick={() => onChange(DEFAULT_LIBRARY_COLUMN_LAYOUT)}>Reset columns</button>
+      </div>
+    </details>
+  );
+};
 const TrackNumber = ({ song, index, offset = 0, playback }: Readonly<{
   song: SongRow; index: number; offset?: number; playback: PlaybackController;
 }>): JSX.Element => {
@@ -160,14 +250,18 @@ export const LibraryPage = ({
   onPage,
   onRemove,
   onSearch,
+  onSort,
   playback,
   query,
   searching,
   playlists,
+  sort,
   view,
 }: CommonPageProps &
   Readonly<{
     onPage: (offset: number) => void;
+    onSort: (sort: SongSort) => void;
+    sort: SongSort;
     onCreate: (songIds: readonly string[], songs?: readonly SongRow[]) => void;
     onAdd: (playlist: RekordboxPlaylist, songIds: readonly string[], songs?: readonly SongRow[]) => Promise<boolean>;
     onRemove: RemoveSongs;
@@ -182,7 +276,8 @@ export const LibraryPage = ({
   const [selection, setSelection] = useState<ReadonlyMap<string, SongRow>>(new Map());
   const [action, setAction] = useState<SelectionAction>(null);
   const [menuError, setMenuError] = useState(false);
-  const [columns, setColumns] = useState(defaultColumns);
+  const [layout, setLayout] = useLibraryColumnLayout();
+  const columns = visibleColumns(layout);
   const anchorId = useRef<string | null>(null);
   const inspectorRef = useRef<HTMLElement>(null);
 
@@ -319,7 +414,7 @@ export const LibraryPage = ({
               onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Clear filters</button>}
           </div>
         </details>
-        <ColumnControl columns={columns} onChange={setColumns} />
+        <ColumnControl layout={layout} onChange={setLayout} sort={sort} onClearSort={() => onSort([])} />
         {selectedSongs.length > 0 && action === null && <SelectionActionMenu
           busy={busy || searching} hiddenCount={selection.size - selectedOnPage}
           onAction={setAction} onClear={() => setSelection(new Map())} onCreate={onCreate}
@@ -346,9 +441,11 @@ export const LibraryPage = ({
                 ref={(input) => { if (input) input.indeterminate = selectedOnPage > 0 && !allOnPageSelected; }}
                 onChange={selectPage} disabled={selectionLocked || visibleSongs.length === 0} />
             </span>
-            <span role="columnheader"># ↑</span>
-            <span role="columnheader">Track</span>
-            {trackColumns.filter((column) => columns.has(column.key)).map((column) => <span role="columnheader" key={column.key}>{column.label}</span>)}
+            <span role="columnheader">
+              <button type="button" className="column-sort-button" title="Default order" onClick={() => onSort([])}>#{sort.length === 0 && ' ↑'}</button>
+            </span>
+            <ColumnHeaders columns={columns} sort={sort}
+              onSort={(column, secondary) => onSort(toggleSongSort(sort, column, secondary))} />
             <span role="columnheader"><span className="visually-hidden">Actions</span></span>
           </div>
           <div className="track-table-body" role="rowgroup" aria-busy={busy || searching}>
@@ -398,11 +495,7 @@ export const LibraryPage = ({
                         onChange={(event) => selectSong(song, true, event.nativeEvent instanceof MouseEvent && event.nativeEvent.shiftKey)} />
                     </span>
                     <span role="cell"><TrackNumber song={song} index={index} offset={view.page.offset} playback={playback} /></span>
-                    <span className="track-identity" role="cell">
-                      <strong>{song.title}</strong>
-                      <small>{song.artist ?? 'Unknown artist'}</small>
-                    </span>
-                    <TrackFacts song={song} columns={columns} />
+                    <TrackCells song={song} columns={columns} />
                     <span role="cell">
                       <button className="track-menu-button" type="button" aria-label={`Actions for ${song.title}`} aria-haspopup="menu"
                         disabled={selectionLocked}
@@ -1136,7 +1229,8 @@ export const PlaylistsPage = ({
   const [adding, setAdding] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const [columns, setColumns] = useState(defaultColumns);
+  const [layout, setLayout] = useLibraryColumnLayout();
+  const columns = visibleColumns(layout);
   const [filters, setFilters] = useState<SongFilters>(DEFAULT_SONG_FILTERS);
   const draggedSongId = useRef<string | null>(null);
   const picking = creating || adding;
@@ -1272,7 +1366,7 @@ export const PlaylistsPage = ({
                     <button className="quiet-button" type="button" onClick={() => setFilters(DEFAULT_SONG_FILTERS)}>Clear filters</button>
                   </div>
                 </details>
-                <ColumnControl columns={columns} onChange={setColumns} />
+                <ColumnControl layout={layout} onChange={setLayout} />
               </>}
               {!picking && selectedSongs.size > 0 && selectionAction === null && <SelectionActionMenu
                 busy={busy} hiddenCount={selectedSongs.size - selectedOnPage}
@@ -1300,8 +1394,8 @@ export const PlaylistsPage = ({
                     for (const song of selectableTracks) { if (allSelected) next.delete(song.id); else next.set(song.id, song); }
                     setChosenSongs(next);
                   }} />}</span>
-                <span role="columnheader">#{picking ? ' ↑' : ''}</span><span role="columnheader">Track</span>
-                {trackColumns.filter((column) => columns.has(column.key)).map((column) => <span role="columnheader" key={column.key}>{column.label}</span>)}
+                <span role="columnheader">#{picking ? ' ↑' : ''}</span>
+                <ColumnHeaders columns={columns} />
                 <span role="columnheader"><span className="visually-hidden">Actions</span></span>
               </div>
               <div className="track-table-body" role="rowgroup">
@@ -1327,8 +1421,7 @@ export const PlaylistsPage = ({
                           setSelectedSongs(next);
                         }} />}</span>
                     <span role="cell"><TrackNumber song={song} index={trackIndex} offset={picking ? results?.offset ?? 0 : 0} playback={playback} /></span>
-                    <span className="track-identity" role="cell"><strong>{song.title}</strong><small>{song.artist ?? 'Unknown artist'}</small></span>
-                    <TrackFacts song={song} columns={columns} />
+                    <TrackCells song={song} columns={columns} />
                     <span role="cell">{!picking && <details className="focused-popover focused-row-menu"><summary className="track-menu-button" aria-label={`Actions for ${song.title}`}>⋯</summary>
                       <div className="focused-popover-panel">
                         <button type="button" disabled={song.audioUrl === null} onClick={() => playback.play(song)}>{playing ? 'Pause' : 'Play'}</button>
