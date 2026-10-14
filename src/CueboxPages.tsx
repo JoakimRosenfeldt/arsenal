@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type FormEvent,
   type JSX,
 } from 'react';
@@ -177,17 +178,23 @@ const ColumnControl = ({ layout, onChange }: Readonly<{
   layout: LibraryColumnLayout;
   onChange: (layout: LibraryColumnLayout) => void;
 }>): JSX.Element => {
-  const draggedColumn = useRef<LibraryColumnKey | null>(null);
-  const dropOn = (target: LibraryColumnKey): void => {
-    const dragged = draggedColumn.current;
-    draggedColumn.current = null;
-    if (dragged === null || dragged === target) return;
-    const order = [...layout.order];
-    const from = order.indexOf(dragged);
-    const to = order.indexOf(target);
-    if (from < 0 || to < 0) return;
-    order.splice(from, 1);
-    order.splice(to, 0, dragged);
+  const [dragged, setDragged] = useState<LibraryColumnKey | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ key: LibraryColumnKey; after: boolean } | null>(null);
+  // Insertion index in layout.order for the pointer over a row, or null when the drop would not change the order.
+  const insertionIndex = (event: DragEvent<HTMLElement>, target: LibraryColumnKey): number | null => {
+    if (dragged === null) return null;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const index = layout.order.indexOf(target) + (event.clientY > rect.top + rect.height / 2 ? 1 : 0);
+    const from = layout.order.indexOf(dragged);
+    return index === from || index === from + 1 ? null : index;
+  };
+  const endDrag = (): void => { setDragged(null); setDropTarget(null); };
+  const dropOn = (event: DragEvent<HTMLElement>, target: LibraryColumnKey): void => {
+    const index = insertionIndex(event, target);
+    endDrag();
+    if (dragged === null || index === null) return;
+    const order = layout.order.filter((key) => key !== dragged);
+    order.splice(index > layout.order.indexOf(dragged) ? index - 1 : index, 0, dragged);
     onChange({ ...layout, order });
   };
   return (
@@ -195,15 +202,26 @@ const ColumnControl = ({ layout, onChange }: Readonly<{
       <summary className="quiet-button"><UiIcon name="columns" size={16} /> Columns</summary>
       <div className="focused-popover-panel column-panel">
         {layout.order.flatMap((key) => columnByKey.get(key) ?? []).map((column) => (
-          <div className="column-panel-row" key={column.key} draggable
+          <div key={column.key} draggable
+            className={['column-panel-row', dragged === column.key && 'is-dragging',
+              dropTarget?.key === column.key && (dropTarget.after ? 'drop-after' : 'drop-before')].filter(Boolean).join(' ')}
             onDragStart={(event) => {
-              draggedColumn.current = column.key;
+              setDragged(column.key);
               event.dataTransfer.effectAllowed = 'move';
               event.dataTransfer.setData('text/plain', column.key);
             }}
-            onDragEnd={() => { draggedColumn.current = null; }}
-            onDragOver={(event) => event.preventDefault()}
-            onDrop={(event) => { event.preventDefault(); dropOn(column.key); }}>
+            onDragEnd={endDrag}
+            onDragOver={(event) => {
+              event.preventDefault();
+              const index = insertionIndex(event, column.key);
+              const after = index !== layout.order.indexOf(column.key);
+              setDropTarget((current) => index === null ? null
+                : current?.key === column.key && current.after === after ? current : { key: column.key, after });
+            }}
+            onDragLeave={(event) => {
+              if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setDropTarget(null);
+            }}
+            onDrop={(event) => { event.preventDefault(); dropOn(event, column.key); }}>
             <span className="column-drag-handle" aria-hidden><UiIcon name="grip" size={14} /></span>
             <label>
               <input type="checkbox" checked={layout.visible.includes(column.key)}
