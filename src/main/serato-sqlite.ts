@@ -393,7 +393,7 @@ export const repairSeratoSqliteMissingFiles = async (
   const prepared: { missingPath: string; replacement: string | null; portableId: string | null; missingKey: string; replacementKey: string | null }[] = [];
   for (const repair of repairs) {
     await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
-    const replacement = repair.replacementPath === null ? null : await resolveSeratoMediaPath(repair.replacementPath);
+    const replacement = repair.replacementPath === null || options.mode === 'reorganize' ? repair.replacementPath : await resolveSeratoMediaPath(repair.replacementPath);
     prepared.push({ ...repair, replacement, portableId: replacement === null ? null : portablePath(rootPath, replacement),
       missingKey: options.mode === 'reorganize' ? normalizePath(repair.missingPath) : await seratoMediaPathKey(repair.missingPath),
       replacementKey: replacement === null ? null : await seratoMediaPathKey(replacement) });

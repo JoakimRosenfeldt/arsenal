@@ -244,7 +244,7 @@ export const repairSeratoLegacyMissingFiles = async (
   const existingKeys = new Set(await Promise.all(native.library.tracks.filter((track) => options.mode !== 'reorganize' || !sourcePaths.has(normalizePath(track.path))).map((track) => seratoMediaPathKey(track.path))));
   for (const repair of repairs) {
     await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
-    const replacement = repair.replacementPath === null ? null : await resolveSeratoMediaPath(repair.replacementPath);
+    const replacement = repair.replacementPath === null || options.mode === 'reorganize' ? repair.replacementPath : await resolveSeratoMediaPath(repair.replacementPath);
     if (replacement !== null && existingKeys.has(await seratoMediaPathKey(replacement))) {
       throw new Error('The selected audio file already has an entry in this Serato library. Remove the missing entry or choose another audio file.');
     }

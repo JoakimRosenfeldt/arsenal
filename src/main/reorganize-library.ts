@@ -59,7 +59,8 @@ export const planLibraryOrganization = async (
   portableRoots: readonly string[] = [], validateDestination: (from: string, to: string) => Promise<void> = async () => undefined,
   progress: (completed: number, total: number) => void = () => undefined,
 ): Promise<OrganizationPlan> => {
-  const root = await canonicalOrganizationPath(resolve(request.destinationRoot));
+  const root = resolve(request.destinationRoot);
+  const canonicalRoot = await canonicalOrganizationPath(root);
   const bundleRoots = await Promise.all(portableRoots.map(canonicalOrganizationPath));
   const cloud = new Set(cloudPaths.map(normalizePath));
   const entries: LibraryOrganizationEntry[] = [];
@@ -74,7 +75,7 @@ export const planLibraryOrganization = async (
     let available: boolean;
     try {
       const info = await stat(directory);
-      available = info.isDirectory() && (inside(root, await canonicalOrganizationPath(directory)) || inside(await canonicalOrganizationPath(directory), root));
+      available = info.isDirectory() && (inside(canonicalRoot, await canonicalOrganizationPath(directory)) || inside(await canonicalOrganizationPath(directory), canonicalRoot));
     } catch (error) {
       if (!missing(error)) throw error;
       available = directory !== dirname(directory) && await directoryAvailable(dirname(directory));
@@ -101,11 +102,12 @@ export const planLibraryOrganization = async (
     if (!isSupportedAudioPath(from)) { skip('Unsupported audio format'); continue; }
     try {
       await organizationFileStamp(from);
-      from = await resolveSeratoMediaPath(from);
+      from = resolve(from);
       const key = await seratoMediaPathKey(from);
       if (sources.has(key)) { skip('Shares audio with another library entry; relocated together if that entry moves'); continue; }
       sources.add(key);
-      if (bundleRoots.some((root) => inside(root, from))) { skip('Inside a portable library bundle'); continue; }
+      const canonicalSource = await canonicalOrganizationPath(from);
+      if (bundleRoots.some((root) => inside(root, canonicalSource))) { skip('Inside a portable library bundle'); continue; }
       stamps.set(from, await organizationFileStamp(from));
     } catch (error) {
       skip(missing(error) ? 'Missing on disk' : error instanceof Error ? error.message : 'Could not read audio file'); continue;
@@ -134,21 +136,25 @@ export const planLibraryOrganization = async (
     let stem = name.normalize('NFC').replace(/[<>:"/\\|?*]|\p{Cc}/gu, '_').trim().replace(/[. ]+$/g, '') || 'Unknown Title';
     while (Buffer.byteLength(stem) > 200) stem = [...stem].slice(0, -1).join('');
     if (/^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\.|$)/i.test(stem)) stem = `_${stem}`;
-    const directory = await canonicalOrganizationPath(join(root, ...folders));
-    if (!inside(root, directory) || !await directoryAvailable(directory)) { skip('Destination is not a directory or leaves the chosen root'); continue; }
+    const directory = join(root, ...folders);
+    const canonicalDirectory = await canonicalOrganizationPath(directory);
+    if (!inside(canonicalRoot, canonicalDirectory) || !await directoryAvailable(directory)) { skip('Destination is not a directory or leaves the chosen root'); continue; }
     let to = join(directory, `${stem}${extension}`);
     const canonicalSource = await canonicalOrganizationPath(from);
     const sourceKey = await seratoMediaPathKey(from);
     const ownDestination = async (path: string): Promise<boolean> => {
       const key = await seratoMediaPathKey(path);
       return key === sourceKey && !(await lstat(path)).isSymbolicLink() ||
-        key.startsWith('path:') && portableKey(canonicalSource) === portableKey(path);
+        key.startsWith('path:') && portableKey(canonicalSource) === portableKey(join(canonicalDirectory, basename(path)));
     };
     let suffix = 2;
     while (await occupied(to) && !await ownDestination(to)) to = join(directory, `${stem} (${suffix++})${extension}`);
-    if (process.platform === 'win32' && Math.max(to.length, join(directory, `.arsenal-${randomUUID()}.tmp`).length) > 259) { skip('Destination path exceeds the Windows 259-character limit'); continue; }
-    if (canonicalSource.normalize('NFC') === to.normalize('NFC') ||
-        await ownDestination(to) && (portableKey(canonicalSource) !== portableKey(to) || (await readdir(directory)).includes(basename(to)))) {
+    const temporaryName = `.arsenal-${randomUUID()}.tmp`;
+    if (process.platform === 'win32' && Math.max(to.length, join(directory, `${temporaryName}.copy`).length,
+      join(dirname(from), `${temporaryName}.undo`).length) > 259) { skip('Destination path exceeds the Windows 259-character limit'); continue; }
+    const canonicalDestination = join(canonicalDirectory, basename(to));
+    if (canonicalSource.normalize('NFC') === canonicalDestination.normalize('NFC') ||
+        await ownDestination(to) && (portableKey(canonicalSource) !== portableKey(canonicalDestination) || (await readdir(directory)).includes(basename(to)))) {
       skip('Already in place'); continue;
     }
     try { await validateDestination(from, to); } catch (error) {
