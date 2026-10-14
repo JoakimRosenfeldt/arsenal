@@ -1280,7 +1280,7 @@ export class RekordboxLibrary {
       if ((await readLibrarySource(exactSource)).fingerprint !== incoming.fingerprint) throw new Error('The portable library changed before import. Try again.');
       const manifest = await readPortableLibrary(manifestPath);
       const resolved = await resolvePortableLibrary(manifest, manifestPath, connection.portableSource.searchRoots,
-        join(dirname(connection.path), 'media', connection.id));
+        join(dirname(connection.path), 'media', connection.id), connection.portableSource.resolvedPaths);
       if ((await readLibrarySource(exactSource)).fingerprint !== incoming.fingerprint) throw new Error('The portable library changed during import. Try again.');
       const previous = await readFile(connection.path, 'utf8');
       if (createHash('sha256').update(previous).digest('hex') !== parsed.fingerprint) throw new Error('The local library changed during import. Try again.');
@@ -2037,12 +2037,13 @@ export class RekordboxLibrary {
     for (const target of targets) {
       if (target.kind === 'rekordbox-database') {
         const native = await readRekordboxDatabase(target.path, { performance: false });
-        libraries.push({ target, nativePaths: native.library.tracks.map((track) => track.location ?? track.path), cloudLocalPaths: native.cloudLocalPaths });
+        libraries.push({ target, nativePaths: native.library.tracks.map((track) => track.location ?? track.path), duplicatePaths: [], cloudLocalPaths: native.cloudLocalPaths });
       } else {
+        const source = target.kind === 'xml' ? null : await seratoOrganizationSource(target);
         const nativePaths = target.kind === 'xml'
           ? rekordboxSyncLibrary(await parseRekordboxXml(target.path), { includeNonLocal: true }).tracks.map((track) => track.location ?? track.path)
-          : (await seratoOrganizationSource(target)).paths;
-        libraries.push({ target, nativePaths, cloudLocalPaths: [] });
+          : source?.paths ?? [];
+        libraries.push({ target, nativePaths, duplicatePaths: source?.duplicatePaths ?? [], cloudLocalPaths: [] });
       }
       this.organizationProgress(owner, 'validating', libraries.length, targets.length);
     }
@@ -2070,14 +2071,17 @@ export class RekordboxLibrary {
         await Promise.all(paths.slice(offset, offset + 32).map(async (path) => { keys.set(path, await seratoMediaPathKey(await resolveSeratoMediaPath(path))); }));
         this.organizationProgress(owner, 'validating', Math.min(offset + 32, paths.length), paths.length);
       }
-      const seratoTargets = targets.libraries.flatMap(({ target, nativePaths }) => target.kind === 'sqlite' || target.kind === 'legacy'
-        ? [{ target, keys: new Set(nativePaths.map((path) => keys.get(path))) }] : []);
+      const seratoTargets = targets.libraries.flatMap(({ target, nativePaths, duplicatePaths }) => target.kind === 'sqlite' || target.kind === 'legacy'
+        ? [{ target, keys: new Set(nativePaths.map((path) => keys.get(path))), duplicateKeys: new Set(duplicatePaths.map((path) => keys.get(path))) }] : []);
       const plan = await planLibraryOrganization(this.arsenalLibrary, request, referencedPaths, targets.libraries.flatMap((target) => target.cloudLocalPaths),
         [...targets.portable.flatMap(({ path, manifest }) => manifest.tracks.flatMap((track) =>
           track.media.kind === 'local' && track.media.relativePath !== null ? [join(dirname(path), track.media.relativePath)] : [])),
           ...this.backups.filter((backup) => backup.includeMusic).flatMap((backup) => ['Music', 'media'].map((name) => join(backup.directory, name)))], async (from, to) => {
           const key = await seratoMediaPathKey(from);
-          for (const source of seratoTargets) if (source.keys.has(key)) validateSeratoOrganizationDestination(source.target, to);
+          for (const source of seratoTargets) if (source.keys.has(key)) {
+            if (source.duplicateKeys.has(key)) throw new Error('Multiple Serato SQLite assets share this audio file; keep their current paths');
+            validateSeratoOrganizationDestination(source.target, to);
+          }
         }, (completed, total) => this.organizationProgress(owner, 'validating', completed, total));
       const destinations = new Map<string, string>();
       const moves = plan.preview.entries.filter((entry) => entry.kind === 'move');
@@ -2091,6 +2095,7 @@ export class RekordboxLibrary {
         if (destination !== undefined) replacements.set(normalizePath(path), destination);
       }
       for (const entry of plan.preview.entries) if (entry.kind === 'move') replacements.set(normalizePath(entry.from), entry.to);
+      readLibraryModel(relocatedLibrary(this.arsenalLibrary, replacements));
       if (await this.organizationTargetState(targets) !== targetState) throw new Error('A connected library changed during preview. Preview again.');
       this.organizationPlan = { revision: catalog.revision, plan, targets, replacements, targetState };
       return plan.preview;

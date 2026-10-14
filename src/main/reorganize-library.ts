@@ -103,7 +103,7 @@ export const planLibraryOrganization = async (
       await organizationFileStamp(from);
       from = await resolveSeratoMediaPath(from);
       const key = await seratoMediaPathKey(from);
-      if (sources.has(key)) continue;
+      if (sources.has(key)) { skip('Shares audio with another library entry; relocated together if that entry moves'); continue; }
       sources.add(key);
       if (bundleRoots.some((root) => inside(root, from))) { skip('Inside a portable library bundle'); continue; }
       stamps.set(from, await organizationFileStamp(from));
@@ -289,12 +289,15 @@ export const moveMusicFile = async (from: string, to: string, temporary = join(d
 };
 
 export const relocatedLibrary = (library: SyncLibrary, replacements: ReadonlyMap<string, string>): SyncLibrary => {
+  const destinations = library.tracks.map((track) => replacements.get(normalizePath(track.location ?? track.path)) ?? track.location ?? track.path);
+  const counts = new Map<string, number>();
+  for (const destination of destinations) counts.set(normalizePath(destination), (counts.get(normalizePath(destination)) ?? 0) + 1);
   const paths = new Map<string, string>();
   const tracks = library.tracks.map((track) => {
     const replacement = replacements.get(normalizePath(track.location ?? track.path));
-    const path = replacement !== undefined && track.location === undefined ? replacement : track.path;
+    const path = replacement !== undefined && track.location === undefined && counts.get(normalizePath(replacement)) === 1 ? replacement : track.path;
     paths.set(track.path, path);
-    return replacement === undefined ? track : { ...track, path, ...(track.location === undefined ? {} : { location: replacement }) };
+    return replacement === undefined ? track : { ...track, path, ...(path === replacement && track.location === undefined ? {} : { location: replacement }) };
   });
   return { tracks, playlists: library.playlists.map((playlist) => ({ ...playlist, trackPaths: playlist.trackPaths.map((path) => paths.get(path) ?? path) })) };
 };

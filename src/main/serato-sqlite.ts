@@ -343,7 +343,15 @@ export const seratoSqliteOrganizationSource = async (rootPath: string) => {
     const { spaceId } = anchors(db);
     const paths = db.prepare(`SELECT a.* FROM asset a JOIN space_asset sa ON sa.asset_id = a.id WHERE sa.space_id = ?`).all(spaceId)
       .map((row) => assetPath(rootPath, row));
-    return { paths: [...new Set(paths)], files: [rootPath, `${rootPath}-wal`] };
+    const counts = new Map<string, number>();
+    const allPaths = db.prepare('SELECT * FROM asset').all().map((row) => assetPath(rootPath, row));
+    for (const path of allPaths) {
+      const key = await seratoMediaPathKey(path);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    const duplicatePaths: string[] = [];
+    for (const path of paths) if ((counts.get(await seratoMediaPathKey(path)) ?? 0) > 1) duplicatePaths.push(path);
+    return { paths: [...new Set(paths)], duplicatePaths, files: [rootPath, `${rootPath}-wal`] };
   } finally { db.close(); }
 };
 
@@ -415,7 +423,7 @@ export const repairSeratoSqliteMissingFiles = async (
       const targets = targetsByKey.get(repair.missingKey) ?? [];
       if (repair.replacementKey !== null && assetKeys.has(repair.replacementKey)) throw new Error('The selected audio file already has an entry in this Serato library. Remove the missing entry or choose another audio file.');
       if (!targets.length) throw new Error('The missing track is no longer in this Serato collection. Scan the library again.');
-      if (options.mode !== 'reorganize' && targets.length > 1 && repair.portableId !== null) throw new Error('This missing location has duplicate Serato entries. Remove the missing entries before importing the relocated file.');
+      if (targets.length > 1 && repair.portableId !== null) throw new Error('This missing location has duplicate Serato entries. Remove the missing entries before importing the relocated file.');
       return { ...repair, targets };
     });
     const validate = async () => {

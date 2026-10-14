@@ -220,7 +220,7 @@ export const seratoLegacyOrganizationSource = async (directory: string) => {
     const value = getText(parseRecords(record.data, file.path), file === native.database ? 'pfil' : 'ptrk');
     return value === null ? [] : [absoluteMediaPath(value, native.root)];
   }));
-  return { paths: [...new Set(paths)], files: files.map((file) => file.path) };
+  return { paths: [...new Set(paths)], duplicatePaths: [], files: files.map((file) => file.path) };
 };
 
 export const validateSeratoLegacyDestination = (directory: string, path: string): void => { relativeMediaPath(path, volumeRoot(directory)); };
@@ -239,7 +239,8 @@ export const repairSeratoLegacyMissingFiles = async (
   await assertClosed();
   const native = await readNativeLibrary(directory, false, options.mode === 'reorganize');
   const replacements = new Map<string, string | null>();
-  const sourcePaths = new Set(repairs.map((repair) => normalizePath(repair.missingPath)));
+  const sourcePaths = new Set(repairs.flatMap((repair) => [normalizePath(repair.missingPath),
+    ...(options.mode === 'reorganize' && repair.replacementPath !== null ? [normalizePath(repair.replacementPath)] : [])]));
   const existingKeys = new Set(await Promise.all(native.library.tracks.filter((track) => options.mode !== 'reorganize' || !sourcePaths.has(normalizePath(track.path))).map((track) => seratoMediaPathKey(track.path))));
   for (const repair of repairs) {
     await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
