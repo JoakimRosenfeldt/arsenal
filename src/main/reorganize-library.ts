@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmod, link, lstat, mkdir, open, readdir, realpath, rename, rmdir, stat, unlink, utimes } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
@@ -223,25 +223,35 @@ const syncOrganizationFile = async (path: string): Promise<void> => {
 
 type MusicInstallOptions = Readonly<{
   onCopy?: (sha256: string) => Promise<void>;
-  onDestination?: (stamp: string) => Promise<void>;
+  onDestination?: (stamp: string, installed: boolean) => Promise<void>;
 }>;
 
 export const copyMusicFile = async (from: string, to: string, options: MusicInstallOptions = {}): Promise<void> => {
   const info = await stat(from);
   const originalStamp = await organizationFileStamp(from);
-  const original = await fingerprint(from);
-  await options.onCopy?.(original.sha256);
+  const hash = createHash('sha256');
   const file = await open(to, 'wx');
   try {
-    await options.onDestination?.(await organizationFileStamp(to));
+    await options.onDestination?.(await organizationFileStamp(to), false);
     const source = await open(from, 'r');
-    try { await file.writeFile(source.createReadStream()); } finally { await source.close(); }
+    try {
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      for (;;) {
+        const { bytesRead } = await source.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        const bytes = buffer.subarray(0, bytesRead);
+        hash.update(bytes);
+        await file.writeFile(bytes);
+      }
+    } finally { await source.close(); }
   } finally { await file.close(); }
+  const sha256 = hash.digest('hex');
   const copied = await fingerprint(to);
-  if (copied.sha256 !== original.sha256 || copied.sizeBytes !== original.sizeBytes ||
+  if (copied.sha256 !== sha256 || copied.sizeBytes !== info.size ||
       await organizationFileStamp(from) !== originalStamp) throw new Error(`Copy verification failed: ${from}`);
   await chmod(to, info.mode & 0o777).catch(() => undefined);
   await utimes(to, info.atime, info.mtime).catch(() => undefined);
+  await options.onCopy?.(sha256);
 };
 
 export const installMusicFile = async (from: string, to: string, options: MusicInstallOptions = {}): Promise<void> => {
@@ -251,7 +261,7 @@ export const installMusicFile = async (from: string, to: string, options: MusicI
   }
   await syncOrganizationFile(to);
   await syncOrganizationDirectory(dirname(to));
-  await options.onDestination?.(await organizationFileStamp(to));
+  await options.onDestination?.(await organizationFileStamp(to), true);
 };
 
 export const unlinkMusicFile = async (path: string): Promise<void> => {
@@ -274,7 +284,7 @@ export const moveMusicFile = async (from: string, to: string, temporary = join(d
     await syncOrganizationDirectory(dirname(temporary));
     try { await installMusicFile(temporary, to, options); } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST') || !await sameOrganizationFile(temporary, to)) throw error;
-      await options.onDestination?.(await organizationFileStamp(to));
+      await options.onDestination?.(await organizationFileStamp(to), true);
     }
     await unlinkMusicFile(temporary);
     return;

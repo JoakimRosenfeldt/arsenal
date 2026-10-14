@@ -1202,7 +1202,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onError={reportError} onClose={() => setExportPlaylistId(null)} />
       )}
       {playlistWindow === undefined && !loading && startupPreview !== null && (
-        <LibraryChangesDialog preview={startupPreview} busy={busy} onResolve={resolveStartupChanges} />
+        <LibraryChangesDialog preview={startupPreview} busy={busy} onResolve={resolveStartupChanges} onDismiss={() => setStartupPreview(null)} />
       )}
     </div>
   );

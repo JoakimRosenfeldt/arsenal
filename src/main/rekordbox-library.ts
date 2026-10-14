@@ -83,7 +83,7 @@ import { readRekordboxDatabase, repairRekordboxDatabaseFiles } from './rekordbox
 import { removeSongBackups } from './serato-tag-io';
 import { assertRekordboxClosed, detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
-import { appendOrganizationJournal, readOrganizationJournal, organizationMoveState, prepareOrganizationRecovery, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
+import { appendOrganizationJournal, clearIncompleteOrganizationDestination, readOrganizationJournal, organizationMoveState, prepareOrganizationRecovery, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
 import { createOrganizationDirectory, sameOrganizationFile, organizationFileStamp, installMusicFile, unlinkMusicFile, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
 import { saveRepairedLibraryFiles, type LibraryFileBackup, type LibraryFilesRepairResult } from './repair-library-files';
 
@@ -737,11 +737,10 @@ export class RekordboxLibrary {
           this.arsenalLibrary = await loadArsenalLibrary(this.arsenalPath) ?? this.arsenalLibrary;
         } else {
           await prepareOrganizationRecovery(journal);
-          const targets = await this.organizationTargets(owner);
-          await this.assertOrganizationClosed(targets);
           const present = new Set<string>();
           for (const move of journal.moves) await organizationMoveState(move);
           for (const move of journal.moves) {
+            await clearIncompleteOrganizationDestination(move);
             const state = await organizationMoveState(move);
             if (state.to) present.add(move.to);
             else if (!state.from && state.temporary) {
@@ -749,11 +748,13 @@ export class RekordboxLibrary {
               await rm(join(dirname(move.from), `${basename(move.temporary)}.undo`), { force: true });
               await installMusicFile(move.temporary, move.from, {
                 onCopy: async (sha256) => { move.sha256 = sha256; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
-                onDestination: async (stamp) => { move.rollbackStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
+                onDestination: async (stamp, installed) => { move.rollbackInstalled = installed; move.rollbackStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
               });
             }
           }
           for (const [from, to] of journal.replacements ?? journal.moves.map((move) => [normalizePath(move.from), move.to] as const)) if (present.has(to)) replacements.set(from, to);
+          const targets = await this.organizationTargets(owner, journal, replacements);
+          await this.assertOrganizationClosed(targets);
           warnings.push(...await this.relinkOrganization(owner, targets, replacements, journal));
           for (const move of journal.moves) {
             let state = await organizationMoveState(move);
@@ -761,7 +762,7 @@ export class RekordboxLibrary {
               if (await sameOrganizationFile(move.from, move.to)) {
                 await moveMusicFile(move.from, move.to, move.temporary, {
                   onCopy: async (sha256) => { move.sha256 = sha256; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
-                  onDestination: async (stamp) => { move.destinationStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
+                  onDestination: async (stamp, installed) => { move.installed = installed; move.destinationStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
                 });
                 state = await organizationMoveState(move);
               } else await unlinkMusicFile(move.from);
@@ -774,7 +775,7 @@ export class RekordboxLibrary {
             await rm(join(dirname(move.from), `${basename(move.temporary)}.undo`), { force: true });
           }
         }
-        await this.finishOrganization(replacements);
+        warnings.push(...await this.finishOrganization(replacements, journal.acceptedConnections ?? []));
       } catch (error) { throw new Error(this.organizationError(error)); }
       await rm(this.organizationJournalPath);
       this.organizationRecovery = null;
@@ -787,6 +788,7 @@ export class RekordboxLibrary {
     if (this.organizationRecovery !== null) return Promise.reject(new Error('Undo or keep the unfinished reorganization first.'));
     this.startupCheck ??= this.importStartupChanges(owner, action).then((result) => {
       this.startupComplete = true;
+      this.startupWarnings = [];
       this.startupSources.clear();
       this.requestPendingRekordboxSync();
       return result;
@@ -930,7 +932,7 @@ export class RekordboxLibrary {
       workspaceFingerprint: (await parseRekordboxXml(connection.path)).fingerprint };
   }
 
-  private async acknowledgeWrites(ids: readonly string[], acceptPending = false, requireReadable = false): Promise<void> {
+  private async acknowledgeWrites(ids: readonly string[], acceptPending = false): Promise<void> {
     const changed = new Set(ids);
     let updated = false;
     const connections: StoredLibraryConnection[] = [];
@@ -942,8 +944,7 @@ export class RekordboxLibrary {
       try {
         connections.push(await this.acceptedSource(connection, await readLibrarySource(connection)));
         updated = true;
-      } catch (error) {
-        if (requireReadable) throw error;
+      } catch {
         connections.push(connection);
       }
     }
@@ -2023,34 +2024,55 @@ export class RekordboxLibrary {
     return JSON.stringify(states);
   }
 
-  private async organizationTargets(owner: BrowserWindow) {
-    const targets = (await this.connectedSyncTargets()).filter((target) => normalizePath(target.path) !== normalizePath(this.arsenalWorkspace));
+  private async organizationTargets(owner: BrowserWindow, journal?: OrganizationJournal, replacements?: ReadonlyMap<string, string>) {
+    const required = new Set((journal?.targets?.filter((target) => replacements === undefined || target.paths.some((path) => replacements.has(normalizePath(path)))).map((target) => target.path)
+      ?? journal?.restores.map((restore) => restore.path) ?? []).map(normalizePath));
+    const targets = (await this.connectedSyncTargets()).filter((target) => normalizePath(target.path) !== normalizePath(this.arsenalWorkspace) &&
+      (journal?.targets === undefined || required.has(normalizePath(target.path))));
     const portablePaths = new Set<string>();
+    const acceptedConnections: string[] = [];
     for (const connection of this.connectedLibraries) {
-      if (!connection.portableSource) continue;
-      const source = await readLibrarySource(connection);
-      portablePaths.add(source.portableManifestPath ?? connection.portableSource.manifestPath);
+      if (connection.origin === 'arsenal') continue;
+      const manifestPath = connection.portableSource?.manifestPath;
+      if (journal !== undefined && (manifestPath === undefined || journal.targets !== undefined && !required.has(normalizePath(manifestPath)))) continue;
+      try {
+        const source = await readLibrarySource({ ...connection, ...(journal === undefined ? {} : { followLatest: false }) });
+        if (source.fingerprint === connection.sourceFingerprint && !this.startupChanges.has(connection.id)) acceptedConnections.push(connection.id);
+        if (manifestPath !== undefined) portablePaths.add(source.portableManifestPath ?? manifestPath);
+      } catch (error) {
+        if (manifestPath !== undefined && (journal === undefined || required.has(normalizePath(manifestPath)))) throw error;
+        this.startupUnreadable.add(connection.id);
+      }
     }
-    const targetState = await this.organizationTargetState({ libraries: targets.map((target) => ({ target })),
-      portable: [...portablePaths].map((path) => ({ path })) }, (completed, total) => this.organizationProgress(owner, 'validating', completed, total));
+    const targetState = journal === undefined ? await this.organizationTargetState({ libraries: targets.map((target) => ({ target })),
+      portable: [...portablePaths].map((path) => ({ path })) }, (completed, total) => this.organizationProgress(owner, 'validating', completed, total)) : null;
     const libraries = [];
     for (const target of targets) {
-      if (target.kind === 'rekordbox-database') {
-        const native = await readRekordboxDatabase(target.path, { performance: false });
-        libraries.push({ target, nativePaths: native.library.tracks.map((track) => track.location ?? track.path), duplicatePaths: [], cloudLocalPaths: native.cloudLocalPaths });
-      } else {
-        const source = target.kind === 'xml' ? null : await seratoOrganizationSource(target);
-        const nativePaths = target.kind === 'xml'
-          ? rekordboxSyncLibrary(await parseRekordboxXml(target.path), { includeNonLocal: true }).tracks.map((track) => track.location ?? track.path)
-          : source?.paths ?? [];
-        libraries.push({ target, nativePaths, duplicatePaths: source?.duplicatePaths ?? [], cloudLocalPaths: [] });
+      try {
+        if (target.kind === 'rekordbox-database') {
+          const native = await readRekordboxDatabase(target.path, { performance: false });
+          libraries.push({ target, nativePaths: native.library.tracks.map((track) => track.location ?? track.path), duplicatePaths: [], cloudLocalPaths: native.cloudLocalPaths });
+        } else {
+          const source = target.kind === 'xml' ? null : await seratoOrganizationSource(target);
+          const nativePaths = target.kind === 'xml'
+            ? rekordboxSyncLibrary(await parseRekordboxXml(target.path), { includeNonLocal: true }).tracks.map((track) => track.location ?? track.path)
+            : source?.paths ?? [];
+          libraries.push({ target, nativePaths, duplicatePaths: source?.duplicatePaths ?? [], cloudLocalPaths: [] });
+        }
+      } catch (error) {
+        if (journal === undefined || required.has(normalizePath(target.path))) throw error;
       }
       this.organizationProgress(owner, 'validating', libraries.length, targets.length);
     }
     const portable = [];
-    for (const path of portablePaths) portable.push({ path, manifest: await readPortableLibrary(path), before: await readFile(path) });
-    if (await this.organizationTargetState({ libraries, portable }) !== targetState) throw new Error('A connected library changed while reading its paths. Preview again.');
-    return { libraries, portable, targetState };
+    for (const path of portablePaths) {
+      try { portable.push({ path, manifest: await readPortableLibrary(path), before: await readFile(path) }); } catch (error) {
+        if (journal === undefined || required.has(normalizePath(path))) throw error;
+      }
+    }
+    const currentState = await this.organizationTargetState({ libraries, portable });
+    if (targetState !== null && currentState !== targetState) throw new Error('A connected library changed while reading its paths. Preview again.');
+    return { libraries, portable, targetState: currentState, acceptedConnections };
   }
 
   previewOrganization(request: LibraryOrganizationRequest, owner: BrowserWindow): Promise<LibraryOrganizationPreview> {
@@ -2176,25 +2198,37 @@ export class RekordboxLibrary {
     return warnings;
   }
 
-  private async finishOrganization(replacements: ReadonlyMap<string, string>): Promise<void> {
+  private async finishOrganization(replacements: ReadonlyMap<string, string>, acceptedConnections: readonly string[]): Promise<string[]> {
     this.missingSyncContext = null;
     this.cancelSuggestions();
     await this.writeArsenalProjection();
     this.catalog = await this.catalogFor(this.arsenalWorkspace, null, this.arsenalProjection);
+    const warnings: string[] = [];
+    const connections: StoredLibraryConnection[] = [];
     for (const connection of this.connectedLibraries) {
-      if (!connection.portableSource) continue;
-      const portableSource = { ...connection.portableSource,
-        resolvedPaths: (connection.portableSource.resolvedPaths ?? []).map((path) => replacements.get(normalizePath(path)) ?? path) };
-      const updated = await this.acceptedSource({ ...connection, portableSource }, await readLibrarySource({ ...connection, portableSource }));
-      this.connectedLibraries = this.connectedLibraries.map((candidate) => candidate.id === connection.id ? updated : candidate);
+      if (connection.origin === 'arsenal') { connections.push(connection); continue; }
+      let updated = connection.portableSource === undefined ? connection : { ...connection, portableSource: { ...connection.portableSource,
+        resolvedPaths: (connection.portableSource.resolvedPaths ?? []).map((path) => replacements.get(normalizePath(path)) ?? path) } };
+      try {
+        const source = await readLibrarySource(updated);
+        if (acceptedConnections.includes(connection.id)) {
+          updated = await this.acceptedSource(updated, source);
+          this.startupChanges.delete(connection.id);
+          this.startupSources.delete(connection.id);
+        } else if (source.fingerprint !== connection.sourceFingerprint) {
+          this.startupChanges.add(connection.id);
+          this.startupSources.set(connection.id, source);
+        }
+        this.startupUnreadable.delete(connection.id);
+      } catch (error) {
+        this.startupUnreadable.add(connection.id);
+        warnings.push(`${connection.displayName ?? basename(connection.path)}: ${error instanceof Error ? error.message : 'Could not check this connection.'}`);
+      }
+      connections.push(updated);
     }
-    await this.acknowledgeWrites(this.connectedLibraries.map((connection) => connection.id), true, true);
-    for (const connection of this.connectedLibraries) {
-      this.startupChanges.delete(connection.id);
-      this.startupUnreadable.delete(connection.id);
-      this.startupSources.delete(connection.id);
-    }
+    this.connectedLibraries = connections;
     if (!await this.remember(this.rememberedPath)) throw new Error('Could not save connection settings. Keep the journal and retry recovery.');
+    return warnings;
   }
 
   applyOrganization(owner: BrowserWindow, id: string): Promise<LibraryOrganizationResult> {
@@ -2219,7 +2253,9 @@ export class RekordboxLibrary {
       if (!moves.length) return { movedCount: 0, backupPaths: [], warnings: [] };
       const journal: OrganizationJournal = { moves: moves.map((move) => ({ from: move.from, to: move.to,
         temporary: join(dirname(move.to), `.arsenal-${randomUUID()}.tmp`), sha256: null, stamp: plan.stamps.get(move.from) ?? null,
-        destinationStamp: null, rollbackStamp: null, completed: false })), restores: [], createdDirectories: [], replacements: [...replacements] };
+        destinationStamp: null, rollbackStamp: null, completed: false })), restores: [], createdDirectories: [], replacements: [...replacements], acceptedConnections: targets.acceptedConnections,
+        targets: [...targets.libraries.map(({ target, nativePaths }) => ({ path: target.path, paths: nativePaths.filter((path) => replacements.has(normalizePath(path))) })),
+          ...targets.portable.map(({ path, manifest }) => ({ path, paths: manifest.tracks.flatMap((track) => track.media.kind === 'local' && replacements.has(normalizePath(track.media.originalPath)) ? [track.media.originalPath] : []) }))] };
       await writeOrganizationJournal(this.organizationJournalPath, journal);
       this.organizationRecovery = journal;
       const warnings: string[] = [];
@@ -2235,7 +2271,7 @@ export class RekordboxLibrary {
           await validateOrganizationPlan({ ...plan, preview: { ...plan.preview, entries: [move] } });
           await moveMusicFile(move.from, move.to, record.temporary, {
             onCopy: async (sha256) => { record.sha256 = sha256; await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] }); },
-            onDestination: async (stamp) => { record.destinationStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] }); },
+            onDestination: async (stamp, installed) => { record.installed = installed; record.destinationStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] }); },
           });
           record.destinationStamp = await organizationFileStamp(move.to);
           record.completed = true;
@@ -2250,7 +2286,7 @@ export class RekordboxLibrary {
         try {
           warnings.push(...await undoOrganization(journal, (completed, total) => progress('rolling-back', completed, total), (move) => appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] })));
           this.arsenalLibrary = originalLibrary;
-          await this.finishOrganization(new Map(moves.map((move) => [normalizePath(move.to), move.from])));
+          warnings.push(...await this.finishOrganization(new Map(moves.map((move) => [normalizePath(move.to), move.from])), journal.acceptedConnections ?? []));
           await rm(this.organizationJournalPath);
           this.organizationRecovery = null;
         } catch (recoveryError) {
@@ -2263,7 +2299,7 @@ export class RekordboxLibrary {
         }
         throw new Error(`${message} Moved files and connected libraries were restored. ${warnings.join(' ')}`.trim());
       }
-      await this.finishOrganization(replacements);
+      warnings.push(...await this.finishOrganization(replacements, journal.acceptedConnections ?? []));
       await rm(this.organizationJournalPath);
       this.organizationRecovery = null;
       return { movedCount: moves.length, backupPaths: journal.restores.map((restore) => restore.backupPath), warnings };
