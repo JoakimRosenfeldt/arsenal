@@ -143,12 +143,15 @@ const exactStamp = async (path: string, exact: boolean): Promise<string | null> 
   }
 };
 
-const sameInode = (left: string | null, right: string | null): boolean =>
-  left !== null && right !== null && left.split(':').slice(0, 2).join(':') === right.split(':').slice(0, 2).join(':');
+const sameFileStamp = (left: string | null, right: string | null): boolean => {
+  if (left === null || right === null) return false;
+  const [device, inode] = left.split(':');
+  return left === right || device !== '0' && inode !== '0' && left.split(':').slice(0, 2).join(':') === right.split(':').slice(0, 2).join(':');
+};
 
 export const organizationMoveState = async (move: OrganizationJournal['moves'][number]) => {
   const matches = async (path: string, stamp: string | null): Promise<boolean> => stamp !== null &&
-    (sameInode(stamp, move.stamp) || move.rollbackInstalled && sameInode(stamp, move.rollbackStamp) ||
+    (sameFileStamp(stamp, move.stamp) || move.rollbackInstalled && sameFileStamp(stamp, move.rollbackStamp) ||
       move.sha256 !== null && (await fingerprint(path)).sha256 === move.sha256);
   const caseOnly = (await canonicalOrganizationPath(move.from)).normalize('NFC').toLowerCase() ===
     (await canonicalOrganizationPath(move.to)).normalize('NFC').toLowerCase();
@@ -156,14 +159,21 @@ export const organizationMoveState = async (move: OrganizationJournal['moves'][n
   const toStamp = await exactStamp(move.to, caseOnly);
   const temporaryStamp = await exactStamp(move.temporary, false);
   const from = move.stamp === null && move.sha256 === null ? fromStamp !== null : await matches(move.from, fromStamp);
-  const to = toStamp !== null && (move.installed ?? move.completed) && sameInode(toStamp, move.destinationStamp) ||
+  const to = toStamp !== null && (move.installed ?? move.completed) && sameFileStamp(toStamp, move.destinationStamp) ||
     await matches(move.to, toStamp) || toStamp !== null && move.sha256 !== null && fromStamp === null && temporaryStamp === null;
   const alias = to && fromStamp === null && await sameOrganizationFile(move.from, move.to);
   const temporary = await matches(move.temporary, temporaryStamp);
-  if (fromStamp !== null && !from && !sameInode(fromStamp, move.rollbackStamp)) throw new Error(`The original audio changed: ${move.from}`);
-  const destinationOwned = to || sameInode(toStamp, move.destinationStamp) && (from || temporary);
+  if (fromStamp !== null && !from && !sameFileStamp(fromStamp, move.rollbackStamp)) throw new Error(`The original audio changed: ${move.from}`);
+  const destinationOwned = to || sameFileStamp(toStamp, move.destinationStamp) && (from || temporary);
   if (toStamp !== null && !destinationOwned) throw new Error(`The destination changed: ${move.to}`);
   if (!from && !to && !temporary && (move.stamp !== null || move.sha256 !== null)) throw new Error(`The audio is unavailable: ${move.from}, ${move.to}`);
+  const copies = [from ? move.from : null, to ? move.to : null, temporary ? move.temporary : null].filter((path) => path !== null);
+  const first = copies[0];
+  if (first !== undefined) for (const path of copies.slice(1)) {
+    if (!await sameOrganizationFile(first, path) && (await fingerprint(first)).sha256 !== (await fingerprint(path)).sha256) {
+      throw new Error(`The audio copies differ. Kept both files unchanged: ${first}, ${path}`);
+    }
+  }
   return { from, to, temporary, alias, destinationOwned, fromStamp, toStamp, temporaryStamp };
 };
 

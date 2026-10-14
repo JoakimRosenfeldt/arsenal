@@ -27,7 +27,8 @@ export const canonicalOrganizationPath = async (path: string): Promise<string> =
 export const sameOrganizationFile = async (left: string, right: string): Promise<boolean> => {
   try {
     const [a, b] = await Promise.all([stat(left, { bigint: true }), stat(right, { bigint: true })]);
-    return a.dev === b.dev && a.ino === b.ino;
+    return a.dev !== 0n && a.ino !== 0n && b.dev !== 0n && b.ino !== 0n ? a.dev === b.dev && a.ino === b.ino
+      : (await canonicalOrganizationPath(left)).normalize('NFC') === (await canonicalOrganizationPath(right)).normalize('NFC');
   } catch (error) { if (missing(error)) return false; throw error; }
 };
 

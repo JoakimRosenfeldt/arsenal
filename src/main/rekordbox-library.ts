@@ -1611,7 +1611,8 @@ export class RekordboxLibrary {
       }));
       for (const [index, track] of tracks.entries()) {
         const file = files[index];
-        if (file) fileKeys.set(track.song.id, `file:${file.dev}:${file.ino}`);
+        if (file && track.mediaPath !== null) fileKeys.set(track.song.id, file.dev !== 0n && file.ino !== 0n
+          ? `file:${file.dev}:${file.ino}` : `path:${normalizePath(await resolveSeratoMediaPath(track.mediaPath))}`);
       }
       const localFile = cloudMatcher(tracks.flatMap((track, index) => track.mediaPath !== null && files[index]
         ? [{ name: basename(track.mediaPath), length: track.song.durationSeconds, value: fileKeys.get(track.song.id) ?? '' }] : []), false);

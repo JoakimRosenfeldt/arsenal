@@ -386,7 +386,7 @@ export const writeRekordboxDatabase = async (
         result = (async () => {
           try {
             const file = await stat(path, { bigint: true });
-            if (file.isFile() && file.ino !== 0n) return `file:${file.dev}:${file.ino}`;
+            if (file.isFile() && file.dev !== 0n && file.ino !== 0n) return `file:${file.dev}:${file.ino}`;
           } catch (error) {
             if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
           }
