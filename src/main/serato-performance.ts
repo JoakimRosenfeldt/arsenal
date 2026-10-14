@@ -10,11 +10,10 @@ export const readSeratoPerformance = async (path: string): Promise<SyncPerforman
 export const writeSeratoPerformance = async (
   path: string, performance: SyncPerformance, fields: Pick<SyncFields, 'hotCues' | 'loops'>,
   song?: SongRow,
-): Promise<string | null> => {
+): Promise<boolean> => {
   const tags = await readSeratoTags(path);
   const updates = fields.hotCues || fields.loops
     ? encodeSeratoPerformance(tags, performance, fields, extname(path).toLowerCase() !== '.flac') : new Map<string, Buffer>();
-  if (updates.size === 0 && !song) return null;
-  const result = await writeSeratoTags(path, updates, song);
-  return result.backupPaths[0] ?? null;
+  if (updates.size === 0 && !song) return false;
+  return writeSeratoTags(path, updates, song);
 };

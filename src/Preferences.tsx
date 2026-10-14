@@ -18,6 +18,7 @@ export const Preferences = ({ onCancel, onError }: Readonly<{
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<readonly string[]>([]);
+  const [cleanup, setCleanup] = useState<string | null>(null);
   const keyRevision = useRef(0);
 
   useEffect(() => {
@@ -88,6 +89,19 @@ export const Preferences = ({ onCancel, onError }: Readonly<{
     else setErrors(failures);
   };
 
+  const cleanUpBackups = async (): Promise<void> => {
+    setCleanup('Cleaning up…');
+    try {
+      const { fileCount, bytes } = await window.preferences.cleanUpSongBackups();
+      setCleanup(fileCount === 0 ? 'No backups found.'
+        : `Removed ${fileCount} backup${fileCount === 1 ? '' : 's'}, freed ${(bytes / 1_000_000).toFixed(1)} MB.`);
+    } catch {
+      setCleanup(null);
+      if (onError) onError('Could not clean up song backups.');
+      else setErrors(['Could not clean up song backups.']);
+    }
+  };
+
   const keyStatus = removeKey
     ? 'Key will be removed on save.'
     : settings === null
@@ -128,6 +142,15 @@ export const Preferences = ({ onCancel, onError }: Readonly<{
             <input id="keep-duplicates-in-playlists" type="checkbox" checked={keepDuplicates}
               aria-describedby="keep-duplicates-in-playlists-help"
               onChange={(event) => setKeepDuplicates(event.currentTarget.checked)} />
+          </div>
+          <div className="preferences-setting-row">
+            <div className="preferences-explanation">
+              <label htmlFor="clean-up-song-backups">Song backups</label>
+              <p id="clean-up-song-backups-help" aria-live="polite">{cleanup ?? 'Delete backup copies older versions of Arsenal left next to your songs.'}</p>
+            </div>
+            <button id="clean-up-song-backups" className="preferences-secondary-button" type="button"
+              aria-describedby="clean-up-song-backups-help" disabled={cleanup === 'Cleaning up…'}
+              onClick={() => void cleanUpBackups()}>Clean up</button>
           </div>
         </section>
         <section className="preferences-section" aria-labelledby="ai-preferences-title">

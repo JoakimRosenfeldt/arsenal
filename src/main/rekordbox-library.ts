@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { dialog, shell, type BrowserWindow } from 'electron';
 import { ARSENAL_LIBRARY_ID, DEFAULT_SONG_FILTERS, ONGOING_SYNC_REQUEST, readSyncRequest, songMetadataGapCount } from '../shared/dj-library';
 import { sortSongs } from '../shared/library-columns';
-import { DEFAULT_MINIMUM_SONG_LENGTH_SECONDS, type LibrarySettings } from '../shared/preferences';
+import { DEFAULT_MINIMUM_SONG_LENGTH_SECONDS, type LibrarySettings, type SongBackupCleanup } from '../shared/preferences';
 import { MUSIC_ORGANIZATION_OPTIONS, readMusicOrganization, type BackupConfiguration, type BackupConnection, type MusicOrganization } from '../shared/library-backup';
 
 import type {
@@ -75,6 +75,7 @@ import { preparePrimaryLibraryEdit } from './apply-primary-library-edit';
 import { loadArsenalLibrary, mergeArsenalLibrary, saveArsenalLibrary } from './arsenal-library';
 import { describeLibraryChanges, portableLibraryPreview } from './library-changes';
 import { readRekordboxDatabase, repairRekordboxDatabaseFiles } from './rekordbox-database';
+import { removeSongBackups } from './serato-tag-io';
 import { detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
 type CatalogTrack = ParsedTrack;
@@ -1476,6 +1477,11 @@ export class RekordboxLibrary {
   cancelSuggestions(): void {
     this.suggestionController?.abort();
     this.suggestionController = null;
+  }
+
+  cleanUpSongBackups(): Promise<SongBackupCleanup> {
+    return this.enqueue(() => removeSongBackups(this.arsenalLibrary.tracks.flatMap((track) =>
+      [track.path, track.location ?? track.path].filter(isAbsolute))), false);
   }
 
   async findDuplicates(mode: DuplicateMatchMode): Promise<DuplicateScan> {
