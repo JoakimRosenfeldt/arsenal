@@ -540,7 +540,7 @@ export type LibraryOrganizationRequest = Readonly<{
 }>;
 export type LibraryOrganizationEntry =
   | Readonly<{ kind: 'move'; from: string; to: string; collision: boolean }>
-  | Readonly<{ kind: 'skip'; from: string; reason: 'Already in place' | 'Missing on disk' | 'Cloud or streaming track' | 'Conflict or unsupported file' }>;
+  | Readonly<{ kind: 'skip'; from: string; reason: string }>;
 export type LibraryOrganizationPreview = Readonly<{
   id: string;
   destinationRoot: string;
@@ -550,7 +550,7 @@ export type LibraryOrganizationPreview = Readonly<{
   entries: readonly LibraryOrganizationEntry[];
 }>;
 export type LibraryOrganizationProgress = Readonly<{
-  phase: 'moving' | 'relinking' | 'rolling-back';
+  phase: 'validating' | 'moving' | 'relinking' | 'rolling-back';
   completed: number;
   total: number;
 }>;

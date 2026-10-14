@@ -57,7 +57,7 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
 
   const skipped = preview?.entries.filter((entry) => entry.kind === 'skip') ?? [];
   const reasons = [...new Set(skipped.map((entry) => entry.reason))];
-  const phase = progress?.phase === 'moving' ? 'Moving files' : progress?.phase === 'relinking' ? 'Updating libraries' : 'Restoring files and libraries';
+  const phase = progress?.phase === 'validating' ? 'Validating files and libraries' : progress?.phase === 'moving' ? 'Moving files' : progress?.phase === 'relinking' ? 'Updating libraries' : 'Restoring files and libraries';
 
   return <section className="workspace-page reorganize-page" aria-labelledby="reorganize-title" aria-busy={working}>
     <header className="page-heading"><div><h1 id="reorganize-title">Reorganize files</h1>
