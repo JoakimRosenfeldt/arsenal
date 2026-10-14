@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, mkdtemp, open, realpath, rename, rm, stat } from 'node:fs/promises';
+import { copyFile, mkdtemp, open, readdir, realpath, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 
 import {
@@ -20,6 +19,7 @@ import {
 } from 'node-taglib-sharp';
 import type { Id3v2UniqueFileIdentifierFrame, Tag } from 'node-taglib-sharp';
 import type { SongRow } from '../shared/dj-library';
+import type { SongBackupCleanup } from '../shared/preferences';
 
 const wrappedFields = [
   { name: 'Serato Analysis', flac: 'SERATO_ANALYSIS', mp4: 'analysisVersion' },
@@ -225,8 +225,8 @@ export const writeSeratoTags = async (
   filePath: string,
   tags: ReadonlyMap<string, Buffer>,
   song?: SongRow,
-): Promise<Readonly<{ backupPaths: readonly string[] }>> => {
-  if (tags.size === 0 && !song) return { backupPaths: [] };
+): Promise<boolean> => {
+  if (tags.size === 0 && !song) return false;
   tagTypeFor(filePath);
   const target = await realpath(filePath);
   const current = await inspectAudioFile(target);
@@ -238,7 +238,7 @@ export const writeSeratoTags = async (
     if (autotags[0] !== 1 || autotags[1] !== 1 || bpmEnd < 2) throw new Error('Unsupported Serato Autotags data.');
     updates.set('Serato Autotags', Buffer.concat([autotags.subarray(0, 2), Buffer.from(`${song.bpm.toFixed(2)}\0`, 'ascii'), autotags.subarray(bpmEnd + 1)]));
   }
-  if ([...updates].every(([name, data]) => original.get(name)?.equals(data)) && (!song || metadataMatches(current, song))) return { backupPaths: [] };
+  if ([...updates].every(([name, data]) => original.get(name)?.equals(data)) && (!song || metadataMatches(current, song))) return false;
   if (!(await stat(target)).isFile()) throw new Error(`Not an audio file: ${filePath}`);
   // Size, times and inode detect outside edits without hashing the whole audio file.
   const expectedIdentity = await fileIdentity(target);
@@ -254,14 +254,35 @@ export const writeSeratoTags = async (
     if (![...updates].every(([name, data]) => written.tags.get(name)?.equals(data)) || song && !metadataMatches(written, song)) throw new Error(`Could not verify saved audio tags: ${filePath}`);
     const temporaryFile = await open(temporaryPath, 'r+');
     try { await temporaryFile.sync(); } finally { await temporaryFile.close(); }
-    const backupPath = `${target}.arsenal-backup-${Date.now()}-${randomUUID()}`;
-    await copyFile(target, backupPath, copyMode);
     if (await fileIdentity(target) !== expectedIdentity) {
       throw new Error(`Audio file changed while saving: ${filePath}`);
     }
+    // The verified copy replaces the original atomically, so no full audio backup is kept.
     await rename(temporaryPath, target);
-    return { backupPaths: [backupPath] };
+    return true;
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }
+};
+
+// Older versions kept a full copy of the song next to it on every tag write.
+const backupName = /\.arsenal-backup-\d+-[0-9a-f-]{36}$|^\.arsenal-tags-[A-Za-z0-9]{6}$/;
+
+export const removeSongBackups = async (songPaths: Iterable<string>): Promise<SongBackupCleanup> => {
+  let fileCount = 0;
+  let bytes = 0;
+  for (const directory of new Set([...songPaths].map((path) => dirname(path)))) {
+    for (const entry of await readdir(directory, { withFileTypes: true }).catch(() => [])) {
+      if (!backupName.test(entry.name)) continue;
+      const path = join(directory, entry.name);
+      try {
+        const files = entry.isDirectory() ? (await readdir(path, { withFileTypes: true })).filter((file) => file.isFile()).map((file) => join(path, file.name)) : [path];
+        const sizes = await Promise.all(files.map(async (file) => (await stat(file)).size));
+        await rm(path, { recursive: entry.isDirectory() });
+        fileCount += 1;
+        bytes += sizes.reduce((total, size) => total + size, 0);
+      } catch { /* Skip files that disappeared or cannot be removed. */ }
+    }
+  }
+  return { fileCount, bytes };
 };

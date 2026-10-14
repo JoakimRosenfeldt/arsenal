@@ -309,6 +309,15 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     assertTrustedSender(event, owner);
     return library.settings();
   });
+  ipc.handle(PREFERENCES_CHANNELS.cleanUpSongBackups, async (event) => {
+    assertTrustedSender(event, owner);
+    libraryActions += 1;
+    try {
+      return await library.cleanUpSongBackups();
+    } finally {
+      libraryActions -= 1;
+    }
+  });
   ipc.handle(PREFERENCES_CHANNELS.saveMinimumSongLength, async (event, value: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind === 'playlist') throw new Error('Open Preferences to change the minimum song length.');
