@@ -730,6 +730,9 @@ export class RekordboxLibrary {
       if (journal === null) throw new Error('There is no unfinished reorganization.');
       const warnings: string[] = [];
       try {
+        const persisted = await loadArsenalLibrary(this.arsenalPath);
+        if (persisted === null) throw new Error('The saved Arsenal library is unavailable. Keep the journal and retry recovery.');
+        this.arsenalLibrary = persisted;
         const replacements = new Map<string, string>();
         if (action === 'undo-reorganization') {
           warnings.push(...await undoOrganization(journal, undefined, (move) => appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] })));
@@ -737,22 +740,31 @@ export class RekordboxLibrary {
           this.arsenalLibrary = await loadArsenalLibrary(this.arsenalPath) ?? this.arsenalLibrary;
         } else {
           await prepareOrganizationRecovery(journal);
-          const present = new Set<string>();
+          const locations = new Map<string, string>();
           for (const move of journal.moves) await organizationMoveState(move);
           for (const move of journal.moves) {
             await clearIncompleteOrganizationDestination(move);
-            const state = await organizationMoveState(move);
-            if (state.to) present.add(move.to);
-            else if (!state.from && state.temporary) {
+            let state = await organizationMoveState(move);
+            if (!state.to && !state.from && state.temporary) {
               if (state.fromStamp !== null && !await sameOrganizationFile(move.from, move.temporary)) await unlinkMusicFile(move.from);
               await rm(join(dirname(move.from), `${basename(move.temporary)}.undo`), { force: true });
               await installMusicFile(move.temporary, move.from, {
                 onCopy: async (sha256) => { move.sha256 = sha256; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
                 onDestination: async (stamp, installed) => { move.rollbackInstalled = installed; move.rollbackStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
               });
+              state = await organizationMoveState(move);
             }
+            if (!state.to && !state.from) throw new Error(`The audio is unavailable: ${move.from}, ${move.to}`);
+            locations.set(move.to, state.to ? move.to : move.from);
           }
-          for (const [from, to] of journal.replacements ?? journal.moves.map((move) => [normalizePath(move.from), move.to] as const)) if (present.has(to)) replacements.set(from, to);
+          for (const [from, to] of journal.replacements ?? journal.moves.map((move) => [normalizePath(move.from), move.to] as const)) {
+            const location = locations.get(to);
+            if (location !== undefined) replacements.set(from, location);
+          }
+          for (const move of journal.moves) {
+            const location = locations.get(move.to);
+            if (location !== undefined) replacements.set(normalizePath(move.to), location);
+          }
           const targets = await this.organizationTargets(owner, journal, replacements);
           await this.assertOrganizationClosed(targets);
           warnings.push(...await this.relinkOrganization(owner, targets, replacements, journal));
@@ -773,6 +785,13 @@ export class RekordboxLibrary {
             if (state.temporaryStamp !== null) await unlinkMusicFile(move.temporary);
             await rm(`${move.temporary}.copy`, { force: true });
             await rm(join(dirname(move.from), `${basename(move.temporary)}.undo`), { force: true });
+          }
+        }
+        for (const move of journal.moves) {
+          const state = await organizationMoveState(move);
+          const original = action === 'undo-reorganization' || replacements.get(normalizePath(move.to)) === move.from;
+          if (original ? !state.from : !state.to) {
+            throw new Error(`The audio is unavailable at its recovered location: ${move.from}, ${move.to}`);
           }
         }
         warnings.push(...await this.finishOrganization(replacements, journal.acceptedConnections ?? []));
@@ -2162,7 +2181,7 @@ export class RekordboxLibrary {
     for (const { target, nativePaths } of targets.libraries) {
       const repairs = [...new Map(nativePaths.map((path) => [normalizePath(path), path])).values()].flatMap((missingPath) => {
         const replacementPath = replacements.get(normalizePath(missingPath));
-        return replacementPath === undefined ? [] : [{ missingPath, replacementPath }];
+        return replacementPath === undefined || replacementPath === missingPath ? [] : [{ missingPath, replacementPath }];
       });
       if (repairs.length) {
         await assertClosed();
@@ -2211,7 +2230,7 @@ export class RekordboxLibrary {
         resolvedPaths: (connection.portableSource.resolvedPaths ?? []).map((path) => replacements.get(normalizePath(path)) ?? path) } };
       try {
         const source = await readLibrarySource(updated);
-        if (acceptedConnections.includes(connection.id)) {
+        if (acceptedConnections.includes(connection.id) && !this.startupChanges.has(connection.id) && !this.startupUnreadable.has(connection.id)) {
           updated = await this.acceptedSource(updated, source);
           this.startupChanges.delete(connection.id);
           this.startupSources.delete(connection.id);

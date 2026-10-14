@@ -154,8 +154,8 @@ export const organizationMoveState = async (move: OrganizationJournal['moves'][n
   const toStamp = await exactStamp(move.to, caseOnly);
   const temporaryStamp = await exactStamp(move.temporary, false);
   const from = move.stamp === null && move.sha256 === null ? fromStamp !== null : await matches(move.from, fromStamp);
-  const to = await matches(move.to, toStamp) || toStamp !== null &&
-    ((move.installed ?? move.completed) && sameInode(toStamp, move.destinationStamp) || move.sha256 !== null && fromStamp === null && temporaryStamp === null);
+  const to = toStamp !== null && (move.installed ?? move.completed) && sameInode(toStamp, move.destinationStamp) ||
+    await matches(move.to, toStamp) || toStamp !== null && move.sha256 !== null && fromStamp === null && temporaryStamp === null;
   const alias = to && fromStamp === null && await sameOrganizationFile(move.from, move.to);
   const temporary = await matches(move.temporary, temporaryStamp);
   if (fromStamp !== null && !from && !sameInode(fromStamp, move.rollbackStamp)) throw new Error(`The original audio changed: ${move.from}`);
@@ -178,7 +178,7 @@ export const prepareOrganizationRecovery = async (journal: OrganizationJournal):
   if (journal.restores.some((restore) => restore.kind === 'rekordbox-database' || restore.kind === 'xml' && restore.libraryKind !== 'serato')) await assertRekordboxClosed();
   if (journal.restores.some((restore) => restore.kind === 'sqlite' || restore.kind === 'legacy' || restore.kind === 'xml' && restore.libraryKind !== 'rekordbox')) await assertSeratoClosed();
   for (const restore of journal.restores) {
-    if (restore.kind !== 'rekordbox-database' && restore.kind !== 'sqlite') continue;
+    if (restore.kind !== 'sqlite' && (restore.kind !== 'rekordbox-database' || !isRekordboxDatabasePath(restore.path))) continue;
     try { await stat(restore.path); } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
       throw error;

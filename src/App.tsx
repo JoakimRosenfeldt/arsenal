@@ -204,6 +204,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
   const startupCheck = useRef<Promise<LibraryStartupPreview> | null>(null);
   const [startupPreview, setStartupPreview] = useState<LibraryStartupPreview | null>(null);
+  const dismissedOrganizationJournal = useRef<string | null>(null);
   const initialStateLoaded = useRef(false);
   const [startupSyncResult, setStartupSyncResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
@@ -274,7 +275,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     void startupCheck.current.then(async (preview) => {
       if (!active) return;
       if (preview.organizationRecovery || preview.libraries.length > 0) {
-        setStartupPreview(preview);
+        if (preview.organizationRecovery?.journalPath !== dismissedOrganizationJournal.current) setStartupPreview(preview);
         return;
       }
       const startup = await window.djLibrary.resolveStartupChanges('skip');
@@ -438,7 +439,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     const stopChanges = window.djLibrary.onLibraryChanged((status) => {
       setBackgroundLibrary(status);
       if (!playlistWindow) void window.djLibrary.checkStartupChanges().then((preview) => {
-        if (active && preview.organizationRecovery) setStartupPreview(preview);
+        if (active && preview.organizationRecovery && preview.organizationRecovery.journalPath !== dismissedOrganizationJournal.current) setStartupPreview(preview);
       }).catch(() => undefined);
       if (playlistWindow && (status.kind === 'empty' || status.library.revision !== playlistWindow.request.revision)) {
         setError('stale-library');
@@ -577,6 +578,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       let startup = await window.djLibrary.resolveStartupChanges(action);
       let nextPreview: typeof startupPreview = null;
       if (action === 'undo-reorganization' || action === 'keep-reorganization') {
+        dismissedOrganizationJournal.current = null;
         const preview = await window.djLibrary.checkStartupChanges();
         if (preview.organizationRecovery || preview.libraries.length > 0) nextPreview = preview;
         else {
@@ -1202,7 +1204,10 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
         <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onError={reportError} onClose={() => setExportPlaylistId(null)} />
       )}
       {playlistWindow === undefined && !loading && startupPreview !== null && (
-        <LibraryChangesDialog preview={startupPreview} busy={busy} onResolve={resolveStartupChanges} onDismiss={() => setStartupPreview(null)} />
+        <LibraryChangesDialog preview={startupPreview} busy={busy} onResolve={resolveStartupChanges} onDismiss={() => {
+          dismissedOrganizationJournal.current = startupPreview.organizationRecovery?.journalPath ?? null;
+          setStartupPreview(null);
+        }} />
       )}
     </div>
   );
