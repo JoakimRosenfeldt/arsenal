@@ -70,7 +70,6 @@
 .column-panel-move button { width: 24px; height: 24px; padding: 0; color: var(--text-soft); background: transparent; font-size: 12px; cursor: pointer; }
 .column-panel-move button:disabled { opacity: .3; cursor: default; }
 .column-panel-move button:hover:not(:disabled) { color: var(--accent); }
-.column-sort-summary { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .column-sort-button { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 0; color: inherit; background: transparent; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
 .column-sort-button:hover { color: var(--text); }
 .column-sort-indicator { color: var(--accent); white-space: nowrap; }

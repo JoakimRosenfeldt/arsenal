@@ -168,14 +168,9 @@ const ColumnHeaders = ({ columns, sort, onSort }: Readonly<{
   })}
 </>;
 
-const sortSummary = (sort: SongSort): string =>
-  sort.map((entry, index) => `${index === 0 ? 'Sorted by' : 'then'} ${columnByKey.get(entry.column)?.label ?? entry.column} ${entry.direction === 'asc' ? '↑' : '↓'}`).join(', ');
-
-const ColumnControl = ({ layout, onChange, sort, onClearSort }: Readonly<{
+const ColumnControl = ({ layout, onChange }: Readonly<{
   layout: LibraryColumnLayout;
   onChange: (layout: LibraryColumnLayout) => void;
-  sort?: SongSort;
-  onClearSort?: () => void;
 }>): JSX.Element => {
   const move = (key: LibraryColumnKey, delta: -1 | 1): void => {
     const order = [...layout.order];
@@ -207,11 +202,6 @@ const ColumnControl = ({ layout, onChange, sort, onClearSort }: Readonly<{
             </span>
           </div>
         ))}
-        {sort !== undefined && sort.length > 0 && <>
-          <p className="column-sort-summary">{sortSummary(sort)}</p>
-          <button type="button" onClick={onClearSort}>Clear sort</button>
-        </>}
-        {sort !== undefined && <p className="column-sort-summary">Click a column header to sort. Shift-click adds a second sort.</p>}
         <button type="button" onClick={() => onChange(DEFAULT_LIBRARY_COLUMN_LAYOUT)}>Reset columns</button>
       </div>
     </details>
@@ -414,7 +404,7 @@ export const LibraryPage = ({
               onClick={() => onSearch('', DEFAULT_SONG_FILTERS)}>Clear filters</button>}
           </div>
         </details>
-        <ColumnControl layout={layout} onChange={setLayout} sort={sort} onClearSort={() => onSort([])} />
+        <ColumnControl layout={layout} onChange={setLayout} />
         {selectedSongs.length > 0 && action === null && <SelectionActionMenu
           busy={busy || searching} hiddenCount={selection.size - selectedOnPage}
           onAction={setAction} onClear={() => setSelection(new Map())} onCreate={onCreate}
