@@ -7,7 +7,7 @@ import { promisify } from 'node:util';
 import Database from 'better-sqlite3-multiple-ciphers';
 import { app } from 'electron';
 import { SaxesParser } from 'saxes';
-import { restoreLibraryFileBackup } from './repair-library-files';
+import { currentLibraryFileHash, restoreLibraryFileBackup } from './repair-library-files';
 
 export type RekordboxDatabase = Database.Database;
 
@@ -151,14 +151,16 @@ export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: strin
   return backupPaths;
 };
 
-export const restoreRekordboxDatabaseBackup = async (path: string, backupPath: string): Promise<void> => {
+export const restoreRekordboxDatabaseBackup = async (path: string, backupPath: string, expectedHash: string | null = null): Promise<void> => {
   await assertRekordboxClosed();
-  const db = await openRekordboxDatabase(path, { readonly: false });
-  try {
-    const results: unknown = db.pragma('wal_checkpoint(TRUNCATE)');
-    const result: unknown = Array.isArray(results) ? results[0] : null;
-    if (typeof result !== 'object' || result === null || !('busy' in result) || result.busy !== 0) throw new Error('Rekordbox database is busy. Keep its backup for recovery.');
-  } finally { db.close(); }
+  if (await currentLibraryFileHash(path) !== null) {
+    const db = await openRekordboxDatabase(path, { readonly: false });
+    try {
+      const results: unknown = db.pragma('wal_checkpoint(TRUNCATE)');
+      const result: unknown = Array.isArray(results) ? results[0] : null;
+      if (typeof result !== 'object' || result === null || !('busy' in result) || result.busy !== 0) throw new Error('Rekordbox database is busy. Keep its backup for recovery.');
+    } finally { db.close(); }
+  }
   await assertRekordboxClosed();
-  await restoreLibraryFileBackup(path, backupPath);
+  await restoreLibraryFileBackup(path, backupPath, expectedHash);
 };

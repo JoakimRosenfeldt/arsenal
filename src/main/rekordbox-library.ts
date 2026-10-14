@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { homedir } from 'node:os';
 
 import { dialog, shell, type BrowserWindow } from 'electron';
@@ -21,6 +21,7 @@ import type {
   LibraryMutation,
   LibraryMutationResult,
   LibraryStatus,
+  LibraryStartupAction,
   LibraryStartupResult,
   LibraryStartupPreview,
   LibrarySummary,
@@ -65,25 +66,26 @@ import {
   type ArtworkAsset,
   isSupportedAudioPath,
 } from './track-artwork';
-import { assertSeratoClosed, findSeratoSource, moveSeratoNode, readSeratoLibrary, repairSeratoMissingFile, repairSeratoMissingFiles, type SeratoSource } from './serato-library';
+import { assertSeratoClosed, seratoOrganizationFiles, seratoOrganizationSource, validateSeratoOrganizationDestination, findSeratoSource, moveSeratoNode, readSeratoLibrary, repairSeratoMissingFile, repairSeratoMissingFiles, type SeratoSource } from './serato-library';
 import { mergeRekordboxXml, pathFromLocation, rekordboxSyncLibrary, repairRekordboxMissingFiles } from './sync-rekordbox-xml';
 import { cloudMatcher, isCloudPath } from './cloud-tracks';
 import { readSeratoWithPerformance, saveLibraryXml, syncArsenalLibraryToConnection } from './sync-libraries';
 import { normalizePath, type PlaylistNodeMove, type SyncLibrary } from './library-sync-model';
 import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
-import { restoreSeratoSqliteBackup, seratoSqliteVersion } from './serato-sqlite';
+import { seratoSqliteVersion } from './serato-sqlite';
 import { findMissingSyncFiles, searchSyncMissingFiles } from './sync-missing-files';
-import { PORTABLE_LIBRARY_FILENAME, readLibraryModel, readPortableLibrary, readPortableLibraryFingerprint, readPortableLibraryFolder, resolvePortableLibrary, writePortableLibrary } from './portable-library';
+import { PORTABLE_LIBRARY_FILENAME, fingerprint, readLibraryModel, readPortableLibrary, readPortableLibraryFingerprint, readPortableLibraryFolder, resolvePortableLibrary, writePortableLibrary } from './portable-library';
 import { readLibrarySource, type PortableLibrarySource } from './library-source';
 import { preparePrimaryLibraryEdit } from './apply-primary-library-edit';
 import { loadArsenalLibrary, mergeArsenalLibrary, saveArsenalLibrary } from './arsenal-library';
 import { describeLibraryChanges, portableLibraryPreview } from './library-changes';
 import { readRekordboxDatabase, repairRekordboxDatabaseFiles } from './rekordbox-database';
 import { removeSongBackups } from './serato-tag-io';
-import { assertRekordboxClosed, restoreRekordboxDatabaseBackup, detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
+import { assertRekordboxClosed, detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
-import { copyMusicFile, createOrganizationDirectory, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
-import { restoreLibraryFileBackup, saveRepairedLibraryFiles, type LibraryFilesRepairResult } from './repair-library-files';
+import { appendOrganizationJournal, readOrganizationJournal, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
+import { createOrganizationDirectory, inside, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
+import { saveRepairedLibraryFiles, type LibraryFileBackup, type LibraryFilesRepairResult } from './repair-library-files';
 
 type CatalogTrack = ParsedTrack;
 
@@ -505,6 +507,7 @@ export class RekordboxLibrary {
 
   async initialize(stateFilePath: string): Promise<void> {
     this.stateFilePath = stateFilePath;
+    this.organizationRecovery = await readOrganizationJournal(this.organizationJournalPath);
     const directory = join(dirname(stateFilePath), 'libraries');
     await mkdir(directory, { recursive: true });
     this.arsenalPath = join(directory, 'arsenal.json');
@@ -540,7 +543,8 @@ export class RekordboxLibrary {
       }
       await saveArsenalLibrary(this.arsenalPath, this.arsenalLibrary);
     }
-    await this.writeArsenalProjection();
+    if (this.organizationRecovery === null) await this.writeArsenalProjection();
+    else this.arsenalProjection = await parseRekordboxXml(this.arsenalWorkspace);
     this.connectedLibraries = [{ id: ARSENAL_LIBRARY_ID, kind: 'rekordbox', origin: 'arsenal', displayName: 'Arsenal library',
       path: this.arsenalWorkspace, workspacePath: null, dirty: false }, ...this.connectedLibraries];
     this.activeConnectionId = ARSENAL_LIBRARY_ID;
@@ -679,6 +683,8 @@ export class RekordboxLibrary {
   }
 
   checkStartupChanges(): Promise<LibraryStartupPreview> {
+    if (this.organizationRecovery !== null) return Promise.resolve({ libraries: [], syncAfterImport: false, warnings: [],
+      organizationRecovery: { journalPath: this.organizationJournalPath, moveCount: this.organizationRecovery.moves.length } });
     if (this.startupComplete) return Promise.resolve({ libraries: [], syncAfterImport: false, warnings: [] });
     this.startupPreview ??= this.enqueue(async () => {
       const libraries: LibraryStartupPreview['libraries'][number][] = [];
@@ -718,7 +724,22 @@ export class RekordboxLibrary {
     return this.startupPreview;
   }
 
-  resolveStartupChanges(owner: BrowserWindow, action: 'import' | 'skip'): Promise<LibraryStartupResult> {
+  resolveStartupChanges(owner: BrowserWindow, action: LibraryStartupAction): Promise<LibraryStartupResult> {
+    if (action === 'undo-reorganization' || action === 'keep-reorganization') return this.enqueue(async () => {
+      const journal = this.organizationRecovery;
+      if (journal === null) throw new Error('There is no unfinished reorganization.');
+      if (action === 'undo-reorganization') await undoOrganization(journal);
+      this.arsenalLibrary = await loadArsenalLibrary(this.arsenalPath) ?? this.arsenalLibrary;
+      this.arsenalProjection = await parseRekordboxXml(this.arsenalWorkspace);
+      this.catalog = await this.catalogFor(this.arsenalWorkspace, null, this.arsenalProjection);
+      await rm(this.organizationJournalPath);
+      this.organizationRecovery = null;
+      this.startupPreview = null;
+      this.startupSources.clear();
+      return { connections: null, status: this.status(), warnings: [], syncResult: null,
+        message: action === 'undo-reorganization' ? 'Reorganization undone.' : 'Current file locations kept. Library backups remain available.' };
+    }, false).then(async (result) => ({ ...result, connections: await this.connections() }));
+    if (this.organizationRecovery !== null) return Promise.reject(new Error('Undo or keep the unfinished reorganization first.'));
     this.startupCheck ??= this.importStartupChanges(owner, action).then((result) => {
       this.startupComplete = true;
       this.startupSources.clear();
@@ -789,7 +810,7 @@ export class RekordboxLibrary {
           const manifest = await readPortableLibrary(manifestPath);
           if (this.stateFilePath === null) throw new Error('Library settings are not initialized.');
           const resolved = await resolvePortableLibrary(manifest, manifestPath, [],
-            join(dirname(this.stateFilePath), 'libraries', 'media', `backup-${backup.id}`));
+            join(dirname(this.stateFilePath ?? this.arsenalPath), 'libraries', 'media', `backup-${backup.id}`));
           if (await readPortableLibraryFingerprint(manifestPath) !== manifestFingerprint) throw new Error('The library file changed during import. Wait for your cloud app to finish syncing and retry.');
           if (resolved.missingFiles.length) throw new Error('Some music files have not arrived. Wait for the Music folder to finish syncing, or open the library file to locate your music.');
           const existing = new Map(this.arsenalLibrary.tracks.map((track) =>
@@ -999,7 +1020,7 @@ export class RekordboxLibrary {
         const { manifest, manifestPath } = mode === 'folder' ? await readPortableLibraryFolder(selectedPath)
           : { manifest: await readPortableLibrary(selectedPath), manifestPath: selectedPath };
         if (this.stateFilePath === null) throw new Error('Library settings are not initialized.');
-        const directory = join(dirname(this.stateFilePath), 'libraries');
+        const directory = join(dirname(this.stateFilePath ?? this.arsenalPath), 'libraries');
         await mkdir(directory, { recursive: true });
         const connectionId = randomUUID();
         mediaDirectory = join(directory, 'media', connectionId);
@@ -1235,7 +1256,7 @@ export class RekordboxLibrary {
     const incoming = source ?? await readLibrarySource(connection);
     if (incoming.library === null) throw new Error('The Serato library could not be read.');
     if (this.stateFilePath === null) throw new Error('Library settings are not initialized.');
-    const directory = join(dirname(this.stateFilePath), 'libraries');
+    const directory = join(dirname(this.stateFilePath ?? this.arsenalPath), 'libraries');
     await mkdir(directory, { recursive: true });
     const workspacePath = connection.workspacePath ?? join(directory, `serato-${randomUUID()}.xml`);
     let previous: string | null = null;
@@ -1898,7 +1919,15 @@ export class RekordboxLibrary {
     return libraries;
   }
 
-  private organizationPlan: Readonly<{ revision: string; plan: OrganizationPlan; targetState: string }> | null = null;
+  private organizationRecovery: OrganizationJournal | null = null;
+
+  private get organizationJournalPath(): string { return join(dirname(this.stateFilePath ?? this.arsenalPath), 'reorganization-journal.json'); }
+
+  private organizationPlan: Readonly<{
+    revision: string; plan: OrganizationPlan; targetState: string;
+    targets: Awaited<ReturnType<RekordboxLibrary['organizationTargets']>>;
+    replacements: ReadonlyMap<string, string>;
+  }> | null = null;
 
   organizationRoot(): Promise<string> {
     return this.enqueue(async () => defaultOrganizationRoot(this.arsenalLibrary), false);
@@ -1910,40 +1939,108 @@ export class RekordboxLibrary {
     return picked.canceled ? null : picked.filePaths[0] ?? null;
   }
 
-  private async organizationTargets() {
+  private organizationProgress(owner: BrowserWindow, phase: LibraryOrganizationProgress['phase'], completed: number, total: number): void {
+    try {
+      if (!owner.isDestroyed()) owner.webContents.send(DJ_LIBRARY_CHANNELS.organizationProgress, { phase, completed, total } satisfies LibraryOrganizationProgress);
+    } catch { /* Complete recovery even if the window closes. */ }
+  }
+
+  private async organizationTargetState(targets: Readonly<{
+    libraries: readonly Readonly<{ target: MissingSyncTarget }>[]; portable: readonly Readonly<{ path: string }>[];
+  }>,
+    progress: (completed: number, total: number) => void = () => undefined): Promise<string> {
+    const paths: string[] = [];
+    for (const { target } of targets.libraries) {
+      if (target.kind === 'legacy' || target.kind === 'sqlite') paths.push(...await seratoOrganizationFiles(target));
+      else if (target.kind === 'rekordbox-database') paths.push(target.path, `${target.path}-wal`, join(dirname(target.path), 'masterPlaylists6.xml'));
+      else paths.push(target.path);
+    }
+    paths.push(this.arsenalPath, this.arsenalWorkspace, ...targets.portable.map((portable) => portable.path));
+    const states = [];
+    const ordered = [...new Set(paths)].sort();
+    for (let offset = 0; offset < ordered.length; offset += 32) {
+      states.push(...await Promise.all(ordered.slice(offset, offset + 32).map(async (path) => {
+        try {
+          const info = await stat(path, { bigint: true });
+          return [path, String(info.size), String(info.mtimeNs)];
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return [path, 'missing'];
+          throw error;
+        }
+      })));
+      progress(Math.min(offset + 32, ordered.length), ordered.length);
+    }
+    return JSON.stringify(states);
+  }
+
+  private async organizationTargets(owner: BrowserWindow) {
     const targets = (await this.connectedSyncTargets()).filter((target) => normalizePath(target.path) !== normalizePath(this.arsenalWorkspace));
+    const portablePaths = new Set<string>();
+    for (const connection of this.connectedLibraries) {
+      if (!connection.portableSource) continue;
+      const source = await readLibrarySource(connection);
+      portablePaths.add(source.portableManifestPath ?? connection.portableSource.manifestPath);
+    }
+    const targetState = await this.organizationTargetState({ libraries: targets.map((target) => ({ target })),
+      portable: [...portablePaths].map((path) => ({ path })) }, (completed, total) => this.organizationProgress(owner, 'validating', completed, total));
     const libraries = [];
     for (const target of targets) {
       if (target.kind === 'rekordbox-database') {
         const native = await readRekordboxDatabase(target.path, { performance: false });
-        libraries.push({ target, library: native.library, cloudLocalPaths: native.cloudLocalPaths });
+        libraries.push({ target, nativePaths: native.library.tracks.map((track) => track.location ?? track.path), cloudLocalPaths: native.cloudLocalPaths });
       } else {
-        const library = target.kind === 'xml' ? rekordboxSyncLibrary(await parseRekordboxXml(target.path), { includeNonLocal: true }) : await readSeratoLibrary(target);
-        libraries.push({ target, library, cloudLocalPaths: [] });
+        const nativePaths = target.kind === 'xml'
+          ? rekordboxSyncLibrary(await parseRekordboxXml(target.path), { includeNonLocal: true }).tracks.map((track) => track.location ?? track.path)
+          : (await seratoOrganizationSource(target)).paths;
+        libraries.push({ target, nativePaths, cloudLocalPaths: [] });
       }
+      this.organizationProgress(owner, 'validating', libraries.length, targets.length);
     }
     const portable = [];
-    const seen = new Set<string>();
-    for (const connection of this.connectedLibraries) {
-      if (!connection.portableSource) continue;
-      const source = await readLibrarySource(connection);
-      const path = source.portableManifestPath ?? connection.portableSource.manifestPath;
-      if (seen.has(path)) continue;
-      seen.add(path);
-      portable.push({ path, manifest: await readPortableLibrary(path), before: await readFile(path) });
-    }
-    return { libraries, portable };
+    for (const path of portablePaths) portable.push({ path, manifest: await readPortableLibrary(path), before: await readFile(path) });
+    if (await this.organizationTargetState({ libraries, portable }) !== targetState) throw new Error('A connected library changed while reading its paths. Preview again.');
+    return { libraries, portable, targetState };
   }
 
-  previewOrganization(request: LibraryOrganizationRequest): Promise<LibraryOrganizationPreview> {
+  previewOrganization(request: LibraryOrganizationRequest, owner: BrowserWindow): Promise<LibraryOrganizationPreview> {
     return this.enqueue(async () => {
+      if (this.organizationRecovery !== null) throw new Error(`Resolve the unfinished reorganization first. Journal: ${this.organizationJournalPath}`);
       this.organizationPlan = null;
+      this.organizationProgress(owner, 'validating', 0, 1);
       const catalog = this.requireCatalog();
-      const targets = await this.organizationTargets();
-      const reserved = [...this.arsenalLibrary.tracks, ...targets.libraries.flatMap(({ library }) => library.tracks)]
-        .map((track) => track.location ?? track.path);
-      const plan = await planLibraryOrganization(this.arsenalLibrary, request, reserved, targets.libraries.flatMap((target) => target.cloudLocalPaths));
-      this.organizationPlan = { revision: catalog.revision, plan, targetState: JSON.stringify(targets) };
+      const targets = await this.organizationTargets(owner);
+      const { targetState } = targets;
+      const referencedPaths = [...this.arsenalLibrary.tracks.map((track) => track.location ?? track.path),
+        ...targets.libraries.flatMap(({ nativePaths }) => nativePaths),
+        ...targets.portable.flatMap(({ path, manifest }) => manifest.tracks.flatMap((track) => track.media.kind !== 'local' ? []
+          : [track.media.originalPath, ...(track.media.relativePath === null ? [] : [join(dirname(path), track.media.relativePath)])]))];
+      const keys = new Map<string, string>();
+      const paths = [...new Set(referencedPaths)];
+      for (let offset = 0; offset < paths.length; offset += 32) {
+        await Promise.all(paths.slice(offset, offset + 32).map(async (path) => { keys.set(path, await seratoMediaPathKey(await resolveSeratoMediaPath(path))); }));
+        this.organizationProgress(owner, 'validating', Math.min(offset + 32, paths.length), paths.length);
+      }
+      const seratoTargets = targets.libraries.flatMap(({ target, nativePaths }) => target.kind === 'sqlite' || target.kind === 'legacy'
+        ? [{ target, keys: new Set(nativePaths.map((path) => keys.get(path))) }] : []);
+      const plan = await planLibraryOrganization(this.arsenalLibrary, request, referencedPaths, targets.libraries.flatMap((target) => target.cloudLocalPaths),
+        [...targets.portable.map(({ path }) => dirname(path)), ...this.backups.map((backup) => backup.directory)], async (from, to) => {
+          const key = await seratoMediaPathKey(from);
+          for (const source of seratoTargets) if (source.keys.has(key)) validateSeratoOrganizationDestination(source.target, to);
+        }, (completed, total) => this.organizationProgress(owner, 'validating', completed, total));
+      const destinations = new Map<string, string>();
+      const moves = plan.preview.entries.filter((entry) => entry.kind === 'move');
+      for (let offset = 0; offset < moves.length; offset += 32) {
+        await Promise.all(moves.slice(offset, offset + 32).map(async (entry) => { destinations.set(await seratoMediaPathKey(entry.from), entry.to); }));
+        this.organizationProgress(owner, 'validating', Math.min(offset + 32, moves.length), moves.length);
+      }
+      const replacements = new Map<string, string>();
+      for (const [path, key] of keys) {
+        const destination = destinations.get(key);
+        if (destination !== undefined) replacements.set(normalizePath(path), destination);
+      }
+      for (const entry of plan.preview.entries) if (entry.kind === 'move') replacements.set(normalizePath(entry.from), entry.to);
+      if (await this.organizationTargetState(targets) !== targetState) throw new Error('A connected library changed during preview. Preview again.');
+      this.organizationPlan = { revision: catalog.revision, plan, targets, replacements, targetState };
       return plan.preview;
     }, false);
   }
@@ -1955,12 +2052,13 @@ export class RekordboxLibrary {
       if (pending === null || pending.plan.preview.id !== id || pending.revision !== this.requireCatalog().revision) {
         throw new Error('The library changed. Preview the reorganization again.');
       }
-      if (this.pendingRekordboxSync !== null || this.startupChanges.size || this.startupUnreadable.size) {
+      if (this.organizationRecovery !== null || this.pendingRekordboxSync !== null || this.startupChanges.size || this.startupUnreadable.size) {
         throw new Error('Resolve pending library changes in Connections before reorganizing files.');
       }
-      const { plan } = pending;
-      const targets = await this.organizationTargets();
-      if (JSON.stringify(targets) !== pending.targetState) throw new Error('A connected library changed. Preview the reorganization again.');
+      const { plan, targets, replacements } = pending;
+      const progress = (phase: LibraryOrganizationProgress['phase'], completed: number, total: number) => this.organizationProgress(owner, phase, completed, total);
+      progress('validating', 0, 1);
+      if (await this.organizationTargetState(targets, (completed, total) => progress('validating', completed, total)) !== pending.targetState) throw new Error('A connected library changed. Preview the reorganization again.');
       const assertClosed = async () => {
         if (targets.libraries.some(({ target }) => target.kind === 'rekordbox-database' || target.kind === 'xml' && target.libraryKind === 'rekordbox')) {
           if (await isRekordboxRunning()) throw new Error('Close Rekordbox before reorganizing files.');
@@ -1969,61 +2067,53 @@ export class RekordboxLibrary {
         if (targets.libraries.some(({ target }) => target.kind === 'sqlite' || target.kind === 'legacy' || target.kind === 'xml' && target.libraryKind === 'serato')) await assertSeratoClosed();
       };
       await assertClosed();
-      await validateOrganizationPlan(plan);
+      await validateOrganizationPlan(plan, (completed, total) => progress('validating', completed, total));
       const moves = plan.preview.entries.filter((entry) => entry.kind === 'move');
       if (!moves.length) return { movedCount: 0, backupPaths: [], warnings: [] };
-      const replacements = new Map(moves.map((entry) => [normalizePath(entry.from), entry.to]));
-      const canonicalDestinations = new Map<string, string>();
-      for (const move of moves) canonicalDestinations.set(normalizePath(await resolveSeratoMediaPath(move.from)), move.to);
-      const referencedPaths = [...this.arsenalLibrary.tracks, ...targets.libraries.flatMap(({ library }) => library.tracks)]
-        .map((track) => track.location ?? track.path);
-      referencedPaths.push(...targets.portable.flatMap(({ path, manifest }) => manifest.tracks.flatMap((track) => track.media.kind !== 'local' ? []
-        : [track.media.originalPath, ...(track.media.relativePath === null ? [] : [join(dirname(path), track.media.relativePath)])])));
-      for (const path of new Set(referencedPaths)) {
-        const destination = canonicalDestinations.get(normalizePath(await resolveSeratoMediaPath(path)));
-        if (destination !== undefined) replacements.set(normalizePath(path), destination);
-      }
-      const moved: typeof moves = [];
-      const restores: { path: string; backupPath: string; kind: MissingSyncTarget['kind'] | 'portable' }[] = [];
-      const backupPaths: string[] = [];
+      const journal: OrganizationJournal = { moves: moves.map((move) => ({ from: move.from, to: move.to,
+        temporary: join(dirname(move.from), `.arsenal-${randomUUID()}.tmp`), sha256: null, completed: false })), restores: [], createdDirectories: [] };
+      await writeOrganizationJournal(this.organizationJournalPath, journal);
+      this.organizationRecovery = journal;
+      const registerBackup = (kind: OrganizationRestore['kind']) => async (backup: LibraryFileBackup): Promise<void> => {
+        const existing = journal.restores.findIndex((restore) => restore.path === backup.path);
+        const restore = { ...backup, kind };
+        if (existing < 0) journal.restores.push(restore);
+        else journal.restores[existing] = restore;
+        await appendOrganizationJournal(this.organizationJournalPath, { moves: [], restores: [restore], createdDirectories: [] });
+      };
       const warnings: string[] = [];
       const originalLibrary = this.arsenalLibrary;
-      const progress = (phase: LibraryOrganizationProgress['phase'], completed: number, total: number) => {
-        try {
-          if (!owner.isDestroyed()) owner.webContents.send(DJ_LIBRARY_CHANNELS.organizationProgress, { phase, completed, total } satisfies LibraryOrganizationProgress);
-        } catch { /* Finish or roll back the operation if the window closes. */ }
-      };
       try {
         progress('moving', 0, moves.length);
-        for (const move of moves) {
-          await createOrganizationDirectory(plan.preview.destinationRoot, dirname(move.to));
-          // Recheck each source immediately before moving it, after any earlier copies.
+        for (const [index, move] of moves.entries()) {
+          const record = journal.moves[index];
+          if (record === undefined) throw new Error('The move journal is incomplete.');
+          await createOrganizationDirectory(plan.preview.destinationRoot, dirname(move.to), journal.createdDirectories, async (directory) => {
+            await appendOrganizationJournal(this.organizationJournalPath, { moves: [], restores: [], createdDirectories: [directory] });
+          });
           await validateOrganizationPlan({ ...plan, preview: { ...plan.preview, entries: [move] } });
-          await moveMusicFile(move.from, move.to);
-          moved.push(move);
-          progress('moving', moved.length, moves.length);
+          record.sha256 = (await fingerprint(move.from)).sha256;
+          await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] });
+          await moveMusicFile(move.from, move.to, record.temporary);
+          record.completed = true;
+          await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] });
+          progress('moving', index + 1, moves.length);
         }
         await assertClosed();
-        if (JSON.stringify(await this.organizationTargets()) !== pending.targetState) throw new Error('A connected library changed while files moved. Preview again.');
+        if (await this.organizationTargetState(targets, (completed, total) => progress('validating', completed, total)) !== pending.targetState) throw new Error('A connected library changed while files moved. Preview again.');
         progress('relinking', 0, targets.libraries.length + targets.portable.length + 1);
         let completed = 0;
-        for (const { target, library } of targets.libraries) {
-          const present = new Set(library.tracks.map((track) => track.location ?? track.path));
-          const repairs = [...present].flatMap((missingPath) => {
+        for (const { target, nativePaths } of targets.libraries) {
+          const repairs = [...new Map(nativePaths.map((path) => [normalizePath(path), path])).values()].flatMap((missingPath) => {
             const replacementPath = replacements.get(normalizePath(missingPath));
             return replacementPath === undefined ? [] : [{ missingPath, replacementPath }];
           });
           if (repairs.length) {
             await assertClosed();
-            const result: LibraryFilesRepairResult = target.kind === 'rekordbox-database' ? await repairRekordboxDatabaseFiles(target.path, repairs, true)
-              : target.kind === 'xml' ? await repairRekordboxMissingFiles(target.path, repairs, true) : { ...await repairSeratoMissingFiles(target, repairs), failures: [] };
-            backupPaths.push(...result.backupPaths);
+            const options = { mode: 'reorganize', forceBackup: true, onBackup: registerBackup(target.kind) } satisfies Parameters<typeof repairRekordboxDatabaseFiles>[2];
+            const result: LibraryFilesRepairResult = target.kind === 'rekordbox-database' ? await repairRekordboxDatabaseFiles(target.path, repairs, options)
+              : target.kind === 'xml' ? await repairRekordboxMissingFiles(target.path, repairs, options) : { ...await repairSeratoMissingFiles(target, repairs, options), failures: [] };
             warnings.push(...result.warnings);
-            for (const backupPath of result.backupPaths) {
-              const path = target.kind === 'rekordbox-database' || target.kind === 'sqlite'
-                ? join(dirname(target.path), basename(backupPath)) : backupPath.replace(/\.arsenal-\d+-[a-f0-9-]+\.bak$/, '');
-              restores.push({ path, backupPath, kind: target.kind });
-            }
             if (result.failures.length) throw new Error(result.failures.map((failure) => `${failure.path}: ${failure.message}`).join(' '));
           }
           progress('relinking', ++completed, targets.libraries.length + targets.portable.length + 1);
@@ -2031,54 +2121,50 @@ export class RekordboxLibrary {
         for (const portable of targets.portable) {
           const tracks = portable.manifest.tracks.map((track) => {
             if (track.media.kind !== 'local') return track;
-            const relativePath = track.media.relativePath === null ? null : join(dirname(portable.path), track.media.relativePath);
-            const relativeReplacement = relativePath === null ? undefined : replacements.get(normalizePath(relativePath));
-            const replacement = relativeReplacement ?? replacements.get(normalizePath(track.media.originalPath));
+            const bundledPath = track.media.relativePath === null ? null : join(dirname(portable.path), track.media.relativePath);
+            const replacement = (bundledPath === null ? undefined : replacements.get(normalizePath(bundledPath)))
+              ?? replacements.get(normalizePath(track.media.originalPath));
             return replacement === undefined ? track : { ...track, media: { ...track.media, originalPath: replacement,
-              relativePath: relativeReplacement === undefined ? track.media.relativePath : null } };
+              relativePath: inside(dirname(portable.path), replacement) ? relative(dirname(portable.path), replacement).replaceAll('\\', '/') : null } };
           });
           if (tracks.some((track, index) => track !== portable.manifest.tracks[index])) {
-            const result = await saveRepairedLibraryFiles([{ path: portable.path, before: portable.before,
-              after: Buffer.from(`${JSON.stringify({ ...portable.manifest, tracks })}\n`) }], assertClosed);
-            backupPaths.push(...result.backupPaths);
-            for (const backupPath of result.backupPaths) restores.push({ path: portable.path, backupPath, kind: 'portable' });
+            await saveRepairedLibraryFiles([{ path: portable.path, before: portable.before,
+              after: Buffer.from(`${JSON.stringify({ ...portable.manifest, tracks }, null, 2)}\n`) }], assertClosed, { onBackup: registerBackup('portable') });
           }
           progress('relinking', ++completed, targets.libraries.length + targets.portable.length + 1);
         }
         await assertClosed();
-        this.catalog = await this.saveArsenalState(relocatedLibrary(this.arsenalLibrary, replacements));
+        const relocated = relocatedLibrary(this.arsenalLibrary, replacements);
+        await saveRepairedLibraryFiles([
+          { path: this.arsenalPath, before: await readFile(this.arsenalPath),
+            after: Buffer.from(`${JSON.stringify({ format: 'arsenal-library', version: 1, library: readLibraryModel(relocated) })}\n`) },
+          { path: this.arsenalWorkspace, before: await readFile(this.arsenalWorkspace), after: Buffer.from(mergeRekordboxXml(relocated)) },
+        ], assertClosed, { onBackup: registerBackup('arsenal') });
+        this.arsenalLibrary = relocated;
+        this.arsenalProjection = await parseRekordboxXml(this.arsenalWorkspace);
+        this.catalog = await this.catalogFor(this.arsenalWorkspace, null, this.arsenalProjection);
         progress('relinking', ++completed, targets.libraries.length + targets.portable.length + 1);
       } catch (error) {
-        progress('rolling-back', 0, restores.length + moved.length);
-        const failures: string[] = [];
-        let completed = 0;
-        for (const restore of restores.reverse()) {
-          try {
-            await assertClosed();
-            if (restore.kind === 'rekordbox-database' && isRekordboxDatabasePath(restore.path)) await restoreRekordboxDatabaseBackup(restore.path, restore.backupPath);
-            else if (restore.kind === 'sqlite') await restoreSeratoSqliteBackup(restore.path, restore.backupPath);
-            else await restoreLibraryFileBackup(restore.path, restore.backupPath);
-          } catch (error) { failures.push(`${restore.path}: ${error instanceof Error ? error.message : 'Could not restore its backup.'}`); }
-          progress('rolling-back', ++completed, restores.length + moved.length);
-        }
-        if (this.arsenalLibrary !== originalLibrary) {
-          try { this.catalog = await this.saveArsenalState(originalLibrary); }
-          catch (error) { failures.push(`${this.arsenalPath}: ${error instanceof Error ? error.message : 'Could not restore Arsenal.'}`); }
-        }
-        const librariesRestored = failures.length === 0;
-        for (const move of moved.reverse()) {
-          try {
-            if (librariesRestored) await moveMusicFile(move.to, move.from);
-            else {
-              // Keep both paths available if a library cannot be restored automatically.
-              await copyMusicFile(move.to, move.from);
-            }
-          } catch (error) { failures.push(`${move.to} -> ${move.from}: ${error instanceof Error ? error.message : 'Could not restore the audio file.'}`); }
-          progress('rolling-back', ++completed, restores.length + moved.length);
-        }
         const message = error instanceof Error ? error.message : 'Could not reorganize the library.';
-        throw new Error(`${message} ${failures.length ? `Recovery needs attention. ${failures.join(' ')} Backups: ${backupPaths.join(', ')}` : 'Moved files and connected libraries were restored.'}`);
+        try {
+          await undoOrganization(journal, (completed, total) => progress('rolling-back', completed, total));
+          this.arsenalLibrary = originalLibrary;
+          this.arsenalProjection = await parseRekordboxXml(this.arsenalWorkspace);
+          this.catalog = await this.catalogFor(this.arsenalWorkspace, null, this.arsenalProjection);
+          await rm(this.organizationJournalPath);
+          this.organizationRecovery = null;
+        } catch (recoveryError) {
+          try {
+            this.arsenalLibrary = await loadArsenalLibrary(this.arsenalPath) ?? this.arsenalLibrary;
+            this.arsenalProjection = await parseRekordboxXml(this.arsenalWorkspace);
+            this.catalog = await this.catalogFor(this.arsenalWorkspace, null, this.arsenalProjection);
+          } catch { warnings.push('Reload Arsenal after completing recovery.'); }
+          throw new Error(`${message} ${recoveryError instanceof Error ? recoveryError.message : 'Recovery needs attention.'} ${warnings.join(' ')} Journal: ${this.organizationJournalPath}. Backups: ${journal.restores.map((restore) => restore.backupPath).join(', ')}`);
+        }
+        throw new Error(`${message} Moved files and connected libraries were restored.`);
       }
+      await rm(this.organizationJournalPath);
+      this.organizationRecovery = null;
       this.missingSyncContext = null;
       this.cancelSuggestions();
       try {
@@ -2092,7 +2178,7 @@ export class RekordboxLibrary {
         await this.acknowledgeWrites(this.connectedLibraries.map((connection) => connection.id));
         if (!await this.remember(this.rememberedPath)) warnings.push('Files were reorganized, but connection settings could not be saved.');
       } catch (error) { warnings.push(`Files were reorganized, but connection status could not refresh: ${error instanceof Error ? error.message : 'Reload Arsenal.'}`); }
-      return { movedCount: moved.length, backupPaths, warnings };
+      return { movedCount: moves.length, backupPaths: journal.restores.map((restore) => restore.backupPath), warnings };
     });
   }
 

@@ -245,7 +245,10 @@ export type LibraryConnectionResult =
   | Readonly<{ kind: 'rejected'; message: string }>
   | Readonly<{ kind: 'updated'; connections: LibraryConnections; status: LibraryStatus; warnings: readonly string[] }>;
 
+export type LibraryStartupAction = 'import' | 'skip' | 'undo-reorganization' | 'keep-reorganization';
+
 export type LibraryStartupPreview = Readonly<{
+  organizationRecovery?: Readonly<{ journalPath: string; moveCount: number }>;
   libraries: readonly Readonly<{ id: string; name: string; changes: readonly string[] }>[];
   syncAfterImport: boolean;
   warnings: readonly string[];
@@ -569,7 +572,7 @@ export type DjLibraryApi = Readonly<{
   onOrganizationProgress(listener: (progress: LibraryOrganizationProgress) => void): () => void;
   connections(): Promise<LibraryConnections>;
   checkStartupChanges(): Promise<LibraryStartupPreview>;
-  resolveStartupChanges(action: 'import' | 'skip'): Promise<LibraryStartupResult>;
+  resolveStartupChanges(action: LibraryStartupAction): Promise<LibraryStartupResult>;
   backupStatus(): Promise<readonly BackupConnection[]>;
   configureBackup(request: BackupConfiguration): Promise<BackupConnection | null>;
   backupNow(id: string): Promise<BackupConnection>;

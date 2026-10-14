@@ -272,7 +272,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     startupCheck.current ??= window.djLibrary.checkStartupChanges();
     void startupCheck.current.then(async (preview) => {
       if (!active) return;
-      if (preview.libraries.length > 0) {
+      if (preview.organizationRecovery || preview.libraries.length > 0) {
         setStartupPreview(preview);
         return;
       }
@@ -561,7 +561,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     });
   };
 
-  const resolveStartupChanges = async (action: 'import' | 'skip'): Promise<void> => {
+  const resolveStartupChanges = async (action: Parameters<typeof window.djLibrary.resolveStartupChanges>[0]): Promise<void> => {
     if (operationPending.current) throw new Error('Another library action is still running.');
     operationPending.current = true;
     setBusy(true);
@@ -570,7 +570,13 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setError(null);
     setFeedback(null);
     try {
-      const startup = await window.djLibrary.resolveStartupChanges(action);
+      let startup = await window.djLibrary.resolveStartupChanges(action);
+      let nextPreview: typeof startupPreview = null;
+      if (action === 'undo-reorganization' || action === 'keep-reorganization') {
+        const preview = await window.djLibrary.checkStartupChanges();
+        if (preview.organizationRecovery || preview.libraries.length > 0) nextPreview = preview;
+        else startup = await window.djLibrary.resolveStartupChanges('skip');
+      }
       showStartupResult(startup);
       try {
         if (startup.status.kind === 'ready') {
@@ -586,7 +592,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       } catch {
         setReloadRequired(true);
       }
-      setStartupPreview(null);
+      setStartupPreview(nextPreview);
     } finally {
       operationPending.current = false;
       setBusy(false);

@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, preserveHotLoops, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
-import { assertMissingFileRepair, type LibraryFilesRepairResult, type MissingFileRepair } from './repair-library-files';
+import { assertMissingFileRepair, currentLibraryFileHash, type LibraryFileBackup, type LibraryFilesRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
 import { isCloudPath } from './cloud-tracks';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
@@ -762,9 +762,9 @@ export const writeRekordboxDatabase = async (
 };
 
 // Relinks missing Collection files, or removes their tracks when replacementPath is null.
-export const repairRekordboxDatabaseFiles = async (path: string, repairs: readonly MissingFileRepair[], forceBackup = false): Promise<LibraryFilesRepairResult> => {
+export const repairRekordboxDatabaseFiles = async (path: string, repairs: readonly MissingFileRepair[], options: LibraryRepairOptions = {}): Promise<LibraryFilesRepairResult> => {
   await assertRekordboxClosed();
-  if (forceBackup) for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath);
+  if (options.mode === 'reorganize') for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
   const db = await openRekordboxDatabase(path, { readonly: false });
   try {
     schema(db);
@@ -781,17 +781,30 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
     let revision = number(rows(db, "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")[0]?.int_1) ?? 0;
     const statements: { sql: string; values: Value[] }[] = [];
     const failures: { path: string; message: string }[] = [];
+    const originalByPath = new Map(byPath);
+    const sourceKeys = new Set(repairs.map((repair) => normalizePath(repair.missingPath)));
+    let applied = 0;
     for (const { missingPath, replacementPath } of repairs) {
+      if (options.mode === 'reorganize' && replacementPath === null) throw new Error('Reorganization must preserve every Rekordbox entry.');
       const missing = byPath.get(normalizePath(missingPath)) ?? [];
-      if (!missing.length) continue;
-      const existing = replacementPath === null ? undefined : byPath.get(normalizePath(replacementPath))?.[0];
+      if (!missing.length) {
+        if (options.mode === 'reorganize') throw new Error(`The repair target is no longer in Rekordbox: ${missingPath}`);
+        continue;
+      }
+      const destinationKey = replacementPath === null ? null : normalizePath(replacementPath).normalize('NFC').toLowerCase();
+      const existing = options.mode === 'reorganize'
+        ? [...originalByPath].find(([key]) => !sourceKeys.has(key) && key.normalize('NFC').toLowerCase() === destinationKey)?.[1][0]
+        : replacementPath === null ? undefined : byPath.get(normalizePath(replacementPath))?.[0];
+      if (options.mode === 'reorganize' && existing !== undefined) throw new Error(`The destination already has a Rekordbox entry: ${replacementPath}`);
       let fileSize: number | null = null;
       if (replacementPath !== null && existing === undefined) {
         try { fileSize = (await stat(replacementPath)).size; } catch (error) {
+          if (options.mode === 'reorganize') throw error;
           failures.push({ path: missingPath, message: error instanceof Error ? error.message : 'Could not read the replacement file.' });
           continue;
         }
       }
+      applied++;
       byPath.delete(normalizePath(missingPath));
       for (const row of missing) {
         if (replacementPath !== null && existing === undefined) {
@@ -809,16 +822,34 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
         revision++;
       }
     }
-    if (!statements.length) return { backupPaths: [], warnings: [], failures };
-    const backupPaths = await backupRekordboxDatabase(db, path, forceBackup);
+    if (options.mode === 'reorganize' && applied !== repairs.length) throw new Error('Not every Rekordbox repair was applied.');
+    if (!statements.length) return { backupPaths: [], backups: [], warnings: [], failures };
+    if (options.mode === 'reorganize' && rows(db, 'PRAGMA wal_checkpoint(TRUNCATE)')[0]?.busy !== 0) throw new Error('Rekordbox database is busy.');
+    const backupPaths = await backupRekordboxDatabase(db, path, options.forceBackup);
+    const backups: LibraryFileBackup[] = [];
+    for (const backupPath of backupPaths) {
+      const target = join(dirname(path), basename(backupPath));
+      const backup = { path: target, backupPath, expectedHash: await currentLibraryFileHash(target) };
+      backups.push(backup);
+      await options.onBackup?.(backup);
+    }
     db.exec('BEGIN IMMEDIATE');
-    for (const statement of statements) db.prepare(statement.sql).run(...statement.values);
+    for (const statement of statements) {
+      const result = db.prepare(statement.sql).run(...statement.values);
+      if (options.mode === 'reorganize' && result.changes !== 1) throw new Error('A Rekordbox repair target changed before it could be updated.');
+    }
     db.prepare("UPDATE agentRegistry SET int_1 = ?, updated_at = ? WHERE registry_id = 'localUpdateCount'").run(revision, now);
     if (rows(db, 'PRAGMA quick_check')[0]?.quick_check !== 'ok') throw new Error('Rekordbox database verification failed.');
-    if (forceBackup) for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath);
+    if (options.mode === 'reorganize') for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
     assertRekordboxClosedSync();
     db.exec('COMMIT');
-    return { backupPaths, warnings: [], failures };
+    if (rows(db, 'PRAGMA wal_checkpoint(TRUNCATE)')[0]?.busy !== 0) throw new Error('Rekordbox database is busy. Keep the recovery journal and backups.');
+    for (const [index, backup] of backups.entries()) {
+      const updated = { ...backup, expectedHash: await currentLibraryFileHash(backup.path) };
+      backups[index] = updated;
+      await options.onBackup?.(updated);
+    }
+    return { backupPaths, backups, warnings: [], failures };
   } catch (error) {
     if (db.inTransaction) db.exec('ROLLBACK');
     throw error;

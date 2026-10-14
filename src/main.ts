@@ -398,7 +398,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   ipc.handle(DJ_LIBRARY_CHANNELS.resolveStartupChanges, async (event, action: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Review changed libraries from the library window');
-    if (action !== 'import' && action !== 'skip') throw new Error('Choose whether to import the changes');
+    if (action !== 'import' && action !== 'skip' && action !== 'undo-reorganization' && action !== 'keep-reorganization') throw new Error('Choose whether to import the changes');
     libraryActions += 1;
     try { return await library.resolveStartupChanges(owner, action); } finally { libraryActions -= 1; }
   });
@@ -548,7 +548,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     const scheme = LIBRARY_ORGANIZATION_SCHEMES.find((option) => option.value === value.scheme)?.value;
     if (scheme === undefined) throw new Error('Choose an organization scheme');
     libraryActions += 1;
-    try { return await library.previewOrganization({ destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles }); }
+    try { return await library.previewOrganization({ destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles }, owner); }
     finally { libraryActions -= 1; }
   });
 

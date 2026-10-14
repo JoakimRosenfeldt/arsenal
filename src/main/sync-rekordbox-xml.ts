@@ -5,7 +5,7 @@ import type { SongRow, SyncFields } from '../shared/dj-library';
 import { isSmartPlaylistNode, type ParsedRekordboxLibrary } from './parse-rekordbox-xml';
 import { normalizePath, preserveHotLoops, type SyncLibrary, type SyncLoop, type SyncPlaylist, type SyncTrack } from './library-sync-model';
 import { repairRekordboxXmlLocations } from './edit-rekordbox-xml';
-import { assertMissingFileRepair, saveRepairedLibraryFiles, type LibraryFilesRepairResult, type MissingFileRepair } from './repair-library-files';
+import { assertMissingFileRepair, saveRepairedLibraryFiles, type LibraryFilesRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
 import { seratoMediaPathKey } from './serato-paths';
 
 type XmlNode = {
@@ -87,7 +87,7 @@ const locationFor = (path: string): string => {
   return pathToFileURL(path).href.replace('file:///', 'file://localhost/');
 };
 
-export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: readonly MissingFileRepair[], preserveEntries = false): Promise<LibraryFilesRepairResult> => {
+export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: readonly MissingFileRepair[], options: LibraryRepairOptions = {}): Promise<LibraryFilesRepairResult> => {
   const before = await readFile(xmlPath);
   const original = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(before);
   const collection = children(parseXml(original).root, 'COLLECTION')[0];
@@ -100,7 +100,7 @@ export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: read
   // Media keys stat each file, so compute them once for the whole batch.
   const keys = new Map<string, string>();
   for (let offset = 0; offset < tracks.length; offset += 64) {
-    await Promise.all(tracks.slice(offset, offset + 64).map(async ({ location, path }) => { keys.set(location, await seratoMediaPathKey(path)); }));
+    await Promise.all(tracks.slice(offset, offset + 64).map(async ({ location, path }) => { keys.set(location, options.mode === 'reorganize' ? normalizePath(path) : await seratoMediaPathKey(path)); }));
   }
   let source = original;
   const originalKeys = new Map(keys);
@@ -108,26 +108,35 @@ export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: read
   const failures: { path: string; message: string }[] = [];
   for (const repair of repairs) {
     try {
-      await assertMissingFileRepair(repair.missingPath, repair.replacementPath);
-      const missingKey = await seratoMediaPathKey(repair.missingPath);
-      const replacementKey = repair.replacementPath === null ? null : await seratoMediaPathKey(repair.replacementPath);
+      if (options.mode === 'reorganize' && repair.replacementPath === null) throw new Error('Reorganization must preserve every Rekordbox XML entry.');
+      await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
+      const missingKey = options.mode === 'reorganize' ? normalizePath(repair.missingPath) : await seratoMediaPathKey(repair.missingPath);
+      const replacementKey = repair.replacementPath === null ? null : options.mode === 'reorganize' ? normalizePath(repair.replacementPath) : await seratoMediaPathKey(repair.replacementPath);
       const locations = new Set([...keys].flatMap(([location, key]) => key === missingKey ? [location] : []));
-      if (!locations.size) continue;
-      const existingLocation = [...preserveEntries ? originalKeys : keys].find(([, key]) => key === replacementKey)?.[0];
-      if (preserveEntries && existingLocation !== undefined) throw new Error('A replacement file already has a library entry. Preview again before moving files.');
+      if (!locations.size) {
+        if (options.mode === 'reorganize') throw new Error(`The repair target is no longer in Rekordbox XML: ${repair.missingPath}`);
+        continue;
+      }
+      const sourceKeys = new Set(repairs.map((repair) => normalizePath(repair.missingPath)));
+      const existingLocation = options.mode === 'reorganize'
+        ? [...originalKeys].find(([, key]) => !sourceKeys.has(key) && key.normalize('NFC').toLowerCase() === replacementKey?.normalize('NFC').toLowerCase())?.[0]
+        : [...keys].find(([, key]) => key === replacementKey)?.[0];
+      if (options.mode === 'reorganize' && existingLocation !== undefined) throw new Error('A replacement file already has a library entry. Preview again before moving files.');
       const replacementLocation = repair.replacementPath === null ? null : locationFor(repair.replacementPath);
       source = repairRekordboxXmlLocations(source, locations, replacementLocation, existingLocation);
       for (const location of locations) keys.delete(location);
       if (replacementLocation !== null && replacementKey !== null && existingLocation === undefined) keys.set(replacementLocation, replacementKey);
       applied.push(repair);
     } catch (error) {
+      if (options.mode === 'reorganize') throw error;
       failures.push({ path: repair.missingPath, message: error instanceof Error ? error.message : 'Could not repair this file.' });
     }
   }
-  if (source === original) return { backupPaths: [], warnings: [], failures };
+  if (options.mode === 'reorganize' && applied.length !== repairs.length) throw new Error('Not every Rekordbox XML repair was applied.');
+  if (source === original) return { backupPaths: [], backups: [], warnings: [], failures };
   const saved = await saveRepairedLibraryFiles([{ path: xmlPath, before, after: Buffer.from(source, 'utf8') }], async () => {
-    for (const repair of applied) await assertMissingFileRepair(repair.missingPath, repair.replacementPath);
-  });
+    for (const repair of applied) await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
+  }, options);
   return { ...saved, failures };
 };
 

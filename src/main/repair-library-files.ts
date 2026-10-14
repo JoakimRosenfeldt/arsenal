@@ -1,24 +1,48 @@
-import { randomUUID } from 'node:crypto';
-import { chmod, copyFile, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { chmod, copyFile, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import { isAbsolute, win32 } from 'node:path';
 
 import { isSupportedAudioPath } from './track-artwork';
 
-export type LibraryFileRepairResult = Readonly<{ backupPaths: string[]; warnings: string[] }>;
+export type LibraryFileBackup = Readonly<{ path: string; backupPath: string; expectedHash: string | null }>;
+export type LibraryRepairOptions = Readonly<{
+  mode?: 'reorganize';
+  forceBackup?: boolean;
+  onBackup?: (backup: LibraryFileBackup) => Promise<void>;
+}>;
+export type LibraryFileRepairResult = Readonly<{ backupPaths: string[]; backups: LibraryFileBackup[]; warnings: string[] }>;
 export type MissingFileRepair = Readonly<{ missingPath: string; replacementPath: string | null }>;
 // Repairs that could not be applied; the rest of the batch is still saved.
 export type LibraryFilesRepairResult = LibraryFileRepairResult & Readonly<{ failures: { path: string; message: string }[] }>;
 
-export const restoreLibraryFileBackup = async (path: string, backupPath: string): Promise<void> => {
+export const libraryFileHash = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+export const currentLibraryFileHash = async (path: string): Promise<string | null> => {
+  try { return libraryFileHash(await readFile(path)); } catch (error) {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+};
+
+export const restoreLibraryFileBackup = async (path: string, backupPath: string, expectedHash: string | null = null): Promise<void> => {
+  const before = await readFile(backupPath);
+  const current = await currentLibraryFileHash(path);
+  if (current === libraryFileHash(before)) return;
+  if (current !== null && (expectedHash === null || current !== expectedHash)) {
+    throw new Error(`The library has later or unverified edits. Kept it unchanged. Backup: ${backupPath}`);
+  }
   const temporary = `${path}.arsenal-${randomUUID()}.restore`;
   try {
     await copyFile(backupPath, temporary);
-    await chmod(temporary, (await stat(path)).mode & 0o777);
+    const mode = (await stat(backupPath)).mode & 0o777;
+    await chmod(temporary, mode | 0o200);
+    const file = await open(temporary, 'r+');
+    try { await file.chmod(mode); await file.sync(); } finally { await file.close(); }
+    if (await currentLibraryFileHash(path) !== current) throw new Error(`The library changed during recovery: ${path}`);
     await rename(temporary, path);
   } finally { await rm(temporary, { force: true }); }
 };
 
-export const assertMissingFileRepair = async (missingPath: string, replacementPath: string | null): Promise<void> => {
+export const assertMissingFileRepair = async (missingPath: string, replacementPath: string | null, options: LibraryRepairOptions = {}): Promise<void> => {
   for (const path of [missingPath, replacementPath]) {
     if (path !== null && (path.includes('\0') || !isAbsolute(path) && !win32.isAbsolute(path))) {
       throw new Error('Choose an absolute audio file path.');
@@ -28,7 +52,7 @@ export const assertMissingFileRepair = async (missingPath: string, replacementPa
   try { exists = (await stat(missingPath)).isFile(); } catch (error) {
     if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
   }
-  if (exists) throw new Error(`This location is no longer missing. Scan the library again: ${missingPath}`);
+  if (exists && options.mode !== 'reorganize') throw new Error(`This location is no longer missing. Scan the library again: ${missingPath}`);
   if (replacementPath !== null && (!isSupportedAudioPath(replacementPath) || !(await stat(replacementPath)).isFile())) {
     throw new Error('Choose an existing, supported audio file.');
   }
@@ -36,12 +60,12 @@ export const assertMissingFileRepair = async (missingPath: string, replacementPa
 
 export const saveRepairedLibraryFiles = async (
   updates: readonly Readonly<{ path: string; before: Buffer; after: Buffer }>[],
-  validate: () => Promise<void>,
+  validate: () => Promise<void>, options: LibraryRepairOptions = {},
 ): Promise<LibraryFileRepairResult> => {
   const suffix = `.arsenal-${Date.now()}-${randomUUID()}`;
   const staged: string[] = [];
-  const committed: typeof updates[number][] = [];
-  const backupPaths: string[] = [];
+  const committed: LibraryFileBackup[] = [];
+  const backups: LibraryFileBackup[] = [];
   try {
     for (const update of updates) {
       const temporary = `${update.path}${suffix}.tmp`;
@@ -52,23 +76,27 @@ export const saveRepairedLibraryFiles = async (
     await validate();
     for (const update of updates) {
       if (!(await readFile(update.path)).equals(update.before)) throw new Error('The library changed. Scan it again before repairing files.');
-      const backupPath = `${update.path}${suffix}.bak`;
-      await writeFile(backupPath, update.before, { flag: 'wx' });
-      backupPaths.push(backupPath);
+      const backup = { path: update.path, backupPath: `${update.path}${suffix}.bak`, expectedHash: libraryFileHash(update.after) };
+      const file = await open(backup.backupPath, 'wx', (await stat(update.path)).mode & 0o777);
+      try { await file.writeFile(update.before); await file.sync(); } finally { await file.close(); }
+      backups.push(backup);
+      await options.onBackup?.(backup);
     }
     await validate();
-    for (const update of updates) {
+    for (const [index, update] of updates.entries()) {
       if (!(await readFile(update.path)).equals(update.before)) throw new Error('The library changed during repair.');
       await rename(`${update.path}${suffix}.tmp`, update.path);
-      committed.push(update);
+      const backup = backups[index];
+      if (backup !== undefined) committed.push(backup);
     }
-    return { backupPaths, warnings: [] };
+    return { backupPaths: backups.map((backup) => backup.backupPath), backups, warnings: [] };
   } catch (error) {
-    for (const update of committed.reverse()) {
-      const temporary = `${update.path}${suffix}.restore`;
-      await writeFile(temporary, update.before, { flag: 'wx', mode: (await stat(update.path)).mode & 0o777 });
-      await rename(temporary, update.path);
+    const failures: string[] = [];
+    for (const backup of committed.reverse()) {
+      try { await restoreLibraryFileBackup(backup.path, backup.backupPath, backup.expectedHash); }
+      catch (restoreError) { failures.push(restoreError instanceof Error ? restoreError.message : backup.path); }
     }
+    if (failures.length) throw new Error(`${error instanceof Error ? error.message : 'Library repair failed.'} Recovery needs attention. ${failures.join(' ')}`);
     throw error;
   } finally {
     await Promise.all(staged.map((path) => rm(path, { force: true })));
