@@ -558,10 +558,11 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id)) throw new Error('Preview the reorganization first');
     libraryActions += 1;
     try {
-      const result = await library.applyOrganization(owner, id);
+      return await library.applyOrganization(owner, id);
+    } finally {
+      libraryActions -= 1;
       for (const window of BrowserWindow.getAllWindows()) window.webContents.send(DJ_LIBRARY_CHANNELS.libraryChanged, library.status());
-      return result;
-    } finally { libraryActions -= 1; }
+    }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.resolveSyncMissingFile, async (event, value: unknown) => {

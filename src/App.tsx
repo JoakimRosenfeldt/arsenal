@@ -56,7 +56,7 @@ import type { SmartPlaylistDefinition } from './shared/smart-playlists';
 type DisplayError = ImportFailure | MutationFailure | 'unexpected';
 
 type Feedback = Readonly<{
-  tone: 'warning';
+  tone: 'warning' | 'success';
   message: string;
 }>;
 
@@ -258,6 +258,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setConnections(startup.connections);
     const syncResult = startup.syncResult?.kind === 'cancelled' ? null : startup.syncResult;
     setStartupSyncResult(syncResult);
+    if (startup.message) setFeedback({ tone: 'success', message: startup.message });
     if (startup.warnings.length > 0) {
       setFeedback({ tone: 'warning', message: startup.warnings.join(' ') });
     }
@@ -436,6 +437,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     });
     const stopChanges = window.djLibrary.onLibraryChanged((status) => {
       setBackgroundLibrary(status);
+      if (!playlistWindow) void window.djLibrary.checkStartupChanges().then((preview) => {
+        if (active && preview.organizationRecovery) setStartupPreview(preview);
+      }).catch(() => undefined);
       if (playlistWindow && (status.kind === 'empty' || status.library.revision !== playlistWindow.request.revision)) {
         setError('stale-library');
       }
@@ -575,7 +579,10 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       if (action === 'undo-reorganization' || action === 'keep-reorganization') {
         const preview = await window.djLibrary.checkStartupChanges();
         if (preview.organizationRecovery || preview.libraries.length > 0) nextPreview = preview;
-        else startup = await window.djLibrary.resolveStartupChanges('skip');
+        else {
+          const next = await window.djLibrary.resolveStartupChanges('skip');
+          startup = { ...next, message: startup.message, warnings: [...startup.warnings, ...next.warnings] };
+        }
       }
       showStartupResult(startup);
       try {

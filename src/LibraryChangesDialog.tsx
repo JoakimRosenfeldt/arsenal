@@ -48,7 +48,7 @@ export const LibraryChangesDialog = ({ preview, busy, onResolve }: Readonly<{
       }}>
       <header className="library-changes-heading">
         <h2 id="library-changes-title">{recovery ? 'Unfinished reorganization' : 'Library changes'}</h2>
-        <p id="library-changes-description">{recovery ? `${recovery.moveCount} planned moves may have been interrupted. Undo restores library backups and audio where possible. Keep leaves current files and library edits in place.` : 'Changes since your last session.'}</p>
+        <p id="library-changes-description">{recovery ? `${recovery.moveCount} planned moves may have been interrupted. Undo restores library backups and audio where possible. Keep updates every library to use the audio at its current location.` : 'Changes since your last session.'}</p>
       </header>
       {recovery && <p>Recovery journal: <code>{recovery.journalPath}</code>. Backups remain available after either choice.</p>}
       <div className="library-changes-list">

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { chmod, copyFile, link, lstat, mkdir, open, readdir, realpath, rmdir, stat, unlink } from 'node:fs/promises';
+import { chmod, copyFile, link, lstat, mkdir, open, readdir, realpath, rmdir, stat, unlink, utimes } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 
@@ -11,7 +11,7 @@ import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
 import { isCloudPath } from './cloud-tracks';
 import { isSupportedAudioPath } from './track-artwork';
 
-const missing = (error: unknown): boolean => error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
+const missing = (error: unknown): boolean => error instanceof Error && 'code' in error && error.code === 'ENOENT';
 const portableKey = (path: string): string => resolve(path).normalize('NFC').toLowerCase();
 export const inside = (root: string, path: string): boolean => {
   const child = relative(root, path);
@@ -29,11 +29,11 @@ export const defaultOrganizationRoot = (library: SyncLibrary): string => {
   return root === parse(root).root || root === homedir() ? join(homedir(), 'Music') : root;
 };
 
-const stamp = async (path: string): Promise<string> => {
+export const organizationFileStamp = async (path: string): Promise<string> => {
   const info = await lstat(path, { bigint: true });
   if (info.isSymbolicLink()) throw new Error('Audio file is a symbolic link');
   if (!info.isFile()) throw new Error('Audio path is not a regular file');
-  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}:${info.ctimeNs}`;
+  return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}`;
 };
 
 export type OrganizationPlan = Readonly<{
@@ -93,13 +93,13 @@ export const planLibraryOrganization = async (
     if (track.song.source !== 'local' || !isAbsolute(from) || isCloudPath(from) || cloud.has(normalizePath(from))) { skip('Cloud or streaming track'); continue; }
     if (!isSupportedAudioPath(from)) { skip('Unsupported audio format'); continue; }
     try {
-      await stamp(from);
+      await organizationFileStamp(from);
       from = await resolveSeratoMediaPath(from);
       const key = await seratoMediaPathKey(from);
       if (sources.has(key)) continue;
       sources.add(key);
       if (bundleRoots.some((root) => inside(root, from))) { skip('Inside a portable library bundle'); continue; }
-      stamps.set(from, await stamp(from));
+      stamps.set(from, await organizationFileStamp(from));
     } catch (error) {
       skip(missing(error) ? 'Missing on disk' : error instanceof Error ? error.message : 'Could not read audio file'); continue;
     }
@@ -159,7 +159,7 @@ export const validateOrganizationPlan = async (plan: OrganizationPlan, progress:
   const moves = plan.preview.entries.filter((entry) => entry.kind === 'move');
   for (let offset = 0; offset < moves.length; offset += 32) {
     await Promise.all(moves.slice(offset, offset + 32).map(async (entry) => {
-      if (await stamp(entry.from) !== plan.stamps.get(entry.from)) throw new Error(`The audio file changed. Preview again: ${entry.from}`);
+      if (await organizationFileStamp(entry.from) !== plan.stamps.get(entry.from)) throw new Error(`The audio file changed. Preview again: ${entry.from}`);
       try { await lstat(entry.to); } catch (error) { if (missing(error)) return; throw error; }
       if (await seratoMediaPathKey(entry.from) !== await seratoMediaPathKey(entry.to)) {
         throw new Error(`The destination is now occupied. Preview again: ${entry.to}`);
@@ -172,9 +172,9 @@ export const validateOrganizationPlan = async (plan: OrganizationPlan, progress:
 export const createOrganizationDirectory = async (root: string, destination: string, created: string[] = [],
   onCreated: (directory: string) => Promise<void> = async () => undefined): Promise<void> => {
   const create = async (path: string): Promise<void> => {
-    try { await mkdir(path); created.push(path); await onCreated(path); } catch (error) {
-      if (missing(error)) { await create(dirname(path)); await create(path); }
-      else if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error;
+    try { await mkdir(path); created.push(path); await onCreated(path); await syncOrganizationDirectory(dirname(path)); } catch (error) {
+      if (missing(error) && dirname(path) !== path) { await create(dirname(path)); await create(path); }
+      else if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST') || !(await stat(path)).isDirectory()) throw error;
     }
   };
   await create(root);
@@ -195,39 +195,93 @@ export const removeOrganizationDirectories = async (created: readonly string[]):
   }
 };
 
-export const copyMusicFile = async (from: string, to: string): Promise<void> => {
+export const syncOrganizationDirectory = async (path: string): Promise<void> => {
+  if (process.platform === 'win32') return;
+  try {
+    const directory = await open(path, 'r');
+    try { await directory.sync(); } finally { await directory.close(); }
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && ['EINVAL', 'ENOTSUP', 'EOPNOTSUPP', 'EBADF', 'EISDIR'].includes(String(error.code)))) throw error;
+  }
+};
+
+const syncOrganizationFile = async (path: string): Promise<void> => {
+  if (process.platform === 'win32') await chmod(path, (await stat(path)).mode | 0o200).catch(() => undefined);
+  const file = await open(path, process.platform === 'win32' ? 'r+' : 'r');
+  try { await file.sync(); } finally { await file.close(); }
+};
+
+export const copyMusicFile = async (from: string, to: string): Promise<string> => {
   const info = await stat(from);
+  const originalStamp = await organizationFileStamp(from);
   const original = await fingerprint(from);
   await copyFile(from, to, constants.COPYFILE_EXCL);
   try {
     const copied = await fingerprint(to);
     if (copied.sha256 !== original.sha256 || copied.sizeBytes !== original.sizeBytes ||
-        (await fingerprint(from)).stamp !== original.stamp) throw new Error(`Copy verification failed: ${from}`);
-    await chmod(to, (info.mode & 0o777) | 0o200);
-    const file = await open(to, 'r+');
-    try { await file.chmod(info.mode & 0o777); await file.utimes(info.atime, info.mtime); await file.sync(); }
-    finally { await file.close(); }
-  } catch (error) { await unlink(to); throw error; }
+        await organizationFileStamp(from) !== originalStamp) throw new Error(`Copy verification failed: ${from}`);
+    await chmod(to, info.mode & 0o777).catch(() => undefined);
+    await utimes(to, info.atime, info.mtime).catch(() => undefined);
+    await syncOrganizationFile(to);
+    return original.sha256;
+  } catch (error) { await unlinkMusicFile(to); throw error; }
 };
 
-export const moveMusicFile = async (from: string, to: string, temporary = join(dirname(from), `.arsenal-${randomUUID()}.tmp`)): Promise<void> => {
-  const install = async (source: string, destination: string): Promise<void> => {
-    try { await link(source, destination); } catch (error) {
-      if (!(error instanceof Error && 'code' in error && ['EXDEV', 'EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'ENOSYS'].includes(String(error.code)))) throw error;
-      await copyMusicFile(source, destination);
+type MusicInstallOptions = Readonly<{
+  onCopy?: (sha256: string) => Promise<void>;
+  onDestination?: (stamp: string) => Promise<void>;
+}>;
+
+export const installMusicFile = async (from: string, to: string, temporary: string, options: MusicInstallOptions = {}): Promise<void> => {
+  try { await link(from, to); } catch (error) {
+    if (error instanceof Error && 'code' in error && (error.code === 'EEXIST' || error.code === 'ENOENT')) throw error;
+    const hash = await copyMusicFile(from, temporary);
+    await options.onCopy?.(hash);
+    try { await link(temporary, to); } catch (error) {
+      if (error instanceof Error && 'code' in error && (error.code === 'EEXIST' || error.code === 'ENOENT')) throw error;
+      // Some volumes cannot hard-link even the staged copy. Record our exclusive file before writing it.
+      const file = await open(to, 'wx');
+      try {
+        await options.onDestination?.(await organizationFileStamp(to));
+        const source = await open(temporary, 'r');
+        try { await file.writeFile(source.createReadStream()); } finally { await source.close(); }
+        await file.sync();
+      } finally { await file.close(); }
+      await chmod(to, (await stat(from)).mode & 0o777).catch(() => undefined);
+      const info = await stat(from);
+      await utimes(to, info.atime, info.mtime).catch(() => undefined);
+      if ((await fingerprint(to)).sha256 !== hash) throw new Error(`Copy verification failed: ${to}`);
     }
-  };
-  try { await install(from, to); } catch (error) {
+    await unlinkMusicFile(temporary);
+  }
+  await syncOrganizationFile(to);
+  await syncOrganizationDirectory(dirname(to));
+};
+
+export const unlinkMusicFile = async (path: string): Promise<void> => {
+  try { await unlink(path); } catch (error) {
+    if (process.platform !== 'win32' || !(error instanceof Error && 'code' in error && error.code === 'EPERM')) throw error;
+    await chmod(path, (await stat(path)).mode | 0o200);
+    await unlink(path);
+  }
+  await syncOrganizationDirectory(dirname(path));
+};
+
+export const moveMusicFile = async (from: string, to: string, temporary = join(dirname(to), `.arsenal-${randomUUID()}.tmp`),
+  options: MusicInstallOptions = {}): Promise<void> => {
+  const originalStamp = await organizationFileStamp(from);
+  try { await installMusicFile(from, to, temporary, options); } catch (error) {
     if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST') ||
         (await lstat(to)).isSymbolicLink() || await seratoMediaPathKey(from) !== await seratoMediaPathKey(to)) throw error;
-    // A case-only rename needs an intermediate name on case-insensitive filesystems.
-    await install(from, temporary);
-    await unlink(from);
-    try { await install(temporary, to); } catch (error) { await install(temporary, from); throw error; }
-    await unlink(temporary);
+    await installMusicFile(from, temporary, `${temporary}.copy`, options);
+    if (await organizationFileStamp(from) !== originalStamp) throw new Error(`The source changed while moving: ${from}`);
+    await unlinkMusicFile(from);
+    await installMusicFile(temporary, to, `${temporary}.copy`, options);
+    await unlinkMusicFile(temporary);
     return;
   }
-  try { await unlink(from); } catch (error) { await unlink(to); throw error; }
+  if (await organizationFileStamp(from) !== originalStamp) throw new Error(`The source changed while moving: ${from}`);
+  await unlinkMusicFile(from);
 };
 
 export const relocatedLibrary = (library: SyncLibrary, replacements: ReadonlyMap<string, string>): SyncLibrary => {
