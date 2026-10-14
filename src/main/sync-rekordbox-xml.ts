@@ -87,7 +87,7 @@ const locationFor = (path: string): string => {
   return pathToFileURL(path).href.replace('file:///', 'file://localhost/');
 };
 
-export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: readonly MissingFileRepair[]): Promise<LibraryFilesRepairResult> => {
+export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: readonly MissingFileRepair[], preserveEntries = false): Promise<LibraryFilesRepairResult> => {
   const before = await readFile(xmlPath);
   const original = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(before);
   const collection = children(parseXml(original).root, 'COLLECTION')[0];
@@ -103,6 +103,7 @@ export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: read
     await Promise.all(tracks.slice(offset, offset + 64).map(async ({ location, path }) => { keys.set(location, await seratoMediaPathKey(path)); }));
   }
   let source = original;
+  const originalKeys = new Map(keys);
   const applied: MissingFileRepair[] = [];
   const failures: { path: string; message: string }[] = [];
   for (const repair of repairs) {
@@ -112,7 +113,8 @@ export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: read
       const replacementKey = repair.replacementPath === null ? null : await seratoMediaPathKey(repair.replacementPath);
       const locations = new Set([...keys].flatMap(([location, key]) => key === missingKey ? [location] : []));
       if (!locations.size) continue;
-      const existingLocation = [...keys].find(([, key]) => key === replacementKey)?.[0];
+      const existingLocation = [...preserveEntries ? originalKeys : keys].find(([, key]) => key === replacementKey)?.[0];
+      if (preserveEntries && existingLocation !== undefined) throw new Error('A replacement file already has a library entry. Preview again before moving files.');
       const replacementLocation = repair.replacementPath === null ? null : locationFor(repair.replacementPath);
       source = repairRekordboxXmlLocations(source, locations, replacementLocation, existingLocation);
       for (const location of locations) keys.delete(location);

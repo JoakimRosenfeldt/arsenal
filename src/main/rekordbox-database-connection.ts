@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import Database from 'better-sqlite3-multiple-ciphers';
 import { app } from 'electron';
 import { SaxesParser } from 'saxes';
+import { restoreLibraryFileBackup } from './repair-library-files';
 
 export type RekordboxDatabase = Database.Database;
 
@@ -130,10 +131,10 @@ const recentBackup = async (root: string, name: string): Promise<boolean> => {
   return false;
 };
 
-export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: string): Promise<string[]> => {
+export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: string, force = false): Promise<string[]> => {
   await assertRekordboxClosed();
   if (db.inTransaction) throw new Error('Back up the Rekordbox database before starting a transaction.');
-  if (await recentBackup(join(dirname(path), 'arsenal-backups'), basename(path))) return [];
+  if (!force && await recentBackup(join(dirname(path), 'arsenal-backups'), basename(path))) return [];
   const directory = join(dirname(path), 'arsenal-backups', `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
   await mkdir(directory, { recursive: true });
   const databaseBackup = join(directory, basename(path));
@@ -148,4 +149,16 @@ export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: strin
   }
   await assertRekordboxClosed();
   return backupPaths;
+};
+
+export const restoreRekordboxDatabaseBackup = async (path: string, backupPath: string): Promise<void> => {
+  await assertRekordboxClosed();
+  const db = await openRekordboxDatabase(path, { readonly: false });
+  try {
+    const results: unknown = db.pragma('wal_checkpoint(TRUNCATE)');
+    const result: unknown = Array.isArray(results) ? results[0] : null;
+    if (typeof result !== 'object' || result === null || !('busy' in result) || result.busy !== 0) throw new Error('Rekordbox database is busy. Keep its backup for recovery.');
+  } finally { db.close(); }
+  await assertRekordboxClosed();
+  await restoreLibraryFileBackup(path, backupPath);
 };

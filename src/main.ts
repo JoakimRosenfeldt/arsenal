@@ -31,6 +31,7 @@ import {
 import {
   DJ_LIBRARY_CHANNELS,
   readSyncRequest,
+  LIBRARY_ORGANIZATION_SCHEMES,
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
   SONG_SOURCE_LABELS,
@@ -522,6 +523,45 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     } finally {
       libraryActions -= 1;
     }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.organizationRoot, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Reorganize from the library window');
+    return library.organizationRoot();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.chooseOrganizationRoot, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Reorganize from the library window');
+    libraryActions += 1;
+    try { return await library.chooseOrganizationRoot(owner); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.previewOrganization, async (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Reorganize from the library window');
+    if (!isRecord(value) || typeof value.destinationRoot !== 'string' || !isAbsolute(value.destinationRoot) ||
+      value.destinationRoot.includes('\0') || value.destinationRoot.length > 32768 || typeof value.renameFiles !== 'boolean') {
+      throw new Error('Choose an absolute destination folder and filename option');
+    }
+    const scheme = LIBRARY_ORGANIZATION_SCHEMES.find((option) => option.value === value.scheme)?.value;
+    if (scheme === undefined) throw new Error('Choose an organization scheme');
+    libraryActions += 1;
+    try { return await library.previewOrganization({ destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles }); }
+    finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.applyOrganization, async (event, id: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Reorganize from the library window');
+    if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id)) throw new Error('Preview the reorganization first');
+    libraryActions += 1;
+    try {
+      const result = await library.applyOrganization(owner, id);
+      for (const window of BrowserWindow.getAllWindows()) window.webContents.send(DJ_LIBRARY_CHANNELS.libraryChanged, library.status());
+      return result;
+    } finally { libraryActions -= 1; }
   });
 
   ipc.handle(DJ_LIBRARY_CHANNELS.resolveSyncMissingFile, async (event, value: unknown) => {

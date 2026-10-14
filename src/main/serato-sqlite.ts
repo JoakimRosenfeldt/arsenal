@@ -10,7 +10,7 @@ import type { SongRow } from '../shared/dj-library';
 import type { PlaylistNodeMove, SyncLibrary, SyncPlaylist, SyncTrack } from './library-sync-model';
 import { seratoSmartRules } from './serato-smart-crates';
 import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
-import { assertMissingFileRepair, type LibraryFileRepairResult } from './repair-library-files';
+import { assertMissingFileRepair, restoreLibraryFileBackup, type LibraryFileRepairResult, type MissingFileRepair } from './repair-library-files';
 import type { SeratoLibraryWriteOptions } from './serato-library';
 
 // Serato 4.0.9 schema 202: root.sqlite is authoritative; master.sqlite is rebuilt by Serato.
@@ -346,38 +346,67 @@ const backupSeratoDatabases = async (rootPath: string): Promise<string[]> => {
   return backupPaths;
 };
 
-export const repairSeratoSqliteMissingFile = async (
+export const repairSeratoSqliteMissingFile = (rootPath: string, missingPath: string, replacementPath: string | null): Promise<LibraryFileRepairResult> =>
+  repairSeratoSqliteMissingFiles(rootPath, [{ missingPath, replacementPath }]);
+
+export const restoreSeratoSqliteBackup = async (path: string, backupPath: string): Promise<void> => {
+  await assertSeratoClosed();
+  const db = new DatabaseSync(path, { timeout: 3000 });
+  try {
+    if (db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy !== 0) throw new Error('Serato database is busy. Keep its backup for recovery.');
+  } finally { db.close(); }
+  await assertSeratoClosed();
+  await restoreLibraryFileBackup(path, backupPath);
+};
+
+export const repairSeratoSqliteMissingFiles = async (
   rootPath: string,
-  missingPath: string,
-  replacementPath: string | null,
+  repairs: readonly MissingFileRepair[],
 ): Promise<LibraryFileRepairResult> => {
   await assertSeratoClosed();
-  await assertMissingFileRepair(missingPath, replacementPath);
-  const replacement = replacementPath === null ? null : await resolveSeratoMediaPath(replacementPath);
-  const portableId = replacement === null ? null : portablePath(rootPath, replacement);
-  const missingKey = await seratoMediaPathKey(missingPath);
-  const replacementKey = replacement === null ? null : await seratoMediaPathKey(replacement);
+  const prepared: { missingPath: string; replacement: string | null; portableId: string | null; missingKey: string; replacementKey: string | null }[] = [];
+  for (const repair of repairs) {
+    await assertMissingFileRepair(repair.missingPath, repair.replacementPath);
+    const replacement = repair.replacementPath === null ? null : await resolveSeratoMediaPath(repair.replacementPath);
+    prepared.push({ ...repair, replacement, portableId: replacement === null ? null : portablePath(rootPath, replacement),
+      missingKey: await seratoMediaPathKey(repair.missingPath),
+      replacementKey: replacement === null ? null : await seratoMediaPathKey(replacement) });
+  }
   if (!(await stat(rootPath)).isFile()) throw new Error('Choose an existing Serato library.');
   const db = new DatabaseSync(rootPath, { timeout: 3000 });
   try {
     const { spaceId } = anchors(db);
     db.exec('BEGIN IMMEDIATE');
-    const targets: number[] = [];
+    const targetsByKey = new Map<string, number[]>();
+    const assetKeys = new Set<string>();
+    const inSpace = db.prepare('SELECT id FROM space_asset WHERE asset_id = ? AND space_id = ?');
     for (const row of db.prepare('SELECT id, portable_id, third_party_type FROM asset').all()) {
       const key = await seratoMediaPathKey(assetPath(rootPath, row));
-      if (key === missingKey && db.prepare('SELECT id FROM space_asset WHERE asset_id = ? AND space_id = ?').get(id(row.id), spaceId)) targets.push(id(row.id));
-      else if (key === replacementKey) throw new Error('The selected audio file already has an entry in this Serato library. Remove the missing entry or choose another audio file.');
+      assetKeys.add(key);
+      if (inSpace.get(id(row.id), spaceId)) {
+        const targets = targetsByKey.get(key) ?? [];
+        targets.push(id(row.id));
+        targetsByKey.set(key, targets);
+      }
     }
-    if (targets.length === 0) throw new Error('The missing track is no longer in this Serato collection. Scan the library again.');
-    if (targets.length > 1 && portableId !== null) throw new Error('This missing location has duplicate Serato entries. Remove the missing entries before importing the relocated file.');
-    await assertSeratoClosed();
-    await assertMissingFileRepair(missingPath, replacement);
+    const batches = prepared.map((repair) => {
+      const targets = targetsByKey.get(repair.missingKey) ?? [];
+      if (repair.replacementKey !== null && assetKeys.has(repair.replacementKey)) throw new Error('The selected audio file already has an entry in this Serato library. Remove the missing entry or choose another audio file.');
+      if (!targets.length) throw new Error('The missing track is no longer in this Serato collection. Scan the library again.');
+      if (targets.length > 1 && repair.portableId !== null) throw new Error('This missing location has duplicate Serato entries. Remove the missing entries before importing the relocated file.');
+      return { ...repair, targets };
+    });
+    const validate = async () => {
+      await assertSeratoClosed();
+      for (const repair of prepared) await assertMissingFileRepair(repair.missingPath, repair.replacement);
+    };
+    await validate();
     const backupPaths = await backupSeratoDatabases(rootPath);
     const foreignKeysBefore = db.prepare('PRAGMA foreign_key_check').all().length;
     const revision = id(db.prepare('SELECT revision FROM serato').get()?.revision) + 1;
     if (!Number.isSafeInteger(revision)) throw new Error('Invalid Serato revision.');
     db.prepare('UPDATE serato SET revision = ?').run(revision);
-    for (const assetId of targets) {
+    for (const { targets, portableId } of batches) for (const assetId of targets) {
       const spaces = portableId === null ? [spaceId] : db.prepare('SELECT space_id FROM space_asset WHERE asset_id = ?').all(assetId).map((row) => id(row.space_id));
       for (const affectedSpace of spaces) {
         db.prepare(`UPDATE container SET revision = ? WHERE id IN (SELECT ca.container_id FROM container_asset ca
@@ -397,8 +426,7 @@ export const repairSeratoSqliteMissingFile = async (
     if (db.prepare('PRAGMA foreign_key_check').all().length > foreignKeysBefore || db.prepare('PRAGMA quick_check').get()?.quick_check !== 'ok') {
       throw new Error('Serato library verification failed. No changes were saved.');
     }
-    await assertSeratoClosed();
-    await assertMissingFileRepair(missingPath, replacement);
+    await validate();
     db.exec('COMMIT');
     return { backupPaths, warnings: [] };
   } catch (error) {

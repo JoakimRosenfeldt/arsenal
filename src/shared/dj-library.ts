@@ -7,6 +7,11 @@ export const ARSENAL_LIBRARY_ID = 'arsenal';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
+  organizationRoot: 'dj-library:organization-root',
+  chooseOrganizationRoot: 'dj-library:choose-organization-root',
+  previewOrganization: 'dj-library:preview-organization',
+  applyOrganization: 'dj-library:apply-organization',
+  organizationProgress: 'dj-library:organization-progress',
   connections: 'dj-library:connections',
   checkStartupChanges: 'dj-library:check-startup-changes',
   resolveStartupChanges: 'dj-library:resolve-startup-changes',
@@ -520,8 +525,48 @@ export type LibraryMutationResult = (
       message?: string;
     }>) & Readonly<{ warning?: string }>;
 
+export const LIBRARY_ORGANIZATION_SCHEMES = [
+  { value: 'artist-album', label: 'Artist / Album / file' },
+  { value: 'genre-artist', label: 'Genre / Artist / file' },
+  { value: 'year-album', label: 'Year / Album / file' },
+  { value: 'date-added', label: 'Date added (Year / Month) / file' },
+  { value: 'flat', label: 'All files in one folder' },
+] as const;
+
+export type LibraryOrganizationRequest = Readonly<{
+  destinationRoot: string;
+  scheme: (typeof LIBRARY_ORGANIZATION_SCHEMES)[number]['value'];
+  renameFiles: boolean;
+}>;
+export type LibraryOrganizationEntry =
+  | Readonly<{ kind: 'move'; from: string; to: string; collision: boolean }>
+  | Readonly<{ kind: 'skip'; from: string; reason: 'Already in place' | 'Missing on disk' | 'Cloud or streaming track' | 'Conflict or unsupported file' }>;
+export type LibraryOrganizationPreview = Readonly<{
+  id: string;
+  destinationRoot: string;
+  moveCount: number;
+  skippedCount: number;
+  collisionCount: number;
+  entries: readonly LibraryOrganizationEntry[];
+}>;
+export type LibraryOrganizationProgress = Readonly<{
+  phase: 'moving' | 'relinking' | 'rolling-back';
+  completed: number;
+  total: number;
+}>;
+export type LibraryOrganizationResult = Readonly<{
+  movedCount: number;
+  backupPaths: readonly string[];
+  warnings: readonly string[];
+}>;
+
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
+  organizationRoot(): Promise<string>;
+  chooseOrganizationRoot(): Promise<string | null>;
+  previewOrganization(request: LibraryOrganizationRequest): Promise<LibraryOrganizationPreview>;
+  applyOrganization(id: string): Promise<LibraryOrganizationResult>;
+  onOrganizationProgress(listener: (progress: LibraryOrganizationProgress) => void): () => void;
   connections(): Promise<LibraryConnections>;
   checkStartupChanges(): Promise<LibraryStartupPreview>;
   resolveStartupChanges(action: 'import' | 'skip'): Promise<LibraryStartupResult>;

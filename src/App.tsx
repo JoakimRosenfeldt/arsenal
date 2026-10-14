@@ -49,6 +49,7 @@ import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
 import { TracklistExportDialog } from './TracklistExportDialog';
 import { LibraryChangesDialog } from './LibraryChangesDialog';
 import { LibraryConnectionsPage } from './LibraryConnectionsPage';
+import { ReorganizeLibraryPage } from './ReorganizeLibraryPage';
 import { Preferences } from './Preferences';
 import type { SmartPlaylistDefinition } from './shared/smart-playlists';
 
@@ -1003,6 +1004,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           onImportChanges={(id) => manageConnection(() => window.djLibrary.manageLibraryConnection({ kind: 'open', id }))}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
           onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />;
+      case 'reorganize':
+        return <ReorganizeLibraryPage busy={busy} hasLibrary={hasLibrary} onWorking={setBusy} onStopPlayback={stopPlayback} />;
       case 'preferences':
         return <Preferences onCancel={() => navigate('library')} onError={reportError} />;
       case 'library':

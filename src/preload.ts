@@ -14,10 +14,20 @@ import {
   type DjLibraryApi,
   type SyncActivity,
   type LibraryStatus,
+  type LibraryOrganizationProgress,
 } from './shared/dj-library';
 
 const api: DjLibraryApi = Object.freeze({
   status: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.status),
+  organizationRoot: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.organizationRoot),
+  chooseOrganizationRoot: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.chooseOrganizationRoot),
+  previewOrganization: (request) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.previewOrganization, request),
+  applyOrganization: (id) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.applyOrganization, id),
+  onOrganizationProgress: (listener) => {
+    const handleProgress = (_event: IpcRendererEvent, progress: LibraryOrganizationProgress): void => listener(progress);
+    ipcRenderer.on(DJ_LIBRARY_CHANNELS.organizationProgress, handleProgress);
+    return () => { ipcRenderer.removeListener(DJ_LIBRARY_CHANNELS.organizationProgress, handleProgress); };
+  },
   connections: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.connections),
   checkStartupChanges: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.checkStartupChanges),
   resolveStartupChanges: (action) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.resolveStartupChanges, action),

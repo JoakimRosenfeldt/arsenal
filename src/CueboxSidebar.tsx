@@ -32,6 +32,7 @@ const savedCollapsedFolders = (libraryId: string | null): ReadonlySet<string> =>
 export type PageId =
   | 'library'
   | 'duplicates'
+  | 'reorganize'
   | 'connections'
   | 'playlists'
   | 'preferences';
@@ -58,6 +59,7 @@ const collectionItems: readonly NavigationItem[] = [
     label: 'Duplicates',
     badge: '',
   },
+  { page: 'reorganize', label: 'Reorganize files', badge: '' },
 ];
 
 const NavigationGroup = ({

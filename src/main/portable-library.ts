@@ -247,7 +247,7 @@ const readManifest = (value: unknown): PortableLibraryManifest => {
 };
 
 const fingerprints = new Map<string, Readonly<{ stamp: string; sha256: string; sizeBytes: number }>>();
-const fingerprint = async (path: string) => {
+export const fingerprint = async (path: string) => {
   const file = await open(path, 'r');
   try {
     const before = await file.stat({ bigint: true });
@@ -276,7 +276,7 @@ const within = (directory: string, path: string): boolean => {
 };
 const stableId = (kind: 'track' | 'playlist', value: string): string => `${kind}-${createHash('sha256').update(value).digest('hex')}`;
 
-const safeName = (value: string | null, fallback: string): string => {
+export const safeName = (value: string | null, fallback: string): string => {
   const cleaned = (value ?? '').normalize('NFC').replace(/[<>:"/\\|?*]|\p{Cc}/gu, '_').trim().replace(/^[. ]+|[. ]+$/g, '');
   let shortened = '';
   for (const character of cleaned) {

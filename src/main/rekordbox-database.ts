@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, preserveHotLoops, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
-import type { LibraryFilesRepairResult, MissingFileRepair } from './repair-library-files';
+import { assertMissingFileRepair, type LibraryFilesRepairResult, type MissingFileRepair } from './repair-library-files';
 import { isCloudPath } from './cloud-tracks';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
@@ -136,7 +136,7 @@ const cueColor = [255, 0, 0] as const;
 const loopColor = [39, 170, 225] as const;
 
 // Leave out performance when only paths and playlists are needed; reading beat grids opens an analysis file per track.
-export const readRekordboxDatabase = async (path: string, { performance: withPerformance = true } = {}): Promise<{ library: SyncLibrary; warnings: string[] }> => {
+export const readRekordboxDatabase = async (path: string, { performance: withPerformance = true } = {}): Promise<{ library: SyncLibrary; warnings: string[]; cloudLocalPaths: readonly string[] }> => {
   const db = await openRekordboxDatabase(path);
   try {
     schema(db);
@@ -220,7 +220,7 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
       path, kind: number(row.Attribute) === 1 ? 'folder' : 'playlist',
       trackPaths: members.get(id(row.ID)) ?? [],
     }));
-    return { library: { tracks, playlists }, warnings: encryptedTracks ? [`${encryptedTracks} Rekordbox ${encryptedTracks === 1 ? 'track was' : 'tracks were'} skipped because Rekordbox encrypts ${encryptedTracks === 1 ? 'its' : 'their'} details. These are usually streaming tracks.`] : [] };
+    return { library: { tracks, playlists }, cloudLocalPaths: [...uploadedFrom.values()], warnings: encryptedTracks ? [`${encryptedTracks} Rekordbox ${encryptedTracks === 1 ? 'track was' : 'tracks were'} skipped because Rekordbox encrypts ${encryptedTracks === 1 ? 'its' : 'their'} details. These are usually streaming tracks.`] : [] };
   } finally { db.close(); }
 };
 
@@ -762,8 +762,9 @@ export const writeRekordboxDatabase = async (
 };
 
 // Relinks missing Collection files, or removes their tracks when replacementPath is null.
-export const repairRekordboxDatabaseFiles = async (path: string, repairs: readonly MissingFileRepair[]): Promise<LibraryFilesRepairResult> => {
+export const repairRekordboxDatabaseFiles = async (path: string, repairs: readonly MissingFileRepair[], forceBackup = false): Promise<LibraryFilesRepairResult> => {
   await assertRekordboxClosed();
+  if (forceBackup) for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath);
   const db = await openRekordboxDatabase(path, { readonly: false });
   try {
     schema(db);
@@ -809,11 +810,12 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
       }
     }
     if (!statements.length) return { backupPaths: [], warnings: [], failures };
-    const backupPaths = await backupRekordboxDatabase(db, path);
+    const backupPaths = await backupRekordboxDatabase(db, path, forceBackup);
     db.exec('BEGIN IMMEDIATE');
     for (const statement of statements) db.prepare(statement.sql).run(...statement.values);
     db.prepare("UPDATE agentRegistry SET int_1 = ?, updated_at = ? WHERE registry_id = 'localUpdateCount'").run(revision, now);
     if (rows(db, 'PRAGMA quick_check')[0]?.quick_check !== 'ok') throw new Error('Rekordbox database verification failed.');
+    if (forceBackup) for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath);
     assertRekordboxClosedSync();
     db.exec('COMMIT');
     return { backupPaths, warnings: [], failures };

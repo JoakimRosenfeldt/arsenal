@@ -3,9 +3,10 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import type { MissingFileRepair } from './repair-library-files';
 import type { PlaylistNodeMove, SyncLibrary } from './library-sync-model';
-import { moveSeratoLegacyNode, readSeratoLegacy, repairSeratoLegacyMissingFile, writeSeratoLegacy } from './serato-legacy';
-import { moveSeratoSqliteNode, readSeratoSqlite, repairSeratoSqliteMissingFile, writeSeratoSqlite } from './serato-sqlite';
+import { moveSeratoLegacyNode, readSeratoLegacy, repairSeratoLegacyMissingFile, repairSeratoLegacyMissingFiles, writeSeratoLegacy } from './serato-legacy';
+import { moveSeratoSqliteNode, readSeratoSqlite, repairSeratoSqliteMissingFile, repairSeratoSqliteMissingFiles, writeSeratoSqlite } from './serato-sqlite';
 
 export type SeratoSource = Readonly<{ kind: 'legacy' | 'sqlite'; path: string }>;
 
@@ -55,6 +56,10 @@ export const assertSeratoClosed = async (): Promise<void> => {
 
 export const readSeratoLibrary = (source: SeratoSource): Promise<SyncLibrary> =>
   source.kind === 'sqlite' ? readSeratoSqlite(source.path) : readSeratoLegacy(source.path);
+
+export const repairSeratoMissingFiles = (source: SeratoSource, repairs: readonly MissingFileRepair[]) =>
+  source.kind === 'sqlite' ? repairSeratoSqliteMissingFiles(source.path, repairs)
+    : repairSeratoLegacyMissingFiles(source.path, repairs, assertSeratoClosed);
 
 export const moveSeratoNode = async (source: SeratoSource, move: PlaylistNodeMove): Promise<void> => {
   await assertSeratoClosed();
