@@ -155,7 +155,7 @@ export const assertRekordboxDatabaseBackup = async (backup: LibraryFileBackup): 
   await assertRekordboxClosed();
   await readFile(backup.backupPath);
   if (backup.databaseHashes && await currentLibraryFileHash(backup.path) !== null) {
-    const db = await openRekordboxDatabase(backup.path);
+    const db = await openRekordboxDatabase(backup.path, { readonly: false });
     try {
       if (!backup.databaseHashes.includes(databaseContentHash((sql) => db.prepare<[], Record<string, unknown>>(sql).iterate()))) {
         throw new Error(`The Rekordbox database has later edits. Kept it unchanged: ${backup.path}`);

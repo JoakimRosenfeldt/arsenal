@@ -1,16 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { open, readFile, readdir, rename, rm } from 'node:fs/promises';
+import { open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { fingerprint } from './portable-library';
-import { installMusicFile, moveMusicFile, organizationFileStamp, removeOrganizationDirectories, syncOrganizationDirectory, unlinkMusicFile } from './reorganize-library';
+import { canonicalOrganizationPath, installMusicFile, moveMusicFile, organizationFileStamp, sameOrganizationFile, removeOrganizationDirectories, syncOrganizationDirectory, unlinkMusicFile } from './reorganize-library';
 import { assertLibraryFileBackup, type LibraryFileBackup, restoreLibraryFileBackup } from './repair-library-files';
-import { assertRekordboxClosed, assertRekordboxDatabaseBackup, isRekordboxDatabasePath, restoreRekordboxDatabaseBackup, RekordboxRunningError } from './rekordbox-database-connection';
-import { assertSeratoSqliteBackup, restoreSeratoSqliteBackup } from './serato-sqlite';
+import { assertRekordboxClosed, assertRekordboxDatabaseBackup, isRekordboxDatabasePath, openRekordboxDatabase, restoreRekordboxDatabaseBackup, RekordboxRunningError } from './rekordbox-database-connection';
+import { assertSeratoSqliteBackup, recoverSeratoSqlite, restoreSeratoSqliteBackup } from './serato-sqlite';
 import { assertSeratoClosed } from './serato-library';
 
-export type OrganizationRestore = LibraryFileBackup & Readonly<{ kind: 'rekordbox-database' | 'xml' | 'sqlite' | 'legacy' | 'portable' | 'arsenal' }>;
+export type OrganizationRestore = LibraryFileBackup & Readonly<{ kind: 'rekordbox-database' | 'xml' | 'sqlite' | 'legacy' | 'portable' | 'arsenal'; libraryKind?: 'rekordbox' | 'serato' }>;
 export type OrganizationJournal = {
   moves: { from: string; to: string; temporary: string; sha256: string | null; stamp: string | null; destinationStamp: string | null; rollbackStamp: string | null; completed: boolean }[];
   restores: OrganizationRestore[];
@@ -59,11 +59,13 @@ const parseOrganizationJournal = (bytes: string, path: string): OrganizationJour
         !('backupPath' in restore) || typeof restore.backupPath !== 'string' || !('expectedHash' in restore) ||
         restore.expectedHash !== null && typeof restore.expectedHash !== 'string' || !('kind' in restore) ||
         restore.kind !== 'rekordbox-database' && restore.kind !== 'xml' && restore.kind !== 'sqlite' && restore.kind !== 'legacy' && restore.kind !== 'portable' && restore.kind !== 'arsenal') throw invalid();
+    if ('libraryKind' in restore && restore.libraryKind !== 'rekordbox' && restore.libraryKind !== 'serato') throw invalid();
+    const libraryKind = 'libraryKind' in restore && (restore.libraryKind === 'rekordbox' || restore.libraryKind === 'serato') ? restore.libraryKind : undefined;
     const expectedHashes = 'expectedHashes' in restore ? restore.expectedHashes : undefined;
     if (expectedHashes !== undefined && (!Array.isArray(expectedHashes) || !expectedHashes.every((hash: unknown) => typeof hash === 'string'))) throw invalid();
     const databaseHashes = 'databaseHashes' in restore ? restore.databaseHashes : undefined;
     if (databaseHashes !== undefined && (!Array.isArray(databaseHashes) || !databaseHashes.every((hash: unknown) => typeof hash === 'string'))) throw invalid();
-    journal.restores.push({ ...(Array.isArray(expectedHashes) ? { expectedHashes: expectedHashes.filter((hash): hash is string => typeof hash === 'string') } : {}), ...(Array.isArray(databaseHashes) ? { databaseHashes: databaseHashes.filter((hash): hash is string => typeof hash === 'string') } : {}), path: restore.path, backupPath: restore.backupPath, expectedHash: restore.expectedHash, kind: restore.kind });
+    journal.restores.push({ ...(libraryKind === undefined ? {} : { libraryKind }), ...(Array.isArray(expectedHashes) ? { expectedHashes: expectedHashes.filter((hash): hash is string => typeof hash === 'string') } : {}), ...(Array.isArray(databaseHashes) ? { databaseHashes: databaseHashes.filter((hash): hash is string => typeof hash === 'string') } : {}), path: restore.path, backupPath: restore.backupPath, expectedHash: restore.expectedHash, kind: restore.kind });
   }
   for (const directory of value.createdDirectories) {
     if (typeof directory !== 'string') throw invalid();
@@ -89,7 +91,7 @@ export const readOrganizationJournal = async (path: string): Promise<Organizatio
   }
   const lines = bytes.split('\n');
   // An interrupted append can leave one incomplete record at the end.
-  lines.pop();
+  const tail = lines.pop();
   if (!lines.length) throw new Error(`The recovery journal is incomplete: ${path}`);
   const moves = new Map<string, OrganizationJournal['moves'][number]>();
   const restores = new Map<string, OrganizationRestore>();
@@ -102,7 +104,9 @@ export const readOrganizationJournal = async (path: string): Promise<Organizatio
     for (const restore of update.restores) restores.set(restore.path, restore);
     for (const directory of update.createdDirectories) createdDirectories.add(directory);
   }
-  return { ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
+  const journal = { ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
+  if (tail) await writeOrganizationJournal(path, journal);
+  return journal;
 };
 
 const exactStamp = async (path: string, exact: boolean): Promise<string | null> => {
@@ -120,26 +124,45 @@ const sameInode = (left: string | null, right: string | null): boolean =>
 
 export const organizationMoveState = async (move: OrganizationJournal['moves'][number]) => {
   const matches = async (path: string, stamp: string | null): Promise<boolean> => stamp !== null &&
-    (stamp === move.stamp || move.sha256 !== null && (await fingerprint(path)).sha256 === move.sha256);
-  const caseOnly = move.from.normalize('NFC').toLowerCase() === move.to.normalize('NFC').toLowerCase();
+    (sameInode(stamp, move.stamp) ||
+      move.sha256 !== null && (await fingerprint(path)).sha256 === move.sha256);
+  const caseOnly = (await canonicalOrganizationPath(move.from)).normalize('NFC').toLowerCase() ===
+    (await canonicalOrganizationPath(move.to)).normalize('NFC').toLowerCase();
   const fromStamp = await exactStamp(move.from, caseOnly);
   const toStamp = await exactStamp(move.to, caseOnly);
   const temporaryStamp = await exactStamp(move.temporary, false);
-  const alias = caseOnly && fromStamp === null && toStamp !== null && await exactStamp(move.from, false) === toStamp;
+  const alias = fromStamp === null && toStamp !== null && await sameOrganizationFile(move.from, move.to);
   const from = move.stamp === null && move.sha256 === null ? fromStamp !== null : await matches(move.from, fromStamp);
-  const to = await matches(move.to, toStamp);
+  const to = await matches(move.to, toStamp) || toStamp !== null &&
+    (move.completed && sameInode(toStamp, move.destinationStamp) || move.sha256 !== null && fromStamp === null && temporaryStamp === null);
   const temporary = await matches(move.temporary, temporaryStamp);
   if (fromStamp !== null && !from && !sameInode(fromStamp, move.rollbackStamp)) throw new Error(`The original audio changed: ${move.from}`);
-  const destinationOwned = to || !move.completed && sameInode(toStamp, move.destinationStamp) && (from || temporary);
-  if (toStamp !== null && !to && (move.completed || !from && !temporary)) throw new Error(`The destination changed: ${move.to}`);
+  const destinationOwned = to || sameInode(toStamp, move.destinationStamp) && (from || temporary);
+  if (toStamp !== null && !destinationOwned) throw new Error(`The destination changed: ${move.to}`);
   if (!from && !to && !temporary && (move.stamp !== null || move.sha256 !== null)) throw new Error(`The audio is unavailable: ${move.from}, ${move.to}`);
   return { from, to, temporary, alias, destinationOwned, fromStamp, toStamp, temporaryStamp };
 };
 
+export const prepareOrganizationRecovery = async (journal: OrganizationJournal): Promise<void> => {
+  if (journal.restores.some((restore) => restore.kind === 'rekordbox-database' || restore.kind === 'xml' && restore.libraryKind !== 'serato')) await assertRekordboxClosed();
+  if (journal.restores.some((restore) => restore.kind === 'sqlite' || restore.kind === 'legacy' || restore.kind === 'xml' && restore.libraryKind !== 'rekordbox')) await assertSeratoClosed();
+  for (const restore of journal.restores) {
+    if (restore.kind !== 'rekordbox-database' && restore.kind !== 'sqlite') continue;
+    try { await stat(restore.path); } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') continue;
+      throw error;
+    }
+    if (restore.kind === 'sqlite') await recoverSeratoSqlite(restore.path);
+    else {
+      const db = await openRekordboxDatabase(restore.path, { readonly: false });
+      db.close();
+    }
+  }
+};
+
 export const undoOrganization = async (journal: OrganizationJournal, progress: (completed: number, total: number) => void = () => undefined,
   persistMove: (move: OrganizationJournal['moves'][number]) => Promise<void> = async () => undefined): Promise<string[]> => {
-  await assertRekordboxClosed();
-  await assertSeratoClosed();
+  await prepareOrganizationRecovery(journal);
   const restores = [...journal.restores].reverse();
   for (const restore of restores) {
     if (restore.kind === 'rekordbox-database' && isRekordboxDatabasePath(restore.path)) await assertRekordboxDatabaseBackup(restore);
@@ -151,12 +174,10 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
   for (const move of [...journal.moves].reverse()) {
     const state = await organizationMoveState(move);
     if (state.from || state.alias || move.stamp === null && move.sha256 === null) continue;
-    if (state.fromStamp !== null) await unlinkMusicFile(move.from);
     const source = state.to ? move.to : move.temporary;
-    const temporary = join(dirname(move.from), `${basename(move.temporary)}.undo`);
-    await rm(temporary, { force: true });
     try {
-      await installMusicFile(source, move.from, temporary, { onCopy: async (sha256) => {
+      if (state.fromStamp !== null && !await sameOrganizationFile(move.from, source)) await unlinkMusicFile(move.from);
+      await installMusicFile(source, move.from, { onCopy: async (sha256) => {
         move.sha256 = sha256;
         await persistMove(move);
       }, onDestination: async (stamp) => {
@@ -182,7 +203,7 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
   }
   for (const move of [...journal.moves].reverse()) {
     let state = await organizationMoveState(move);
-    if (state.alias) {
+    if (state.alias || state.toStamp !== null && await sameOrganizationFile(move.from, move.to)) {
       if (state.temporaryStamp !== null) await unlinkMusicFile(move.temporary);
       await rm(`${move.temporary}.copy`, { force: true });
       await moveMusicFile(move.to, move.from, move.temporary, {
@@ -192,7 +213,7 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
       state = await organizationMoveState(move);
     }
     if (!state.from && (move.stamp !== null || move.sha256 !== null)) throw new Error(`The original audio is unavailable: ${move.from}`);
-    if (state.toStamp !== null && move.to !== move.from) {
+    if (state.toStamp !== null && move.to !== move.from && !await sameOrganizationFile(move.from, move.to)) {
       if (state.destinationOwned) await unlinkMusicFile(move.to);
       else warnings.push(`Kept an unverified file at the interrupted destination: ${move.to}`);
     }

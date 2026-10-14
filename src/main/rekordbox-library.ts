@@ -83,8 +83,8 @@ import { readRekordboxDatabase, repairRekordboxDatabaseFiles } from './rekordbox
 import { removeSongBackups } from './serato-tag-io';
 import { assertRekordboxClosed, detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
-import { appendOrganizationJournal, readOrganizationJournal, organizationMoveState, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
-import { createOrganizationDirectory, installMusicFile, unlinkMusicFile, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
+import { appendOrganizationJournal, readOrganizationJournal, organizationMoveState, prepareOrganizationRecovery, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
+import { createOrganizationDirectory, sameOrganizationFile, organizationFileStamp, installMusicFile, unlinkMusicFile, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
 import { saveRepairedLibraryFiles, type LibraryFileBackup, type LibraryFilesRepairResult } from './repair-library-files';
 
 type CatalogTrack = ParsedTrack;
@@ -736,6 +736,7 @@ export class RekordboxLibrary {
           for (const move of journal.moves) replacements.set(normalizePath(move.to), move.from);
           this.arsenalLibrary = await loadArsenalLibrary(this.arsenalPath) ?? this.arsenalLibrary;
         } else {
+          await prepareOrganizationRecovery(journal);
           const targets = await this.organizationTargets(owner);
           await this.assertOrganizationClosed(targets);
           const present = new Set<string>();
@@ -744,9 +745,9 @@ export class RekordboxLibrary {
             const state = await organizationMoveState(move);
             if (state.to) present.add(move.to);
             else if (!state.from && state.temporary) {
-              if (state.fromStamp !== null) await unlinkMusicFile(move.from);
+              if (state.fromStamp !== null && !await sameOrganizationFile(move.from, move.temporary)) await unlinkMusicFile(move.from);
               await rm(join(dirname(move.from), `${basename(move.temporary)}.undo`), { force: true });
-              await installMusicFile(move.temporary, move.from, join(dirname(move.from), `${basename(move.temporary)}.undo`), {
+              await installMusicFile(move.temporary, move.from, {
                 onCopy: async (sha256) => { move.sha256 = sha256; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
                 onDestination: async (stamp) => { move.rollbackStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
               });
@@ -755,10 +756,17 @@ export class RekordboxLibrary {
           for (const [from, to] of journal.replacements ?? journal.moves.map((move) => [normalizePath(move.from), move.to] as const)) if (present.has(to)) replacements.set(from, to);
           warnings.push(...await this.relinkOrganization(owner, targets, replacements, journal));
           for (const move of journal.moves) {
-            const state = await organizationMoveState(move);
-            if (state.to && state.fromStamp !== null && move.from !== move.to) await unlinkMusicFile(move.from);
-            else if (!state.to && state.toStamp !== null) {
-              if (state.destinationOwned) await unlinkMusicFile(move.to);
+            let state = await organizationMoveState(move);
+            if (state.to && state.fromStamp !== null && move.from !== move.to) {
+              if (await sameOrganizationFile(move.from, move.to)) {
+                await moveMusicFile(move.from, move.to, move.temporary, {
+                  onCopy: async (sha256) => { move.sha256 = sha256; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
+                  onDestination: async (stamp) => { move.destinationStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] }); },
+                });
+                state = await organizationMoveState(move);
+              } else await unlinkMusicFile(move.from);
+            } else if (!state.to && state.toStamp !== null) {
+              if (state.destinationOwned && !await sameOrganizationFile(move.from, move.to)) await unlinkMusicFile(move.to);
               else warnings.push(`Kept an unverified file at the interrupted destination: ${move.to}`);
             }
             if (state.temporaryStamp !== null) await unlinkMusicFile(move.temporary);
@@ -2101,11 +2109,11 @@ export class RekordboxLibrary {
     } catch (error) { throw new Error(this.organizationError(error)); }
   }
 
-  private registerOrganizationBackup(journal: OrganizationJournal, kind: OrganizationRestore['kind']) {
+  private registerOrganizationBackup(journal: OrganizationJournal, kind: OrganizationRestore['kind'], libraryKind?: OrganizationRestore['libraryKind']) {
     return async (backup: LibraryFileBackup): Promise<void> => {
       const index = journal.restores.findIndex((restore) => restore.path === backup.path);
       const previous = journal.restores[index];
-      const restore: OrganizationRestore = { ...backup, kind,
+      const restore: OrganizationRestore = { ...backup, kind, ...(libraryKind === undefined ? {} : { libraryKind }),
         backupPath: previous?.backupPath ?? backup.backupPath,
         expectedHashes: [...new Set([...previous?.expectedHashes ?? [], ...backup.expectedHashes ?? [],
           ...previous?.expectedHash ? [previous.expectedHash] : [], ...backup.expectedHash ? [backup.expectedHash] : []])],
@@ -2131,7 +2139,7 @@ export class RekordboxLibrary {
       });
       if (repairs.length) {
         await assertClosed();
-        const options = { mode: 'reorganize', forceBackup: true, onBackup: this.registerOrganizationBackup(journal, target.kind) } satisfies Parameters<typeof repairRekordboxDatabaseFiles>[2];
+        const options = { mode: 'reorganize', forceBackup: true, onBackup: this.registerOrganizationBackup(journal, target.kind, target.kind === 'xml' ? target.libraryKind : undefined) } satisfies Parameters<typeof repairRekordboxDatabaseFiles>[2];
         const result: LibraryFilesRepairResult = target.kind === 'rekordbox-database' ? await repairRekordboxDatabaseFiles(target.path, repairs, options)
           : target.kind === 'xml' ? await repairRekordboxMissingFiles(target.path, repairs, options) : { ...await repairSeratoMissingFiles(target, repairs, options), failures: [] };
         warnings.push(...result.warnings);
@@ -2224,6 +2232,7 @@ export class RekordboxLibrary {
             onCopy: async (sha256) => { record.sha256 = sha256; await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] }); },
             onDestination: async (stamp) => { record.destinationStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] }); },
           });
+          record.destinationStamp = await organizationFileStamp(move.to);
           record.completed = true;
           await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] });
           progress('moving', index + 1, moves.length);

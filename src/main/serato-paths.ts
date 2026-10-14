@@ -10,7 +10,8 @@ export const resolveSeratoMediaPath = async (path: string): Promise<string> => {
     const dataVolume = '/System/Volumes/Data';
     if (process.platform === 'darwin' && resolved.startsWith(`${dataVolume}/`)) {
       const logical = resolved.slice(dataVolume.length);
-      if (await seratoMediaPathKey(logical) === await seratoMediaPathKey(resolved)) return logical;
+      const [left, right] = await Promise.all([stat(logical, { bigint: true }), stat(resolved, { bigint: true })]);
+      if (left.dev === right.dev && left.ino === right.ino) return logical;
     }
     return resolved;
   } catch (error) {

@@ -352,11 +352,18 @@ export const validateSeratoSqliteDestination = (rootPath: string, path: string):
 export const repairSeratoSqliteMissingFile = (rootPath: string, missingPath: string, replacementPath: string | null): Promise<LibraryFileRepairResult> =>
   repairSeratoSqliteMissingFiles(rootPath, [{ missingPath, replacementPath }]);
 
+export const recoverSeratoSqlite = async (path: string): Promise<void> => {
+  await assertSeratoClosed();
+  await stat(path);
+  const db = new DatabaseSync(path, { timeout: 3000 });
+  try { db.prepare('SELECT name FROM sqlite_master LIMIT 1').get(); } finally { db.close(); }
+};
+
 export const assertSeratoSqliteBackup = async (backup: LibraryFileBackup): Promise<void> => {
   await assertSeratoClosed();
   await stat(backup.backupPath);
   if (backup.databaseHashes && await currentLibraryFileHash(backup.path) !== null) {
-    const db = new DatabaseSync(backup.path, { readOnly: true, timeout: 3000 });
+    const db = new DatabaseSync(backup.path, { timeout: 3000 });
     try {
       if (!backup.databaseHashes.includes(databaseContentHash((sql) => db.prepare(sql).iterate()))) {
         throw new Error(`The Serato database has later edits. Kept it unchanged: ${backup.path}`);
