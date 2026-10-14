@@ -166,3 +166,43 @@ export const saveLibraryColumnSettings = (settings: LibraryColumnSettings): void
     // Column settings are a convenience; a full or blocked store keeps defaults in memory.
   }
 };
+
+export const PLAYLIST_SORTS_KEY = 'arsenal.playlistSorts';
+
+// Playlist ids are positional, so a playlist page is keyed by its folder path + name.
+export const playlistSortKey = (playlist: Readonly<{ folderPath: readonly string[]; name: string }>): string =>
+  JSON.stringify([...playlist.folderPath, playlist.name]);
+
+export const parsePlaylistSorts = (value: unknown): Record<string, SongSort> => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const sorts: Record<string, SongSort> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const sort = parseSongSort(entry);
+    if (sort !== null && sort.length > 0) sorts[key] = sort;
+  }
+  return sorts;
+};
+
+const loadPlaylistSorts = (): Record<string, SongSort> => {
+  if (typeof localStorage === 'undefined') return {};
+  try {
+    const raw = localStorage.getItem(PLAYLIST_SORTS_KEY);
+    return raw === null ? {} : parsePlaylistSorts(JSON.parse(raw) as unknown);
+  } catch {
+    return {};
+  }
+};
+
+export const loadPlaylistSort = (key: string): SongSort => loadPlaylistSorts()[key] ?? [];
+
+export const savePlaylistSort = (key: string, sort: SongSort): void => {
+  if (typeof localStorage === 'undefined') return;
+  const sorts = loadPlaylistSorts();
+  if (sort.length > 0) sorts[key] = sort;
+  else delete sorts[key];
+  try {
+    localStorage.setItem(PLAYLIST_SORTS_KEY, JSON.stringify(sorts));
+  } catch {
+    // Same best-effort storage as the column settings above.
+  }
+};

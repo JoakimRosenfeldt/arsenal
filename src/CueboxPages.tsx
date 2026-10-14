@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -17,8 +18,12 @@ import {
   DEFAULT_LIBRARY_COLUMN_LAYOUT,
   LIBRARY_COLUMNS,
   loadLibraryColumnSettings,
+  loadPlaylistSort,
+  playlistSortKey,
   ratingStars,
   saveLibraryColumnSettings,
+  savePlaylistSort,
+  sortSongs,
   toggleSongSort,
   type LibraryColumn,
   type LibraryColumnKey,
@@ -172,20 +177,34 @@ const ColumnControl = ({ layout, onChange }: Readonly<{
   layout: LibraryColumnLayout;
   onChange: (layout: LibraryColumnLayout) => void;
 }>): JSX.Element => {
-  const move = (key: LibraryColumnKey, delta: -1 | 1): void => {
+  const draggedColumn = useRef<LibraryColumnKey | null>(null);
+  const dropOn = (target: LibraryColumnKey): void => {
+    const dragged = draggedColumn.current;
+    draggedColumn.current = null;
+    if (dragged === null || dragged === target) return;
     const order = [...layout.order];
-    const index = order.indexOf(key);
-    const target = index + delta;
-    if (index < 0 || target < 0 || target >= order.length) return;
-    [order[index], order[target]] = [order[target] as LibraryColumnKey, order[index] as LibraryColumnKey];
+    const from = order.indexOf(dragged);
+    const to = order.indexOf(target);
+    if (from < 0 || to < 0) return;
+    order.splice(from, 1);
+    order.splice(to, 0, dragged);
     onChange({ ...layout, order });
   };
   return (
     <details className="focused-popover">
       <summary className="quiet-button"><UiIcon name="columns" size={16} /> Columns</summary>
       <div className="focused-popover-panel column-panel">
-        {layout.order.flatMap((key) => columnByKey.get(key) ?? []).map((column, index) => (
-          <div className="column-panel-row" key={column.key}>
+        {layout.order.flatMap((key) => columnByKey.get(key) ?? []).map((column) => (
+          <div className="column-panel-row" key={column.key} draggable
+            onDragStart={(event) => {
+              draggedColumn.current = column.key;
+              event.dataTransfer.effectAllowed = 'move';
+              event.dataTransfer.setData('text/plain', column.key);
+            }}
+            onDragEnd={() => { draggedColumn.current = null; }}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => { event.preventDefault(); dropOn(column.key); }}>
+            <span className="column-drag-handle" aria-hidden><UiIcon name="grip" size={14} /></span>
             <label>
               <input type="checkbox" checked={layout.visible.includes(column.key)}
                 disabled={column.key === 'title'}
@@ -196,10 +215,6 @@ const ColumnControl = ({ layout, onChange }: Readonly<{
                     : layout.visible.filter((key) => key !== column.key),
                 })} />{column.label}
             </label>
-            <span className="column-panel-move">
-              <button type="button" aria-label={`Move ${column.label} column left`} disabled={index === 0} onClick={() => move(column.key, -1)}>↑</button>
-              <button type="button" aria-label={`Move ${column.label} column right`} disabled={index === layout.order.length - 1} onClick={() => move(column.key, 1)}>↓</button>
-            </span>
           </div>
         ))}
         <button type="button" onClick={() => onChange(DEFAULT_LIBRARY_COLUMN_LAYOUT)}>Reset columns</button>
@@ -1221,9 +1236,14 @@ export const PlaylistsPage = ({
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [layout, setLayout] = useLibraryColumnLayout();
   const columns = visibleColumns(layout);
+  const [sortOverride, setSortOverride] = useState<Readonly<{ key: string | null; sort: SongSort }> | null>(null);
   const [filters, setFilters] = useState<SongFilters>(DEFAULT_SONG_FILTERS);
   const draggedSongId = useRef<string | null>(null);
   const picking = creating || adding;
+  const sortPlaylist = playlists?.find((playlist) => playlist.id === selectedPlaylistId) ?? null;
+  const sortKey = sortPlaylist ? playlistSortKey(sortPlaylist) : null;
+  const savedSort = useMemo(() => (sortKey ? loadPlaylistSort(sortKey) : []), [sortKey]);
+  const sort = sortOverride?.key === sortKey ? sortOverride.sort : savedSort;
 
   useEffect(() => {
     if (!picking) return;
@@ -1266,14 +1286,19 @@ export const PlaylistsPage = ({
     if (filters.metadata === 'no-cues') return song.cuePointCount === 0;
     return true;
   };
+  const filteredTracks = selectedPlaylist?.tracks.filter(matches) ?? [];
   const visibleTracks = picking
     ? (showAll ? results?.items ?? [] : results?.items.slice(0, 6) ?? [])
-    : selectedPlaylist?.tracks.filter(matches) ?? [];
+    : sort.length > 0 ? sortSongs(filteredTracks, sort) : filteredTracks;
+  const applySort = (next: SongSort): void => {
+    setSortOverride({ key: sortKey, sort: next });
+    if (sortKey) savePlaylistSort(sortKey, next);
+  };
   const selectableTracks = visibleTracks.filter((song) => !adding || !existingIds.has(song.id));
   const allSelected = selectableTracks.length > 0 && selectableTracks.every((song) => chosenSongs.has(song.id));
   const selectedCount = selectableTracks.filter((song) => chosenSongs.has(song.id)).length;
   const chosen = [...chosenSongs.values()];
-  const canReorder = !picking && selectedPlaylist?.kind === 'regular' && onUpdateTracks !== undefined && !busy && query === '' && filters.source === 'all' && filters.metadata === 'all';
+  const canReorder = !picking && selectedPlaylist?.kind === 'regular' && onUpdateTracks !== undefined && !busy && query === '' && filters.source === 'all' && filters.metadata === 'all' && sort.length === 0;
   const selectedOnPage = !picking ? visibleTracks.filter((song) => selectedSongs.has(song.id)).length : 0;
   const allOnPageSelected = !picking && visibleTracks.length > 0 && selectedOnPage === visibleTracks.length;
   const selectionLocked = busy || selectionAction !== null;
@@ -1384,8 +1409,11 @@ export const PlaylistsPage = ({
                     for (const song of selectableTracks) { if (allSelected) next.delete(song.id); else next.set(song.id, song); }
                     setChosenSongs(next);
                   }} />}</span>
-                <span role="columnheader">#{picking ? ' ↑' : ''}</span>
-                <ColumnHeaders columns={columns} />
+                <span role="columnheader">{picking ? '# ↑'
+                  : <button type="button" className="column-sort-button" title="Playlist order" onClick={() => applySort([])}>#{sort.length === 0 && ' ↑'}</button>}</span>
+                {picking ? <ColumnHeaders columns={columns} />
+                  : <ColumnHeaders columns={columns} sort={sort}
+                    onSort={(column, secondary) => applySort(toggleSongSort(sort, column, secondary))} />}
                 <span role="columnheader"><span className="visually-hidden">Actions</span></span>
               </div>
               <div className="track-table-body" role="rowgroup">
