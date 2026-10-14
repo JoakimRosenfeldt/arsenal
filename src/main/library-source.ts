@@ -16,6 +16,7 @@ export type PortableLibrarySource = Readonly<{
   manifestPath: string;
   searchRoots: readonly string[];
   resolvedPaths?: readonly string[];
+  resolvedTrackPaths?: Readonly<Record<string, string>>;
 }>;
 
 const newestPortableLibrary = async (source: PortableLibrarySource, followLatest: boolean) => {

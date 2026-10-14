@@ -469,6 +469,7 @@ export const readPortableLibraryFolder = async (directory: string) => {
 export const resolvePortableLibrary = async (
   manifest: PortableLibraryManifest, manifestPath: string, searchRoots: readonly string[],
   managedMediaDirectory?: string, knownPaths: readonly string[] = [],
+  knownTrackPaths: Readonly<Record<string, string>> = {},
 ) => {
   const root = await realpath(dirname(manifestPath));
   const resolved = new Map<string, string>();
@@ -487,21 +488,10 @@ export const resolvePortableLibrary = async (
       return false;
     }
   };
-  const knownByHash = new Map<string, string>();
-  const wantedHashes = new Set(manifest.tracks.flatMap((track) => track.media.kind === 'local' && track.media.sha256 !== null ? [track.media.sha256] : []));
-  for (const path of new Set(knownPaths)) {
-    try {
-      const found = await fingerprint(path);
-      if (wantedHashes.has(found.sha256)) knownByHash.set(found.sha256, path);
-    } catch (error) {
-      if (!missing(error)) warnings.push(`${basename(path)}: could not reuse the previous music file.`);
-    }
-  }
+  const previousPaths = new Map(Object.entries(knownTrackPaths));
   for (const track of manifest.tracks) {
     const media = track.media;
     if (media.kind === 'reference') { resolved.set(track.id, media.uri); continue; }
-    const known = media.sha256 === null ? undefined : knownByHash.get(media.sha256);
-    if (known !== undefined) { resolved.set(track.id, known); continue; }
     if (media.relativePath !== null) {
       const candidate = join(root, media.relativePath);
       let contained = false;
@@ -519,11 +509,29 @@ export const resolvePortableLibrary = async (
       }
     }
     if (isAbsolute(media.originalPath) && await matches(media.originalPath, media)) { resolved.set(track.id, media.originalPath); continue; }
+    const previous = previousPaths.get(track.id);
+    if (previous !== undefined && await matches(previous, media)) { resolved.set(track.id, previous); continue; }
     if (media.sha256 !== null && media.sizeBytes !== null) {
       let byHash = wanted.get(media.sizeBytes);
       if (byHash === undefined) { byHash = new Map(); wanted.set(media.sizeBytes, byHash); }
       const previous = byHash.get(media.sha256) ?? [];
       byHash.set(media.sha256, [...previous, track]);
+    }
+  }
+  for (const path of new Set(knownPaths)) {
+    if (wanted.size === 0) break;
+    try {
+      const info = await stat(path);
+      const byHash = wanted.get(info.size);
+      if (!info.isFile() || byHash === undefined) continue;
+      const found = await fingerprint(path);
+      const tracks = byHash.get(found.sha256);
+      if (tracks === undefined) continue;
+      for (const track of tracks) resolved.set(track.id, path);
+      byHash.delete(found.sha256);
+      if (byHash.size === 0) wanted.delete(info.size);
+    } catch (error) {
+      if (!missing(error)) warnings.push(`${basename(path)}: could not reuse the previous music file.`);
     }
   }
   const visited = new Set<string>();

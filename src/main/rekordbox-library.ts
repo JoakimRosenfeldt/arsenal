@@ -239,7 +239,9 @@ const readRememberedLibrary = async (
           value.portableSource.searchRoots.every((root) => typeof root === 'string' && isAbsolute(root))
           ? { portableSource: { manifestPath: value.portableSource.manifestPath, searchRoots: value.portableSource.searchRoots,
               ...(Array.isArray(value.portableSource.resolvedPaths) && value.portableSource.resolvedPaths.every((path) => typeof path === 'string' && isAbsolute(path))
-                ? { resolvedPaths: value.portableSource.resolvedPaths } : {}) } } : {}) });
+                ? { resolvedPaths: value.portableSource.resolvedPaths } : {}),
+              ...(isRecord(value.portableSource.resolvedTrackPaths) ? { resolvedTrackPaths: Object.fromEntries(Object.entries(value.portableSource.resolvedTrackPaths)
+                .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && isAbsolute(entry[1]))) } : {}) } } : {}) });
     }
     const backups: StoredLibraryBackup[] = [];
     for (const value of Array.isArray(stored.backups) ? stored.backups : []) {
@@ -1113,7 +1115,9 @@ export class RekordboxLibrary {
         const pending: StoredLibraryConnection = { id: connectionId, kind: 'rekordbox', path: workspacePath,
           workspacePath: null, dirty: false, origin: 'portable', displayName: manifest.name,
           portableSource: { manifestPath, searchRoots, resolvedPaths: resolved.library.tracks.filter((track) => track.song.source === 'local')
-            .map((track) => track.location ?? track.path).filter(isAbsolute) } };
+            .map((track) => track.location ?? track.path).filter(isAbsolute),
+            resolvedTrackPaths: Object.fromEntries(resolved.library.tracks.filter((track) => track.song.source === 'local' && isAbsolute(track.location ?? track.path))
+              .map((track) => [track.song.id, track.location ?? track.path])) } };
         const connection = await this.acceptedSource(pending, await readLibrarySource({ ...pending, followLatest: false }), manifest);
         await this.saveConnections({ connections: [...this.connectedLibraries, connection], library: resolved.library });
         workspacePath = null;
@@ -1300,13 +1304,15 @@ export class RekordboxLibrary {
       if ((await readLibrarySource(exactSource)).fingerprint !== incoming.fingerprint) throw new Error('The portable library changed before import. Try again.');
       const manifest = await readPortableLibrary(manifestPath);
       const resolved = await resolvePortableLibrary(manifest, manifestPath, connection.portableSource.searchRoots,
-        join(dirname(connection.path), 'media', connection.id), connection.portableSource.resolvedPaths);
+        join(dirname(connection.path), 'media', connection.id), connection.portableSource.resolvedPaths, connection.portableSource.resolvedTrackPaths);
       if ((await readLibrarySource(exactSource)).fingerprint !== incoming.fingerprint) throw new Error('The portable library changed during import. Try again.');
       const previous = await readFile(connection.path, 'utf8');
       if (createHash('sha256').update(previous).digest('hex') !== parsed.fingerprint) throw new Error('The local library changed during import. Try again.');
       const backup = await saveLibraryXml(connection.path, mergeRekordboxXml(resolved.library), previous);
       const updated = { ...connection, portableSource: { ...connection.portableSource,
-        resolvedPaths: resolved.library.tracks.filter((track) => track.song.source === 'local').map((track) => track.location ?? track.path).filter(isAbsolute) } };
+        resolvedPaths: resolved.library.tracks.filter((track) => track.song.source === 'local').map((track) => track.location ?? track.path).filter(isAbsolute),
+        resolvedTrackPaths: Object.fromEntries(resolved.library.tracks.filter((track) => track.song.source === 'local' && isAbsolute(track.location ?? track.path))
+          .map((track) => [track.song.id, track.location ?? track.path])) } };
       return { connection: await this.acceptedSource(updated, incoming, manifest), catalog: null, library: resolved.library,
         warnings: [...incoming.warnings, ...resolved.warnings, ...(resolved.missingFiles.length ? [`${resolved.missingFiles.length} audio files could not be located.`] : []),
           ...(backup === null ? [] : [`Previous local library saved to ${backup}`])] };
@@ -2228,7 +2234,9 @@ export class RekordboxLibrary {
     for (const connection of this.connectedLibraries) {
       if (connection.origin === 'arsenal') { connections.push(connection); continue; }
       let updated = connection.portableSource === undefined ? connection : { ...connection, portableSource: { ...connection.portableSource,
-        resolvedPaths: (connection.portableSource.resolvedPaths ?? []).map((path) => replacements.get(normalizePath(path)) ?? path) } };
+        resolvedPaths: (connection.portableSource.resolvedPaths ?? []).map((path) => replacements.get(normalizePath(path)) ?? path),
+        resolvedTrackPaths: Object.fromEntries(Object.entries(connection.portableSource.resolvedTrackPaths ?? {})
+          .map(([id, path]) => [id, replacements.get(normalizePath(path)) ?? path])) } };
       try {
         const source = await readLibrarySource(updated);
         if (acceptedConnections.includes(connection.id) && !this.startupChanges.has(connection.id) && !this.startupUnreadable.has(connection.id)) {
