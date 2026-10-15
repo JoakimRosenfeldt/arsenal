@@ -281,6 +281,44 @@ export const removeOrganizationDirectories = async (created: readonly string[]):
   }
 };
 
+export const removeEmptyOrganizationSourceDirectories = async (
+  moves: readonly Readonly<{ from: string; to: string }>[], destinationRoot?: string,
+): Promise<string[]> => {
+  const protectedDirectories = new Set([normalizePath(await canonicalOrganizationPath(homedir()))]);
+  for (const path of new Set([...moves.map((move) => dirname(move.to)), ...(destinationRoot === undefined ? [] : [destinationRoot])])) {
+    let directory = await canonicalOrganizationPath(path, true);
+    for (;;) {
+      protectedDirectories.add(normalizePath(directory));
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
+  const directories = new Set<string>();
+  const warnings: string[] = [];
+  for (const path of new Set(moves.map((move) => dirname(move.from)))) {
+    try {
+      let directory = await canonicalOrganizationPath(path);
+      while (!protectedDirectories.has(normalizePath(directory)) && dirname(directory) !== directory &&
+        (process.platform === 'win32' || dirname(directory) !== parse(directory).root)) {
+        directories.add(directory);
+        directory = dirname(directory);
+      }
+    } catch (error) { warnings.push(`Could not check the old folder ${path}: ${error instanceof Error ? error.message : 'Unknown error'}`); }
+  }
+  for (const directory of [...directories].sort((left, right) => right.length - left.length)) {
+    try {
+      const info = await lstat(directory);
+      if (info.isDirectory() && !info.isSymbolicLink()) await rmdir(directory);
+    } catch (error) {
+      if (!missing(error) && !(error instanceof Error && 'code' in error && ['ENOTEMPTY', 'EEXIST', 'ENOTDIR'].includes(String(error.code)))) {
+        warnings.push(`Could not remove the empty old folder ${directory}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  }
+  return warnings;
+};
+
 export const syncOrganizationDirectory = async (path: string): Promise<void> => {
   if (process.platform === 'win32') return;
   try {

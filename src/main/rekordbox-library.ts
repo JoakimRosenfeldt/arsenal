@@ -87,7 +87,7 @@ import { removeSongBackups } from './serato-tag-io';
 import { assertRekordboxClosed, detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
 import { appendOrganizationJournal, assertOrganizationRestore, clearIncompleteOrganizationDestination, readOrganizationJournal, organizationMoveState, prepareOrganizationRecovery, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
-import { createOrganizationDirectory, removeOrganizationDirectories, sameOrganizationFile, organizationCopySpace, organizationFileStamp, readOrganizationRequest, installMusicFile, unlinkMusicFile, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateExistingOrganizationCopies, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
+import { createOrganizationDirectory, removeOrganizationDirectories, removeEmptyOrganizationSourceDirectories, sameOrganizationFile, organizationCopySpace, organizationFileStamp, readOrganizationRequest, installMusicFile, unlinkMusicFile, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateExistingOrganizationCopies, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
 import { saveRepairedLibraryFiles, type LibraryFileBackup, type LibraryFilesRepairResult } from './repair-library-files';
 import { organizationDestination } from './organization-destination';
 import { readMusicFile } from './import-music';
@@ -833,6 +833,7 @@ export class RekordboxLibrary {
       } catch (error) { throw new Error(this.organizationError(error)); }
       await rm(this.organizationJournalPath);
       this.organizationRecovery = null;
+      if (action === 'keep-reorganization' && !copy) warnings.push(...await this.cleanOrganizationSourceDirectories(journal));
       this.startupPreview = null;
       this.startupCheck = null;
       this.startupSources.clear();
@@ -2446,6 +2447,11 @@ export class RekordboxLibrary {
     return true;
   }
 
+  private async cleanOrganizationSourceDirectories(journal: OrganizationJournal): Promise<string[]> {
+    try { return await removeEmptyOrganizationSourceDirectories(journal.moves, journal.request?.destinationRoot); }
+    catch (error) { return [`Files moved, but empty source folders could not be cleaned up: ${this.organizationError(error)}`]; }
+  }
+
   applyOrganization(owner: BrowserWindow, id: string): Promise<LibraryOrganizationResult> {
     const preview = this.organizationPlan?.plan.preview;
     const controller = preview?.id === id && preview.operation.kind === 'copy' ? new AbortController() : null;
@@ -2586,6 +2592,7 @@ export class RekordboxLibrary {
       if (additions === undefined) await this.rememberOrganization({ draft: request, applied: request });
       await rm(this.organizationJournalPath);
       this.organizationRecovery = null;
+      if (!copy) warnings.push(...await this.cleanOrganizationSourceDirectories(journal));
       if (additions) this.requestOngoingSync();
       return { outcome: 'completed', fileCount: moves.length, operation, backupPaths: journal.restores.map((restore) => restore.backupPath), warnings,
         ...(additions === undefined ? {} : { addedCount: additions.tracks.length }) };

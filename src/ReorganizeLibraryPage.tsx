@@ -215,7 +215,7 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
         </details>}
         <div className="organization-example" aria-live="polite"><strong>Example path</strong>
           <p>Example track: {EXAMPLE_TRACK.artist}, {EXAMPLE_TRACK.title}. The original file extension is always kept.</p><code>{examplePath}</code></div>
-        <p>{!copy || useCopies ? 'Close connected DJ apps before applying. ' : ''}Missing metadata uses Unknown folders. Collisions get a numbered suffix. Existing files are kept.</p>
+        <p>{!copy || useCopies ? 'Close connected DJ apps before applying. ' : ''}Missing metadata uses Unknown folders. Collisions get a numbered suffix. Existing files are kept.{!copy && ' Empty source folders are removed after moving.'}</p>
         {hasAppliedSettings && <p>New music uses your last applied settings. Preview and apply to change how future files are organized.</p>}
         {copy && <>
           <p>You can stop before library updates begin. Stopping keeps completed copies, removes the unfinished file, and leaves DJ apps on the originals.</p>

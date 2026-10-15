@@ -49,6 +49,7 @@ export const MusicImportDialog = ({ preview, onWorking, onComplete, onClose }: R
     {copy && <p>{preview.operation.kind === 'copy' && !preview.operation.useCopies
       ? 'Arsenal and DJ apps will use the original files.' : 'Arsenal and DJ apps will use the copies.'} Stopping keeps completed copies without adding tracks or changing library paths.</p>}
     {(!copy || preview.operation.kind === 'copy' && preview.operation.useCopies) && <p>Close connected DJ apps before adding files.</p>}
+    {!copy && <p>Empty source folders are removed after moving.</p>}
     {preview.copySpace && <OrganizationCopySpace space={preview.copySpace} />}
     <details><summary>Planned paths ({preview.moveCount})</summary><ul>{preview.entries.filter((entry) => entry.kind === 'move').slice(0, 100).map((entry) =>
       <li key={entry.from}><code>{entry.from}</code> → <code>{entry.to}</code></li>)}</ul>
