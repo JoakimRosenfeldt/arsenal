@@ -25,8 +25,11 @@ export const currentLibraryFileHash = async (path: string): Promise<string | nul
 
 export const databaseContentHash = (query: (sql: string) => Iterable<Record<string, unknown>>): string => {
   const hash = createHash('sha256');
-  const encode = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) =>
-    typeof item === 'bigint' ? String(item) : item instanceof Uint8Array ? Buffer.from(item).toString('base64') : item);
+  const encode = (value: unknown): string => JSON.stringify(value, (_key, item: unknown) => {
+    // Keep safe integers compatible with hashes saved in earlier recovery journals.
+    if (typeof item === 'bigint') return Number.isSafeInteger(Number(item)) ? Number(item) : String(item);
+    return item instanceof Uint8Array ? Buffer.from(item).toString('base64') : item;
+  });
   const schema = [...query("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name")];
   hash.update(encode(schema));
   for (const row of schema) {

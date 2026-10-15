@@ -375,13 +375,19 @@ export const recoverSeratoSqlite = async (path: string): Promise<void> => {
   try { db.prepare('SELECT name FROM sqlite_master LIMIT 1').get(); } finally { db.close(); }
 };
 
+const seratoDatabaseContentHash = (db: DatabaseSync): string => databaseContentHash((sql) => {
+  const statement = db.prepare(sql);
+  statement.setReadBigInts(true);
+  return statement.iterate();
+});
+
 export const assertSeratoSqliteBackup = async (backup: LibraryFileBackup): Promise<void> => {
   await assertSeratoClosed();
   await stat(backup.backupPath);
   if (backup.databaseHashes && await currentLibraryFileHash(backup.path) !== null) {
     const db = new DatabaseSync(backup.path, { timeout: 3000 });
     try {
-      if (!backup.databaseHashes.includes(databaseContentHash((sql) => db.prepare(sql).iterate()))) {
+      if (!backup.databaseHashes.includes(seratoDatabaseContentHash(db))) {
         throw new Error(`The Serato database has later edits. Kept it unchanged: ${backup.path}`);
       }
     } finally { db.close(); }
@@ -412,7 +418,7 @@ export const repairSeratoSqliteMissingFiles = async (
   try {
     const { spaceId } = anchors(db);
     if (db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get()?.busy !== 0) throw new Error('Serato database is busy.');
-    const beforeHash = options.onBackup ? databaseContentHash((sql) => db.prepare(sql).iterate()) : null;
+    const beforeHash = options.onBackup ? seratoDatabaseContentHash(db) : null;
     db.exec('BEGIN IMMEDIATE');
     const targetsByKey = new Map<string, number[]>();
     const assetKeys = new Set<string>();
@@ -475,7 +481,7 @@ export const repairSeratoSqliteMissingFiles = async (
     }
     await validate();
     if (beforeHash !== null) {
-      const afterHash = databaseContentHash((sql) => db.prepare(sql).iterate());
+      const afterHash = seratoDatabaseContentHash(db);
       for (const [index, backup] of backups.entries()) {
         const guarded = { ...backup, databaseHashes: [beforeHash, afterHash] };
         backups[index] = guarded;
