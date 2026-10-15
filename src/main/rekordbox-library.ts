@@ -85,7 +85,7 @@ import { removeSongBackups } from './serato-tag-io';
 import { assertRekordboxClosed, detectRekordboxDatabase, isRekordboxDatabasePath, isRekordboxRunning, RekordboxRunningError } from './rekordbox-database-connection';
 
 import { appendOrganizationJournal, assertOrganizationRestore, clearIncompleteOrganizationDestination, readOrganizationJournal, organizationMoveState, prepareOrganizationRecovery, undoOrganization, writeOrganizationJournal, type OrganizationJournal, type OrganizationRestore } from './organization-journal';
-import { createOrganizationDirectory, sameOrganizationFile, organizationFileStamp, installMusicFile, unlinkMusicFile, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
+import { createOrganizationDirectory, removeOrganizationDirectories, sameOrganizationFile, organizationCopySpace, organizationFileStamp, installMusicFile, unlinkMusicFile, defaultOrganizationRoot, moveMusicFile, planLibraryOrganization, relocatedLibrary, validateOrganizationPlan, type OrganizationPlan } from './reorganize-library';
 import { saveRepairedLibraryFiles, type LibraryFileBackup, type LibraryFilesRepairResult } from './repair-library-files';
 import { organizationDestination } from './organization-destination';
 
@@ -2018,6 +2018,7 @@ export class RekordboxLibrary {
   }
 
   private organizationRecovery: OrganizationJournal | null = null;
+  private organizationCopy: Readonly<{ id: string; controller: AbortController }> | null = null;
 
   private get organizationJournalPath(): string { return join(dirname(this.stateFilePath ?? this.arsenalPath), 'reorganization-journal.json'); }
 
@@ -2338,8 +2339,17 @@ export class RekordboxLibrary {
     return warnings;
   }
 
+  stopOrganizationCopy(id: string): boolean {
+    if (this.organizationCopy?.id !== id) return false;
+    this.organizationCopy.controller.abort(new Error('Copy stopped.'));
+    return true;
+  }
+
   applyOrganization(owner: BrowserWindow, id: string): Promise<LibraryOrganizationResult> {
-    return this.enqueue(async () => {
+    const preview = this.organizationPlan?.plan.preview;
+    const controller = preview?.id === id && preview.operation.kind === 'copy' ? new AbortController() : null;
+    if (controller) this.organizationCopy = { id, controller };
+    return this.enqueue<LibraryOrganizationResult>(async () => {
       const pending = this.organizationPlan;
       this.organizationPlan = null;
       if (pending === null || pending.plan.preview.id !== id || pending.revision !== this.requireCatalog().revision) {
@@ -2353,6 +2363,7 @@ export class RekordboxLibrary {
       const operation = plan.preview.operation;
       const copy = operation.kind === 'copy';
       const relink = operation.kind === 'move' || operation.useCopies;
+      const signal = controller?.signal;
       const progress = (phase: LibraryOrganizationProgress['phase'], completed: number, total: number) => this.organizationProgress(owner, phase, completed, total);
       progress('validating', 0, 1);
       if (await this.organizationTargetState(targets, (completed, total) => progress('validating', completed, total)) !== pending.targetState) throw new Error('A connected library changed. Preview the reorganization again.');
@@ -2360,8 +2371,17 @@ export class RekordboxLibrary {
       if (relink) await assertClosed();
       if (copy && relink && await organizationDestination(plan.preview.destinationRoot) !== 'internal') throw new Error('Copied files can only replace the active library on a verified internal drive.');
       await validateOrganizationPlan(plan, (completed, total) => progress('validating', completed, total));
+      const stoppedOperation = { kind: 'copy', useCopies: false } as const;
+      if (signal?.aborted) return { outcome: 'stopped', fileCount: 0, operation: stoppedOperation, backupPaths: [], warnings: [] };
+      if (copy) {
+        const space = await organizationCopySpace(plan);
+        if (signal?.aborted) return { outcome: 'stopped', fileCount: 0, operation: stoppedOperation, backupPaths: [], warnings: [] };
+        if (space.availableBytes !== null && space.requiredBytes > space.availableBytes) {
+          throw new Error('There is not enough free space at the destination. Free up space or choose another folder, then preview again.');
+        }
+      }
       const moves = plan.preview.entries.filter((entry) => entry.kind === 'move');
-      if (!moves.length) return { fileCount: 0, operation, backupPaths: [], warnings: [] };
+      if (!moves.length) return { outcome: 'completed', fileCount: 0, operation, backupPaths: [], warnings: [] };
       const journal: OrganizationJournal = { operation, moves: moves.map((move) => ({ from: move.from, to: move.to,
         temporary: join(dirname(move.to), `.arsenal-${randomUUID()}.tmp`), sha256: null, stamp: plan.stamps.get(move.from) ?? null,
         destinationStamp: null, rollbackStamp: null, completed: false })), restores: [], createdDirectories: [], replacements: [...replacements], acceptedConnections: targets.acceptedConnections,
@@ -2375,28 +2395,54 @@ export class RekordboxLibrary {
       try {
         progress(copy ? 'copying' : 'moving', 0, moves.length);
         for (const [index, move] of moves.entries()) {
+          signal?.throwIfAborted();
           const record = journal.moves[index];
           if (record === undefined) throw new Error('The move journal is incomplete.');
           await createOrganizationDirectory(plan.preview.destinationRoot, dirname(move.to), journal.createdDirectories, async (directory) => {
             await appendOrganizationJournal(this.organizationJournalPath, { moves: [], restores: [], createdDirectories: [directory] });
           });
           await validateOrganizationPlan({ ...plan, preview: { ...plan.preview, entries: [move] } });
+          signal?.throwIfAborted();
           const options = {
             onCopy: async (sha256) => { record.sha256 = sha256; await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] }); },
             onDestination: async (stamp, installed) => { record.installed = installed; record.destinationStamp = stamp; await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] }); },
           } satisfies NonNullable<Parameters<typeof installMusicFile>[2]>;
-          if (copy) await installMusicFile(move.from, move.to, { ...options, copyOnly: true });
+          if (copy) await installMusicFile(move.from, move.to, { ...options, copyOnly: true, ...(signal ? { signal } : {}) });
           else await moveMusicFile(move.from, move.to, record.temporary, options);
           record.destinationStamp = await organizationFileStamp(move.to);
           record.completed = true;
           await appendOrganizationJournal(this.organizationJournalPath, { moves: [record], restores: [], createdDirectories: [] });
           progress(copy ? 'copying' : 'moving', index + 1, moves.length);
         }
+        signal?.throwIfAborted();
         if (relink) await assertClosed();
         if (copy && relink && await organizationDestination(plan.preview.destinationRoot) !== 'internal') throw new Error('The destination is no longer a verified internal drive. Original library paths were kept.');
         if (await this.organizationTargetState(targets, (completed, total) => progress('validating', completed, total)) !== pending.targetState) throw new Error('A connected library changed while files moved. Preview again.');
+        signal?.throwIfAborted();
+        this.organizationCopy = null;
         if (relink) warnings.push(...await this.relinkOrganization(owner, targets, replacements, journal));
       } catch (error) {
+        if (signal?.aborted) {
+          try {
+            journal.operation = stoppedOperation;
+            await writeOrganizationJournal(this.organizationJournalPath, journal);
+            let fileCount = 0;
+            for (const move of journal.moves) {
+              const state = await organizationMoveState(move, true);
+              if (state.to) fileCount++;
+              else if (state.toStamp !== null) {
+                if (!state.destinationOwned || await sameOrganizationFile(move.from, move.to)) throw new Error(`Could not safely remove the unfinished copy: ${move.to}`);
+                await unlinkMusicFile(move.to);
+              }
+            }
+            await removeOrganizationDirectories(journal.createdDirectories);
+            await rm(this.organizationJournalPath);
+            this.organizationRecovery = null;
+            return { outcome: 'stopped', fileCount, operation: stoppedOperation, backupPaths: [], warnings };
+          } catch (recoveryError) {
+            throw new Error(`Copy stopped. Original library paths were kept. ${this.organizationError(recoveryError)} Journal: ${this.organizationJournalPath}`);
+          }
+        }
         const message = this.organizationError(error);
         try {
           warnings.push(...await undoOrganization(journal, (completed, total) => progress('rolling-back', completed, total), (move) => appendOrganizationJournal(this.organizationJournalPath, { moves: [move], restores: [], createdDirectories: [] })));
@@ -2417,8 +2463,8 @@ export class RekordboxLibrary {
       if (relink) warnings.push(...await this.finishOrganization(replacements, journal));
       await rm(this.organizationJournalPath);
       this.organizationRecovery = null;
-      return { fileCount: moves.length, operation, backupPaths: journal.restores.map((restore) => restore.backupPath), warnings };
-    });
+      return { outcome: 'completed', fileCount: moves.length, operation, backupPaths: journal.restores.map((restore) => restore.backupPath), warnings };
+    }).finally(() => { if (this.organizationCopy?.id === id) this.organizationCopy = null; });
   }
 
   resolveSyncMissingFile(owner: BrowserWindow, action: SyncMissingFileAction): Promise<SyncResult> {

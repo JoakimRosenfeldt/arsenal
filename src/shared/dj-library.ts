@@ -13,6 +13,7 @@ export const DJ_LIBRARY_CHANNELS = Object.freeze({
   chooseOrganizationRoot: 'dj-library:choose-organization-root',
   previewOrganization: 'dj-library:preview-organization',
   applyOrganization: 'dj-library:apply-organization',
+  stopOrganizationCopy: 'dj-library:stop-organization-copy',
   organizationProgress: 'dj-library:organization-progress',
   connections: 'dj-library:connections',
   checkStartupChanges: 'dj-library:check-startup-changes',
@@ -568,6 +569,7 @@ export type LibraryOrganizationPreview = Readonly<{
   skippedCount: number;
   collisionCount: number;
   entries: readonly LibraryOrganizationEntry[];
+  copySpace: Readonly<{ requiredBytes: number; availableBytes: number | null }> | null;
 }>;
 export type LibraryOrganizationProgress = Readonly<{
   phase: 'validating' | 'moving' | 'copying' | 'relinking' | 'rolling-back';
@@ -575,6 +577,7 @@ export type LibraryOrganizationProgress = Readonly<{
   total: number;
 }>;
 export type LibraryOrganizationResult = Readonly<{
+  outcome: 'completed' | 'stopped';
   fileCount: number;
   operation: LibraryOrganizationOperation;
   backupPaths: readonly string[];
@@ -588,6 +591,7 @@ export type DjLibraryApi = Readonly<{
   chooseOrganizationRoot(): Promise<string | null>;
   previewOrganization(request: LibraryOrganizationRequest): Promise<LibraryOrganizationPreview>;
   applyOrganization(id: string): Promise<LibraryOrganizationResult>;
+  stopOrganizationCopy(id: string): Promise<boolean>;
   onOrganizationProgress(listener: (progress: LibraryOrganizationProgress) => void): () => void;
   connections(): Promise<LibraryConnections>;
   checkStartupChanges(): Promise<LibraryStartupPreview>;

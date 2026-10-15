@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, link, lstat, mkdir, open, readdir, realpath, rename, rmdir, stat, unlink, utimes } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, open, readdir, realpath, rename, rmdir, stat, statfs, unlink, utimes } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 
@@ -57,6 +57,33 @@ export type OrganizationPlan = Readonly<{
   preview: LibraryOrganizationPreview;
   stamps: ReadonlyMap<string, string>;
 }>;
+
+export const organizationCopySpace = async (plan: OrganizationPlan): Promise<NonNullable<LibraryOrganizationPreview['copySpace']>> => {
+  const sizes = plan.preview.entries.flatMap((entry) => {
+    if (entry.kind !== 'move') return [];
+    const size = plan.stamps.get(entry.from)?.split(':')[2];
+    if (size === undefined) throw new Error(`The preview has no file size: ${entry.from}`);
+    return [BigInt(size)];
+  });
+  let blockSize = 1n;
+  let availableBytes: number | null = null;
+  let path = plan.preview.destinationRoot;
+  for (;;) {
+    try {
+      const info = await statfs(path, { bigint: true });
+      if (info.bsize > 0n && info.bavail >= 0n) {
+        blockSize = info.bsize;
+        availableBytes = Number(info.bavail * blockSize);
+      }
+      break;
+    } catch (error) {
+      if (!missing(error) || dirname(path) === path) break;
+      path = dirname(path);
+    }
+  }
+  const requiredBytes = Number(sizes.reduce((total, size) => total + (size + blockSize - 1n) / blockSize * blockSize, 0n));
+  return { requiredBytes, availableBytes };
+};
 
 export const planLibraryOrganization = async (
   library: SyncLibrary, request: LibraryOrganizationRequest, reservedPaths: readonly string[], cloudPaths: readonly string[],
@@ -159,8 +186,9 @@ export const planLibraryOrganization = async (
   }
   progress(library.tracks.length, library.tracks.length);
   const moves = entries.filter((entry) => entry.kind === 'move');
-  return { preview: { id: randomUUID(), destinationRoot: root, operation: request.operation ?? { kind: 'move' }, entries, moveCount: moves.length,
-    skippedCount: entries.length - moves.length, collisionCount: moves.filter((entry) => entry.collision).length }, stamps };
+  const plan: OrganizationPlan = { preview: { id: randomUUID(), destinationRoot: root, operation: request.operation ?? { kind: 'move' }, entries, moveCount: moves.length,
+    skippedCount: entries.length - moves.length, collisionCount: moves.filter((entry) => entry.collision).length, copySpace: null }, stamps };
+  return request.operation?.kind === 'copy' ? { ...plan, preview: { ...plan.preview, copySpace: await organizationCopySpace(plan) } } : plan;
 };
 
 export const validateOrganizationPlan = async (plan: OrganizationPlan, progress: (completed: number, total: number) => void = () => undefined): Promise<void> => {
@@ -223,11 +251,13 @@ const syncOrganizationFile = async (path: string): Promise<void> => {
 
 type MusicInstallOptions = Readonly<{
   copyOnly?: boolean;
+  signal?: AbortSignal;
   onCopy?: (sha256: string) => Promise<void>;
   onDestination?: (stamp: string, installed: boolean) => Promise<void>;
 }>;
 
 export const copyMusicFile = async (from: string, to: string, options: MusicInstallOptions = {}): Promise<void> => {
+  options.signal?.throwIfAborted();
   const info = await stat(from);
   const originalStamp = await organizationFileStamp(from);
   const hash = createHash('sha256');
@@ -238,7 +268,9 @@ export const copyMusicFile = async (from: string, to: string, options: MusicInst
     try {
       const buffer = Buffer.allocUnsafe(1024 * 1024);
       for (;;) {
+        options.signal?.throwIfAborted();
         const { bytesRead } = await source.read(buffer, 0, buffer.length, null);
+        options.signal?.throwIfAborted();
         if (bytesRead === 0) break;
         const bytes = buffer.subarray(0, bytesRead);
         hash.update(bytes);
@@ -247,11 +279,12 @@ export const copyMusicFile = async (from: string, to: string, options: MusicInst
     } finally { await source.close(); }
   } finally { await file.close(); }
   const sha256 = hash.digest('hex');
-  const copied = await fingerprint(to);
+  const copied = await fingerprint(to, options.signal);
   if (copied.sha256 !== sha256 || copied.sizeBytes !== info.size ||
       await organizationFileStamp(from) !== originalStamp) throw new Error(`Copy verification failed: ${from}`);
   await chmod(to, info.mode & 0o777).catch(() => undefined);
   await utimes(to, info.atime, info.mtime).catch(() => undefined);
+  options.signal?.throwIfAborted();
   await options.onCopy?.(sha256);
 };
 

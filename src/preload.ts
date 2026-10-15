@@ -24,6 +24,7 @@ const api: DjLibraryApi = Object.freeze({
   chooseOrganizationRoot: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.chooseOrganizationRoot),
   previewOrganization: (request) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.previewOrganization, request),
   applyOrganization: (id) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.applyOrganization, id),
+  stopOrganizationCopy: (id) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.stopOrganizationCopy, id),
   onOrganizationProgress: (listener) => {
     const handleProgress = (_event: IpcRendererEvent, progress: LibraryOrganizationProgress): void => listener(progress);
     ipcRenderer.on(DJ_LIBRARY_CHANNELS.organizationProgress, handleProgress);

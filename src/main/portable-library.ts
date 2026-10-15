@@ -247,7 +247,8 @@ const readManifest = (value: unknown): PortableLibraryManifest => {
 };
 
 const fingerprints = new Map<string, Readonly<{ stamp: string; sha256: string; sizeBytes: number }>>();
-export const fingerprint = async (path: string) => {
+export const fingerprint = async (path: string, signal?: AbortSignal) => {
+  signal?.throwIfAborted();
   const file = await open(path, 'r');
   try {
     const before = await file.stat({ bigint: true });
@@ -258,10 +259,12 @@ export const fingerprint = async (path: string) => {
     if (cached?.stamp === stamp) return cached;
     const hash = createHash('sha256');
     for await (const raw of file.createReadStream({ autoClose: false })) {
+      signal?.throwIfAborted();
       const chunk: unknown = raw;
       if (!Buffer.isBuffer(chunk)) throw new Error('Could not read music file bytes.');
       hash.update(chunk);
     }
+    signal?.throwIfAborted();
     if (stampFor(await file.stat({ bigint: true })) !== stamp) throw new Error('The music file changed while it was read. Retry the backup.');
     const result = { stamp, sha256: hash.digest('hex'), sizeBytes: Number(before.size) };
     fingerprints.set(path, result);

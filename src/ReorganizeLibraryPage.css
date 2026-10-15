@@ -28,6 +28,8 @@
 .organization-artist-rules label { margin: 10px 0; }
 .organization-example { padding: 16px; border: 1px solid var(--line-strong); border-radius: 4px; }
 .organization-example code { display: block; line-height: 1.6; }
+.organization-space { padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 4px; }
+.organization-space strong { color: var(--text); }
 @media (max-width: 650px) {
   .organization-field-actions { display: flex; margin: 8px 0 0; }
 }

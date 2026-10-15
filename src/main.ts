@@ -564,6 +564,12 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     finally { libraryActions -= 1; }
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.stopOrganizationCopy, (event, id: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main' || typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id)) throw new Error('Choose the active copy operation');
+    return library.stopOrganizationCopy(id);
+  });
+
   ipc.handle(DJ_LIBRARY_CHANNELS.applyOrganization, async (event, id: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Reorganize from the library window');

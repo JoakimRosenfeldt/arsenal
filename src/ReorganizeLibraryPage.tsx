@@ -34,6 +34,11 @@ const OrganizationFieldsEditor = ({ label, fields, onChange, disabled, minimum }
 const EXAMPLE_TRACK = { artist: "Bonobo, O'Flynn feat. Jordan Rakei", album: 'Fragments', genre: 'Electronic', year: 2022, label: 'Ninja Tune',
   title: 'Otomo', trackNumber: 8, discNumber: 1, bpm: 123, musicalKey: 'Am', dateAdded: '2022-01-14' };
 
+const formatSpace = (bytes: number): string => {
+  const unit = Math.min(4, Math.max(0, Math.floor(Math.log2(Math.max(1, bytes)) / 10)));
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(bytes / 1024 ** unit)} ${['B', 'KiB', 'MiB', 'GiB', 'TiB'][unit]}`;
+};
+
 export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayback }: Readonly<{
   busy: boolean;
   hasLibrary: boolean;
@@ -50,6 +55,7 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
   const [progress, setProgress] = useState<LibraryOrganizationProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<'choose' | 'preview' | 'apply' | null>(null);
+  const [stopping, setStopping] = useState(false);
   const pending = useRef(false);
   const working = busy || action !== null;
 
@@ -83,6 +89,7 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
     setError(null);
     setResult(null);
     setProgress(null);
+    setStopping(false);
     onWorking(true);
     try {
       if (next === 'choose') {
@@ -97,13 +104,23 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
       } else if (preview !== null) {
         if (preview.operation.kind === 'move' || preview.operation.useCopies) onStopPlayback();
         const id = preview.id;
-        setPreview(null);
         setResult(await window.djLibrary.applyOrganization(id));
       }
     } catch (error) { setError(error instanceof Error ? error.message : 'Could not reorganize the library.'); }
-    finally { pending.current = false; setAction(null); onWorking(false); }
+    finally { if (next === 'apply') setPreview(null); pending.current = false; setAction(null); setStopping(false); onWorking(false); }
   };
 
+  const stopCopy = async (): Promise<void> => {
+    if (action !== 'apply' || preview?.operation.kind !== 'copy' || stopping) return;
+    setStopping(true);
+    try { await window.djLibrary.stopOrganizationCopy(preview.id); }
+    catch (error) { setStopping(false); setError(error instanceof Error ? error.message : 'Could not stop the copy.'); }
+  };
+
+  const space = preview?.copySpace;
+  const insufficientSpace = space !== null && space !== undefined && space.availableBytes !== null && space.requiredBytes > space.availableBytes;
+  const canStop = action === 'apply' && preview?.operation.kind === 'copy' &&
+    (progress === null || progress.phase === 'validating' || progress.phase === 'copying');
   const skipped = preview?.entries.filter((entry) => entry.kind === 'skip') ?? [];
   const reasons = [...new Set(skipped.map((entry) => entry.reason))];
   const phase = progress?.phase === 'validating' ? 'Validating files and libraries' : progress?.phase === 'moving' ? 'Moving files' : progress?.phase === 'copying' ? 'Copying files' : progress?.phase === 'relinking' ? 'Updating libraries' : 'Restoring files and libraries';
@@ -169,16 +186,27 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
         <div className="organization-example" aria-live="polite"><strong>Example path</strong>
           <p>Example track: {EXAMPLE_TRACK.artist}, {EXAMPLE_TRACK.title}. The original file extension is always kept.</p><code>{examplePath}</code></div>
         <p>{!copy || useCopies ? 'Close connected DJ apps before applying. ' : ''}Missing metadata uses Unknown folders. Collisions get a numbered suffix. Existing files are kept.</p>
+        {copy && <>
+          <p>You can stop before library updates begin. Stopping keeps completed copies, removes the unfinished file, and leaves DJ apps on the originals.</p>
+          {space ? <div className="organization-space" aria-live="polite">
+            <p><strong>Estimated space needed: {formatSpace(space.requiredBytes)}</strong><br />
+              {space.availableBytes === null ? 'Free space could not be checked.' : `Available when previewed: ${formatSpace(space.availableBytes)}`}</p>
+            {insufficientSpace ? <p className="reorganize-error" role="alert">Not enough free space. Choose another destination or free up at least {formatSpace(space.requiredBytes - (space.availableBytes ?? 0))}, then preview again.</p>
+              : <p>{space.availableBytes === null ? 'Check the destination has enough room before copying.' : 'Free space is checked again before copying. Folder and filesystem overhead may vary.'}</p>}
+          </div> : <p>Preview to estimate space needed and check free space.</p>}
+        </>}
         <div className="reorganize-actions"><button className="quiet-button" type="button" disabled={working || !destinationRoot.trim()} onClick={() => void run('preview')}>Preview</button>
-          <button className="accent-button" type="button" disabled={working || !preview?.moveCount} onClick={() => void run('apply')}>{copy ? 'Copy files' : 'Apply moves'}</button></div>
+          <button className="accent-button" type="button" disabled={working || !preview?.moveCount || insufficientSpace} onClick={() => void run('apply')}>{copy ? 'Copy files' : 'Apply moves'}</button>
+          {canStop && <button className="quiet-button" type="button" disabled={stopping} onClick={() => void stopCopy()}>{stopping ? 'Stopping…' : 'Stop copy'}</button>}</div>
       </div>
       {action !== null && <div className="reorganize-progress" role="status">
         <p>{progress ? `${phase}: ${progress.completed} / ${progress.total}` : action === 'preview' ? 'Checking files and connected libraries...' : action === 'choose' ? 'Choosing folder...' : 'Checking the preview...'}</p>
         {progress && <progress max={Math.max(1, progress.total)} value={progress.completed} />}
       </div>}
       {error && <p className="reorganize-error" role="alert">{error}</p>}
-      {result && <div role="status"><p>{result.fileCount} files {result.operation.kind === 'copy' ? 'copied. Originals kept.' : 'moved.'} {result.operation.kind === 'copy' && !result.operation.useCopies
-        ? 'Arsenal and DJ apps still use the original files.' : 'Arsenal and connected libraries now use the new paths.'}</p>
+      {result && <div role="status"><p>{result.outcome === 'stopped' ? `Copy stopped. ${result.fileCount} completed ${result.fileCount === 1 ? 'copy' : 'copies'} kept. Original files and library paths kept.`
+        : `${result.fileCount} files ${result.operation.kind === 'copy' ? 'copied. Originals kept.' : 'moved.'} ${result.operation.kind === 'copy' && !result.operation.useCopies
+          ? 'Arsenal and DJ apps still use the original files.' : 'Arsenal and connected libraries now use the new paths.'}`}</p>
         {result.warnings.map((warning) => <p key={warning}>{warning}</p>)}
         {!!result.backupPaths.length && <details><summary>Library backups ({result.backupPaths.length})</summary>
           <ul>{result.backupPaths.map((path) => <li key={path}><code>{path}</code></li>)}</ul></details>}</div>}
