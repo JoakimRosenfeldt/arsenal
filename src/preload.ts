@@ -20,6 +20,7 @@ import {
 const api: DjLibraryApi = Object.freeze({
   status: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.status),
   organizationRoot: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.organizationRoot),
+  organizationDestination: (root) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.organizationDestination, root),
   chooseOrganizationRoot: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.chooseOrganizationRoot),
   previewOrganization: (request) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.previewOrganization, request),
   applyOrganization: (id) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.applyOrganization, id),

@@ -8,6 +8,7 @@ export const ARSENAL_LIBRARY_ID = 'arsenal';
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   organizationRoot: 'dj-library:organization-root',
+  organizationDestination: 'dj-library:organization-destination',
   chooseOrganizationRoot: 'dj-library:choose-organization-root',
   previewOrganization: 'dj-library:preview-organization',
   applyOrganization: 'dj-library:apply-organization',
@@ -248,7 +249,7 @@ export type LibraryConnectionResult =
 export type LibraryStartupAction = 'import' | 'skip' | 'undo-reorganization' | 'keep-reorganization';
 
 export type LibraryStartupPreview = Readonly<{
-  organizationRecovery?: Readonly<{ journalPath: string; moveCount: number }>;
+  organizationRecovery?: Readonly<{ journalPath: string; moveCount: number; operation?: LibraryOrganizationOperation }>;
   libraries: readonly Readonly<{ id: string; name: string; changes: readonly string[] }>[];
   syncAfterImport: boolean;
   warnings: readonly string[];
@@ -536,10 +537,23 @@ export const LIBRARY_ORGANIZATION_SCHEMES = [
   { value: 'flat', label: 'All files in one folder' },
 ] as const;
 
+export type LibraryOrganizationOperation = Readonly<{ kind: 'move' }> | Readonly<{ kind: 'copy'; useCopies: boolean }>;
+export type LibraryOrganizationDestination = 'internal' | 'external' | 'unknown';
+
+export const readOrganizationOperation = (value: unknown): LibraryOrganizationOperation => {
+  if (value === undefined) return { kind: 'move' };
+  if (typeof value === 'object' && value !== null && 'kind' in value) {
+    if (value.kind === 'move') return { kind: 'move' };
+    if (value.kind === 'copy' && 'useCopies' in value && typeof value.useCopies === 'boolean') return { kind: 'copy', useCopies: value.useCopies };
+  }
+  throw new Error('Choose whether to move or copy files and whether to use the copies.');
+};
+
 export type LibraryOrganizationRequest = Readonly<{
   destinationRoot: string;
   scheme: (typeof LIBRARY_ORGANIZATION_SCHEMES)[number]['value'];
   renameFiles: boolean;
+  operation: LibraryOrganizationOperation;
 }>;
 export type LibraryOrganizationEntry =
   | Readonly<{ kind: 'move'; from: string; to: string; collision: boolean }>
@@ -547,18 +561,20 @@ export type LibraryOrganizationEntry =
 export type LibraryOrganizationPreview = Readonly<{
   id: string;
   destinationRoot: string;
+  operation: LibraryOrganizationOperation;
   moveCount: number;
   skippedCount: number;
   collisionCount: number;
   entries: readonly LibraryOrganizationEntry[];
 }>;
 export type LibraryOrganizationProgress = Readonly<{
-  phase: 'validating' | 'moving' | 'relinking' | 'rolling-back';
+  phase: 'validating' | 'moving' | 'copying' | 'relinking' | 'rolling-back';
   completed: number;
   total: number;
 }>;
 export type LibraryOrganizationResult = Readonly<{
-  movedCount: number;
+  fileCount: number;
+  operation: LibraryOrganizationOperation;
   backupPaths: readonly string[];
   warnings: readonly string[];
 }>;
@@ -566,6 +582,7 @@ export type LibraryOrganizationResult = Readonly<{
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   organizationRoot(): Promise<string>;
+  organizationDestination(root: string): Promise<LibraryOrganizationDestination>;
   chooseOrganizationRoot(): Promise<string | null>;
   previewOrganization(request: LibraryOrganizationRequest): Promise<LibraryOrganizationPreview>;
   applyOrganization(id: string): Promise<LibraryOrganizationResult>;

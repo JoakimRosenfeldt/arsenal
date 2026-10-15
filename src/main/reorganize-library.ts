@@ -151,7 +151,7 @@ export const planLibraryOrganization = async (
         key.startsWith('path:') && portableKey(canonicalSource) === portableKey(join(canonicalDirectory, basename(path)));
     };
     let suffix = 2;
-    while (await occupied(to) && !await ownDestination(to)) to = join(directory, `${stem} (${suffix++})${extension}`);
+    while (await occupied(to) && (request.operation?.kind === 'copy' || !await ownDestination(to))) to = join(directory, `${stem} (${suffix++})${extension}`);
     const temporaryName = `.arsenal-${randomUUID()}.tmp`;
     if (process.platform === 'win32' && Math.max(to.length, join(directory, `${temporaryName}.copy`).length) > 259) { skip('Destination path exceeds the Windows 259-character limit'); continue; }
     const canonicalDestination = join(canonicalDirectory, basename(to));
@@ -167,7 +167,7 @@ export const planLibraryOrganization = async (
   }
   progress(library.tracks.length, library.tracks.length);
   const moves = entries.filter((entry) => entry.kind === 'move');
-  return { preview: { id: randomUUID(), destinationRoot: root, entries, moveCount: moves.length,
+  return { preview: { id: randomUUID(), destinationRoot: root, operation: request.operation ?? { kind: 'move' }, entries, moveCount: moves.length,
     skippedCount: entries.length - moves.length, collisionCount: moves.filter((entry) => entry.collision).length }, stamps };
 };
 
@@ -230,6 +230,7 @@ const syncOrganizationFile = async (path: string): Promise<void> => {
 };
 
 type MusicInstallOptions = Readonly<{
+  copyOnly?: boolean;
   onCopy?: (sha256: string) => Promise<void>;
   onDestination?: (stamp: string, installed: boolean) => Promise<void>;
 }>;
@@ -263,7 +264,8 @@ export const copyMusicFile = async (from: string, to: string, options: MusicInst
 };
 
 export const installMusicFile = async (from: string, to: string, options: MusicInstallOptions = {}): Promise<void> => {
-  try { await link(from, to); } catch (error) {
+  if (options.copyOnly) await copyMusicFile(from, to, options);
+  else try { await link(from, to); } catch (error) {
     if (error instanceof Error && 'code' in error && (error.code === 'EEXIST' || error.code === 'ENOENT')) throw error;
     await copyMusicFile(from, to, options);
   }

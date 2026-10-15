@@ -17,6 +17,7 @@ import {
 } from 'electron';
 
 import { RekordboxLibrary } from './main/rekordbox-library';
+import { organizationDestination } from './main/organization-destination';
 import { readPlaylistSuggestionRequest } from './main/playlist-suggestions';
 import { AppUpdates } from './main/app-updates';
 import { OpenRouterConnection } from './main/openrouter';
@@ -31,6 +32,7 @@ import {
 import {
   DJ_LIBRARY_CHANNELS,
   readSyncRequest,
+  readOrganizationOperation,
   LIBRARY_ORGANIZATION_SCHEMES,
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
@@ -538,6 +540,12 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     try { return await library.chooseOrganizationRoot(owner); } finally { libraryActions -= 1; }
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.organizationDestination, async (event, root: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main' || typeof root !== 'string' || !isAbsolute(root) || root.includes('\0') || root.length > 32768) throw new Error('Choose an absolute destination folder');
+    return organizationDestination(root);
+  });
+
   ipc.handle(DJ_LIBRARY_CHANNELS.previewOrganization, async (event, value: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Reorganize from the library window');
@@ -547,8 +555,9 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     }
     const scheme = LIBRARY_ORGANIZATION_SCHEMES.find((option) => option.value === value.scheme)?.value;
     if (scheme === undefined) throw new Error('Choose an organization scheme');
+    const operation = readOrganizationOperation(value.operation);
     libraryActions += 1;
-    try { return await library.previewOrganization({ destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles }, owner); }
+    try { return await library.previewOrganization({ destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles, operation }, owner); }
     finally { libraryActions -= 1; }
   });
 

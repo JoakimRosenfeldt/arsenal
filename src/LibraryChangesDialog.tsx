@@ -14,6 +14,8 @@ export const LibraryChangesDialog = ({ preview, busy, onResolve, onDismiss }: Re
   const [failed, setFailed] = useState<string | null>(null);
   const [failedActions, setFailedActions] = useState<readonly LibraryStartupAction[]>([]);
   const recovery = preview.organizationRecovery;
+  const copy = recovery?.operation?.kind === 'copy';
+  const useCopies = recovery?.operation?.kind === 'copy' && recovery.operation.useCopies;
   const working = busy || action !== null;
 
   useEffect(() => {
@@ -53,8 +55,10 @@ export const LibraryChangesDialog = ({ preview, busy, onResolve, onDismiss }: Re
         else if (dismissible && !working) onDismiss();
       }}>
       <header className="library-changes-heading">
-        <h2 id="library-changes-title">{recovery ? 'Unfinished reorganization' : 'Library changes'}</h2>
-        <p id="library-changes-description">{recovery ? `${recovery.moveCount} planned moves may have been interrupted. Undo restores library backups and audio where possible. Keep updates every library to use the audio at its current location.` : 'Changes since your last session.'}</p>
+        <h2 id="library-changes-title">{recovery ? copy ? 'Unfinished copy' : 'Unfinished reorganization' : 'Library changes'}</h2>
+        <p id="library-changes-description">{recovery ? copy
+          ? `${recovery.moveCount} planned copies may have been interrupted. Original files are kept. Undo removes verified copies and restores library backups. Keep retains completed copies.${useCopies ? ' Library paths will switch to available copies on internal drives.' : ' Arsenal and DJ apps keep using the originals.'}`
+          : `${recovery.moveCount} planned moves may have been interrupted. Undo restores library backups and audio where possible. Keep updates every library to use the audio at its current location.` : 'Changes since your last session.'}</p>
       </header>
       {recovery && <p>Recovery journal: <code>{recovery.journalPath}</code>. Backups remain available after either choice.</p>}
       <div className="library-changes-list">
@@ -76,7 +80,7 @@ export const LibraryChangesDialog = ({ preview, busy, onResolve, onDismiss }: Re
         </span>}
         <button className="quiet-button" type="button" disabled={working} autoFocus onClick={() => void resolve(recovery ? 'keep-reorganization' : 'skip')}>{recovery ? 'Keep current locations' : 'Not now'}</button>
         <button className="accent-button" type="button" disabled={working} onClick={() => void resolve(recovery ? 'undo-reorganization' : 'import')}>
-          {recovery ? 'Undo reorganization' : preview.syncAfterImport ? 'Import and sync' : 'Import changes'}
+          {recovery ? copy ? 'Undo copy' : 'Undo reorganization' : preview.syncAfterImport ? 'Import and sync' : 'Import changes'}
         </button>
       </footer>
     </dialog>

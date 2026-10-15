@@ -3,6 +3,7 @@ import { constants, createReadStream } from 'node:fs';
 import { open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
+import { readOrganizationOperation, type LibraryOrganizationOperation } from '../shared/dj-library';
 import { fingerprint } from './portable-library';
 import { canonicalOrganizationPath, installMusicFile, moveMusicFile, organizationFileStamp, sameOrganizationFile, removeOrganizationDirectories, syncOrganizationDirectory, unlinkMusicFile } from './reorganize-library';
 import { assertLibraryFileBackup, type LibraryFileBackup, restoreLibraryFileBackup } from './repair-library-files';
@@ -12,6 +13,7 @@ import { assertSeratoClosed } from './serato-library';
 
 export type OrganizationRestore = LibraryFileBackup & Readonly<{ kind: 'rekordbox-database' | 'xml' | 'sqlite' | 'legacy' | 'portable' | 'arsenal'; libraryKind?: 'rekordbox' | 'serato' }>;
 export type OrganizationJournal = {
+  operation?: LibraryOrganizationOperation;
   moves: { installed?: boolean; rollbackInstalled?: boolean; from: string; to: string; temporary: string; sha256: string | null; stamp: string | null; destinationStamp: string | null; rollbackStamp: string | null; completed: boolean }[];
   restores: OrganizationRestore[];
   createdDirectories: string[];
@@ -42,6 +44,7 @@ const parseOrganizationJournal = (bytes: string, path: string): OrganizationJour
   if (typeof value !== 'object' || value === null || !('moves' in value) || !Array.isArray(value.moves) ||
       !('restores' in value) || !Array.isArray(value.restores) || !('createdDirectories' in value) || !Array.isArray(value.createdDirectories)) throw invalid();
   const journal: OrganizationJournal = { moves: [], restores: [], createdDirectories: [] };
+  if ('operation' in value) journal.operation = readOrganizationOperation(value.operation);
   if ('preserveDestinations' in value) {
     if (typeof value.preserveDestinations !== 'boolean') throw invalid();
     journal.preserveDestinations = value.preserveDestinations;
@@ -125,17 +128,19 @@ export const readOrganizationJournal = async (path: string): Promise<Organizatio
   let acceptedConnections: OrganizationJournal['acceptedConnections'];
   let targets: OrganizationJournal['targets'];
   let preserveDestinations: OrganizationJournal['preserveDestinations'];
+  let operation: OrganizationJournal['operation'];
   for (const line of lines) {
     const update = parseOrganizationJournal(line, path);
     replacements = update.replacements ?? replacements;
     acceptedConnections = update.acceptedConnections ?? acceptedConnections;
     targets = update.targets ?? targets;
     preserveDestinations = update.preserveDestinations ?? preserveDestinations;
+    operation = update.operation ?? operation;
     for (const move of update.moves) moves.set(move.from, move);
     for (const restore of update.restores) restores.set(restore.path, restore);
     for (const directory of update.createdDirectories) createdDirectories.add(directory);
   }
-  const journal = { ...(preserveDestinations === undefined ? {} : { preserveDestinations }), ...(acceptedConnections === undefined ? {} : { acceptedConnections }), ...(targets === undefined ? {} : { targets }), ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
+  const journal = { ...(operation === undefined ? {} : { operation }), ...(preserveDestinations === undefined ? {} : { preserveDestinations }), ...(acceptedConnections === undefined ? {} : { acceptedConnections }), ...(targets === undefined ? {} : { targets }), ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
   if (tail) await writeOrganizationJournal(path, journal);
   return journal;
 };
@@ -168,7 +173,7 @@ const incompleteCopyMatches = async (source: string, copy: string, stamp: string
     sourceStamp === await organizationFileStamp(source) && copyStamp === await organizationFileStamp(copy);
 };
 
-export const organizationMoveState = async (move: OrganizationJournal['moves'][number]) => {
+export const organizationMoveState = async (move: OrganizationJournal['moves'][number], independentCopy = false) => {
   const matches = async (path: string, stamp: string | null): Promise<boolean> => stamp !== null &&
     (sameFileStamp(stamp, move.stamp) || move.rollbackInstalled && sameFileStamp(stamp, move.rollbackStamp) ||
       move.sha256 !== null && (await fingerprint(path)).sha256 === move.sha256);
@@ -177,7 +182,7 @@ export const organizationMoveState = async (move: OrganizationJournal['moves'][n
   const fromStamp = await exactStamp(move.from, caseOnly);
   const toStamp = await exactStamp(move.to, caseOnly);
   const temporaryStamp = await exactStamp(move.temporary, false);
-  const from = move.stamp === null && move.sha256 === null ? fromStamp !== null : await matches(move.from, fromStamp);
+  const from = independentCopy || move.stamp === null && move.sha256 === null ? fromStamp !== null : await matches(move.from, fromStamp);
   const to = toStamp !== null && (move.installed ?? move.completed) && sameFileStamp(toStamp, move.destinationStamp) ||
     await matches(move.to, toStamp) || toStamp !== null && move.sha256 !== null && fromStamp === null && temporaryStamp === null;
   const alias = to && fromStamp === null && await sameOrganizationFile(move.from, move.to);
@@ -192,7 +197,7 @@ export const organizationMoveState = async (move: OrganizationJournal['moves'][n
     throw new Error(`The destination changed: ${move.to}`);
   }
   if (!from && !to && !temporary && (move.stamp !== null || move.sha256 !== null)) throw new Error(`The audio is unavailable: ${move.from}, ${move.to}`);
-  const copies = [from ? move.from : null, to ? move.to : null, temporary ? move.temporary : null].filter((path) => path !== null);
+  const copies = [from && !independentCopy ? move.from : null, to ? move.to : null, temporary ? move.temporary : null].filter((path) => path !== null);
   const first = copies[0];
   if (first !== undefined) for (const path of copies.slice(1)) {
     if (!await sameOrganizationFile(first, path) && (await fingerprint(first)).sha256 !== (await fingerprint(path)).sha256) {
@@ -244,6 +249,7 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
   for (const move of [...journal.moves].reverse()) {
     await clearIncompleteOrganizationDestination(move);
     const state = await organizationMoveState(move);
+    if (journal.operation?.kind === 'copy' && !state.from) throw new Error(`The original audio is unavailable. Copies were kept: ${move.from}`);
     if (state.from || state.alias || move.stamp === null && move.sha256 === null) continue;
     const source = state.to ? move.to : move.temporary;
     try {
@@ -275,7 +281,7 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
   }
   for (const move of [...journal.moves].reverse()) {
     let state = await organizationMoveState(move);
-    if ((!journal.preserveDestinations || !state.from) && (state.alias || state.toStamp !== null && await sameOrganizationFile(move.from, move.to))) {
+    if (journal.operation?.kind !== 'copy' && (!journal.preserveDestinations || !state.from) && (state.alias || state.toStamp !== null && await sameOrganizationFile(move.from, move.to))) {
       if (state.temporaryStamp !== null) await unlinkMusicFile(move.temporary);
       await rm(`${move.temporary}.copy`, { force: true });
       await moveMusicFile(move.to, move.from, move.temporary, {
