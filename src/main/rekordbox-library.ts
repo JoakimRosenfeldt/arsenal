@@ -2142,14 +2142,14 @@ export class RekordboxLibrary {
     for (const target of targets) {
       try {
         if (target.kind === 'rekordbox-database') {
-          const native = await readRekordboxDatabase(target.path, { performance: false });
-          libraries.push({ target, nativePaths: native.library.tracks.map((track) => track.location ?? track.path), duplicatePaths: [], cloudLocalPaths: native.cloudLocalPaths });
+          const native = await readRekordboxDatabase(target.path, { performance: false, includeMissingOriginals: true });
+          libraries.push({ target, nativePaths: native.library.tracks.map((track) => track.location ?? track.path), duplicatePaths: [] });
         } else {
           const source = target.kind === 'xml' ? null : await seratoOrganizationSource(target);
           const nativePaths = target.kind === 'xml'
             ? rekordboxSyncLibrary(await parseRekordboxXml(target.path), { includeNonLocal: true }).tracks.map((track) => track.location ?? track.path)
             : source?.paths ?? [];
-          libraries.push({ target, nativePaths, duplicatePaths: source?.duplicatePaths ?? [], cloudLocalPaths: [] });
+          libraries.push({ target, nativePaths, duplicatePaths: source?.duplicatePaths ?? [] });
         }
       } catch (error) {
         if (journal === undefined || required.has(normalizePath(target.path))) throw error;
@@ -2256,7 +2256,7 @@ export class RekordboxLibrary {
     }
     const seratoTargets = targets.libraries.flatMap(({ target, nativePaths, duplicatePaths }) => target.kind === 'sqlite' || target.kind === 'legacy'
       ? [{ target, keys: new Set(nativePaths.map((path) => keys.get(path))), duplicateKeys: new Set(duplicatePaths.map((path) => keys.get(path))) }] : []);
-    const plan = await planLibraryOrganization(additions ?? this.arsenalLibrary, { ...request, operation }, referencedPaths, relink ? targets.libraries.flatMap((target) => target.cloudLocalPaths) : [],
+    const plan = await planLibraryOrganization(additions ?? this.arsenalLibrary, { ...request, operation }, referencedPaths,
       !relink ? [] : [...targets.portable.flatMap(({ path, manifest }) => manifest.tracks.flatMap((track) =>
         track.media.kind === 'local' && track.media.relativePath !== null ? [join(dirname(path), track.media.relativePath)] : [])),
         ...this.backups.filter((backup) => backup.includeMusic).flatMap((backup) => ['Music', 'media'].map((name) => join(backup.directory, name)))], async (from, to) => {

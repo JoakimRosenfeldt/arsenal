@@ -136,7 +136,8 @@ const cueColor = [255, 0, 0] as const;
 const loopColor = [39, 170, 225] as const;
 
 // Leave out performance when only paths and playlists are needed; reading beat grids opens an analysis file per track.
-export const readRekordboxDatabase = async (path: string, { performance: withPerformance = true } = {}): Promise<{ library: SyncLibrary; warnings: string[]; cloudLocalPaths: readonly string[] }> => {
+export const readRekordboxDatabase = async (path: string, { performance: withPerformance = true, includeMissingOriginals = false }:
+  Readonly<{ performance?: boolean; includeMissingOriginals?: boolean }> = {}): Promise<{ library: SyncLibrary; warnings: string[] }> => {
   const db = await openRekordboxDatabase(path);
   try {
     schema(db);
@@ -172,17 +173,20 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
       }));
     }
     let encryptedTracks = 0;
-    // A cloud synced track reads as the local file it was uploaded from, when that file is on this computer.
-    const uploadedFrom = new Map<Row, string>();
+    // Cloud/service flags do not prevent a track from having an ordinary local file.
+    const localFiles = new Map<Row, string>();
     await Promise.all(contents.map(async (row) => {
-      const original = isCloudPath(text(row.FolderPath) ?? '') ? text(row.OrgFolderPath) : null;
-      if (original !== null && await stat(original).then((file) => file.isFile(), () => false)) uploadedFrom.set(row, original);
+      const folderPath = text(row.FolderPath);
+      const localPath = isCloudPath(folderPath ?? '') ? text(row.OrgFolderPath) : number(row.ServiceID) ? folderPath : null;
+      // Recovery must still find the original path after its file has moved, before relinking.
+      if (localPath !== null && /^(?:\/|[a-z]:[\\/])/i.test(localPath) && !isCloudPath(localPath) &&
+        (includeMissingOriginals && isCloudPath(folderPath ?? '') || await stat(localPath).then((file) => file.isFile(), () => false))) localFiles.set(row, localPath);
     }));
     const tracks = contents.flatMap((row) => {
       const trackId = id(row.ID);
       if (encrypted(row.FolderPath) || !text(row.FolderPath) && Object.values(row).some(encrypted)) { encryptedTracks++; return []; }
-      const original = uploadedFrom.get(row);
-      const path = original ?? text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
+      const localFile = localFiles.get(row);
+      const path = localFile ?? text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
       const title = text(row.Title) ?? basename(path);
       const linked = (field: keyof typeof links): string | null => {
         const [table, column] = links[field];
@@ -199,7 +203,7 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
         durationSeconds: number(row.Length), fileKind: fileTypes[number(row.FileType) ?? 0] ?? null, fileSizeBytes: number(row.FileSize),
         bitRateKbps: number(row.BitRate), sampleRateHz: number(row.SampleRate), trackNumber: number(row.TrackNo), discNumber: number(row.DiscNo),
         playCount: number(row.DJPlayCount), rating: rating === null ? null : rating * 51, dateAdded: text(row.StockDate), comments: text(row.Commnt),
-        artworkUrl: null, audioUrl: null, source: original !== undefined || /^(?:\/|[a-z]:[\\/])/i.test(path) && !number(row.ServiceID) ? 'local' : 'streaming',
+        artworkUrl: null, audioUrl: null, source: localFile !== undefined || /^(?:\/|[a-z]:[\\/])/i.test(path) && !isCloudPath(path) && !number(row.ServiceID) ? 'local' : 'streaming',
         cuePointCount: performance ? performance.hotCues.length + performance.memoryCues.length + performance.loops.length : 0,
         hotCueCount: performance ? performance.hotCues.length + performance.loops.filter((loop) => loop.hotCue).length : 0,
       };
@@ -220,7 +224,7 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
       path, kind: number(row.Attribute) === 1 ? 'folder' : 'playlist',
       trackPaths: members.get(id(row.ID)) ?? [],
     }));
-    return { library: { tracks, playlists }, cloudLocalPaths: [...uploadedFrom.values()], warnings: encryptedTracks ? [`${encryptedTracks} Rekordbox ${encryptedTracks === 1 ? 'track was' : 'tracks were'} skipped because Rekordbox encrypts ${encryptedTracks === 1 ? 'its' : 'their'} details. These are usually streaming tracks.`] : [] };
+    return { library: { tracks, playlists }, warnings: encryptedTracks ? [`${encryptedTracks} Rekordbox ${encryptedTracks === 1 ? 'track was' : 'tracks were'} skipped because Rekordbox encrypts ${encryptedTracks === 1 ? 'its' : 'their'} details. These are usually streaming tracks.`] : [] };
   } finally { db.close(); }
 };
 
@@ -771,7 +775,8 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
     const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0');
     const byPath = new Map<string, Row[]>();
     for (const row of contents) {
-      const folderPath = text(row.FolderPath);
+      const folderPath = options.mode === 'reorganize' && isCloudPath(text(row.FolderPath) ?? '')
+        ? text(row.OrgFolderPath) ?? text(row.FolderPath) : text(row.FolderPath);
       if (folderPath === null) continue;
       byPath.set(normalizePath(folderPath), [...byPath.get(normalizePath(folderPath)) ?? [], row]);
     }
@@ -809,8 +814,17 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
       for (const row of missing) {
         if (replacementPath !== null && existing === undefined) {
           const location = process.platform === 'win32' ? replacementPath.replaceAll('\\', '/') : replacementPath;
-          statements.push({ sql: 'UPDATE djmdContent SET FolderPath = ?, FileNameL = ?, FileSize = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
-            values: [location, basename(location), fileSize, ++revision, now, id(row.ID)] });
+          if (options.mode === 'reorganize' && isCloudPath(text(row.FolderPath) ?? '')) {
+            statements.push({ sql: 'UPDATE djmdContent SET OrgFolderPath = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
+              values: [location, ++revision, now, id(row.ID)] });
+          } else {
+            statements.push({ sql: 'UPDATE djmdContent SET FolderPath = ?, FileNameL = ?, FileSize = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
+              values: [location, basename(location), fileSize, ++revision, now, id(row.ID)] });
+            const originalPath = text(row.OrgFolderPath);
+            if (options.mode === 'reorganize' && originalPath !== null && normalizePath(originalPath) === normalizePath(missingPath)) {
+              statements.push({ sql: 'UPDATE djmdContent SET OrgFolderPath = ? WHERE ID = ?', values: [location, id(row.ID)] });
+            }
+          }
           byPath.set(normalizePath(replacementPath), [row]);
           continue;
         }

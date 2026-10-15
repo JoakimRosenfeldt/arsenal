@@ -105,7 +105,7 @@ export const organizationCopySpace = async (plan: OrganizationPlan): Promise<Non
 };
 
 export const planLibraryOrganization = async (
-  library: SyncLibrary, request: LibraryOrganizationRequest, reservedPaths: readonly string[], cloudPaths: readonly string[],
+  library: SyncLibrary, request: LibraryOrganizationRequest, reservedPaths: readonly string[],
   portableRoots: readonly string[] = [], validateDestination: (from: string, to: string) => Promise<void> = async () => undefined,
   progress: (completed: number, total: number) => void = () => undefined,
 ): Promise<OrganizationPlan> => {
@@ -116,7 +116,6 @@ export const planLibraryOrganization = async (
     filename: request.renameFiles ? { kind: 'fields', fields: ['artist', 'title'], separator: ' - ' } : { kind: 'original' } };
   const canonicalRoot = await canonicalOrganizationPath(root);
   const bundleRoots = await Promise.all(portableRoots.map((path) => canonicalOrganizationPath(path)));
-  const cloud = new Set(await Promise.all(cloudPaths.filter(isAbsolute).map(async (path) => portableKey(await canonicalOrganizationPath(path, true)))));
   const entries: LibraryOrganizationEntry[] = [];
   const stamps = new Map<string, string>();
   const existingCopies = new Map<string, ExistingOrganizationCopy>();
@@ -153,13 +152,12 @@ export const planLibraryOrganization = async (
     if (index % 32 === 0) progress(index, library.tracks.length);
     let from = track.location ?? track.path;
     const skip = (reason: Extract<LibraryOrganizationEntry, { kind: 'skip' }>['reason']) => entries.push({ kind: 'skip', from, reason });
-    if (track.song.source !== 'local' || !isAbsolute(from) || isCloudPath(from)) { skip('Cloud or streaming track'); continue; }
+    if (!isAbsolute(from) || isCloudPath(from)) { skip('Cloud or streaming track'); continue; }
     if (!isSupportedAudioPath(from)) { skip('Unsupported audio format'); continue; }
     try {
       await organizationFileStamp(from);
       from = resolve(from);
       const canonicalSource = await canonicalOrganizationPath(from);
-      if (cloud.has(portableKey(canonicalSource))) { skip('Cloud or streaming track'); continue; }
       const key = await seratoMediaPathKey(from);
       if (sources.has(key)) { skip('Shares audio with another library entry; relocated together if that entry moves'); continue; }
       sources.add(key);
@@ -430,7 +428,8 @@ export const relocatedLibrary = (library: SyncLibrary, replacements: ReadonlyMap
     const replacement = replacements.get(normalizePath(track.location ?? track.path));
     const path = replacement !== undefined && track.location === undefined && counts.get(normalizePath(replacement)) === 1 ? replacement : track.path;
     paths.set(track.path, path);
-    return replacement === undefined ? track : { ...track, path, ...(path === replacement && track.location === undefined ? {} : { location: replacement }) };
+    return replacement === undefined ? track : { ...track, path, song: { ...track.song, source: 'local' as const },
+      ...(path === replacement && track.location === undefined ? {} : { location: replacement }) };
   });
   return { tracks, playlists: library.playlists.map((playlist) => ({ ...playlist, trackPaths: playlist.trackPaths.map((path) => paths.get(path) ?? path) })) };
 };
