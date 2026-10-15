@@ -2131,7 +2131,12 @@ export class RekordboxLibrary {
       const keys = new Map<string, string>();
       const paths = [...new Set(referencedPaths)];
       for (let offset = 0; offset < paths.length; offset += 32) {
-        await Promise.all(paths.slice(offset, offset + 32).map(async (path) => { keys.set(path, await seratoMediaPathKey(await resolveSeratoMediaPath(path))); }));
+        await Promise.all(paths.slice(offset, offset + 32).map(async (path) => {
+          try { keys.set(path, await seratoMediaPathKey(await resolveSeratoMediaPath(path))); } catch (error) {
+            if (!(error instanceof Error && 'code' in error && ['ELOOP', 'ENOTDIR', 'EACCES', 'EPERM'].includes(String(error.code)))) throw error;
+            keys.set(path, `path:${normalizePath(path)}`);
+          }
+        }));
         this.organizationProgress(owner, 'validating', Math.min(offset + 32, paths.length), paths.length);
       }
       const seratoTargets = targets.libraries.flatMap(({ target, nativePaths, duplicatePaths }) => target.kind === 'sqlite' || target.kind === 'legacy'
@@ -2196,7 +2201,10 @@ export class RekordboxLibrary {
       };
       if (index < 0) journal.restores.push(restore);
       else journal.restores[index] = restore;
-      await appendOrganizationJournal(this.organizationJournalPath, { moves: [], restores: [restore], createdDirectories: [] });
+      // A fresh Keep backup may already reference destinations that Undo must retain.
+      if (keepRecovery && previous === undefined) journal.preserveDestinations = true;
+      await appendOrganizationJournal(this.organizationJournalPath, { moves: [], restores: [restore], createdDirectories: [],
+        ...(journal.preserveDestinations ? { preserveDestinations: true } : {}) });
     };
   }
 

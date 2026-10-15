@@ -363,6 +363,11 @@ export const validateSeratoSqliteDestination = async (rootPath: string, path: st
 export const repairSeratoSqliteMissingFile = (rootPath: string, missingPath: string, replacementPath: string | null): Promise<LibraryFileRepairResult> =>
   repairSeratoSqliteMissingFiles(rootPath, [{ missingPath, replacementPath }]);
 
+const organizationPortablePath = async (root: string, path: string): Promise<string> => {
+  const canonical = portablePath(await canonicalOrganizationPath(root), await canonicalOrganizationPath(path));
+  try { return portablePath(root, path); } catch { return canonical; }
+};
+
 export const recoverSeratoSqlite = async (path: string): Promise<void> => {
   await assertSeratoClosed();
   await stat(path);
@@ -394,11 +399,11 @@ export const repairSeratoSqliteMissingFiles = async (
 ): Promise<LibraryFileRepairResult> => {
   await assertSeratoClosed();
   const prepared: { missingPath: string; replacement: string | null; portableId: string | null; missingKey: string; replacementKey: string | null }[] = [];
-  const root = options.mode === 'reorganize' ? await canonicalOrganizationPath(volumeRoot(rootPath)) : volumeRoot(rootPath);
+  const root = volumeRoot(rootPath);
   for (const repair of repairs) {
     await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
     const replacement = repair.replacementPath === null || options.mode === 'reorganize' ? repair.replacementPath : await resolveSeratoMediaPath(repair.replacementPath);
-    prepared.push({ ...repair, replacement, portableId: replacement === null ? null : portablePath(root, options.mode === 'reorganize' ? await canonicalOrganizationPath(replacement) : replacement),
+    prepared.push({ ...repair, replacement, portableId: replacement === null ? null : options.mode === 'reorganize' ? await organizationPortablePath(root, replacement) : portablePath(root, replacement),
       missingKey: options.mode === 'reorganize' ? normalizePath(repair.missingPath) : await seratoMediaPathKey(repair.missingPath),
       replacementKey: replacement === null ? null : await seratoMediaPathKey(replacement) });
   }

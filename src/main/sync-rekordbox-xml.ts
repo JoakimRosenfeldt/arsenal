@@ -112,7 +112,7 @@ export const repairRekordboxMissingFiles = async (xmlPath: string, repairs: read
   }
   const sourceKeys = new Set(repairs.map((repair) => normalizePath(repair.missingPath)));
   const occupiedKeys = new Set(options.mode === 'reorganize' ? await Promise.all(tracks.filter(({ path }) => !sourceKeys.has(normalizePath(path)))
-    .map(async ({ path }) => (await canonicalOrganizationPath(path)).normalize('NFC').toLowerCase())) : []);
+    .map(async ({ path }) => (await canonicalOrganizationPath(path, true)).normalize('NFC').toLowerCase())) : []);
   const relocations = new Map<string, string>();
   const applied: MissingFileRepair[] = [];
   const failures: { path: string; message: string }[] = [];

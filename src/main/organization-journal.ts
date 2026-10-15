@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { constants, createReadStream } from 'node:fs';
 import { open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
@@ -15,6 +15,7 @@ export type OrganizationJournal = {
   moves: { installed?: boolean; rollbackInstalled?: boolean; from: string; to: string; temporary: string; sha256: string | null; stamp: string | null; destinationStamp: string | null; rollbackStamp: string | null; completed: boolean }[];
   restores: OrganizationRestore[];
   createdDirectories: string[];
+  preserveDestinations?: boolean;
   acceptedConnections?: readonly string[];
   targets?: readonly Readonly<{ path: string; paths: readonly string[]; manifestHash?: string }>[];
   replacements?: readonly (readonly [string, string])[];
@@ -41,6 +42,10 @@ const parseOrganizationJournal = (bytes: string, path: string): OrganizationJour
   if (typeof value !== 'object' || value === null || !('moves' in value) || !Array.isArray(value.moves) ||
       !('restores' in value) || !Array.isArray(value.restores) || !('createdDirectories' in value) || !Array.isArray(value.createdDirectories)) throw invalid();
   const journal: OrganizationJournal = { moves: [], restores: [], createdDirectories: [] };
+  if ('preserveDestinations' in value) {
+    if (typeof value.preserveDestinations !== 'boolean') throw invalid();
+    journal.preserveDestinations = value.preserveDestinations;
+  }
   const rawMoves: unknown[] = value.moves;
   const rawRestores: unknown[] = value.restores;
   for (const move of rawMoves) {
@@ -119,16 +124,18 @@ export const readOrganizationJournal = async (path: string): Promise<Organizatio
   let replacements: OrganizationJournal['replacements'];
   let acceptedConnections: OrganizationJournal['acceptedConnections'];
   let targets: OrganizationJournal['targets'];
+  let preserveDestinations: OrganizationJournal['preserveDestinations'];
   for (const line of lines) {
     const update = parseOrganizationJournal(line, path);
     replacements = update.replacements ?? replacements;
     acceptedConnections = update.acceptedConnections ?? acceptedConnections;
     targets = update.targets ?? targets;
+    preserveDestinations = update.preserveDestinations ?? preserveDestinations;
     for (const move of update.moves) moves.set(move.from, move);
     for (const restore of update.restores) restores.set(restore.path, restore);
     for (const directory of update.createdDirectories) createdDirectories.add(directory);
   }
-  const journal = { ...(acceptedConnections === undefined ? {} : { acceptedConnections }), ...(targets === undefined ? {} : { targets }), ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
+  const journal = { ...(preserveDestinations === undefined ? {} : { preserveDestinations }), ...(acceptedConnections === undefined ? {} : { acceptedConnections }), ...(targets === undefined ? {} : { targets }), ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
   if (tail) await writeOrganizationJournal(path, journal);
   return journal;
 };
@@ -149,6 +156,18 @@ const sameFileStamp = (left: string | null, right: string | null): boolean => {
   return left === right || device !== '0' && inode !== '0' && left.split(':').slice(0, 2).join(':') === right.split(':').slice(0, 2).join(':');
 };
 
+const incompleteCopyMatches = async (source: string, copy: string, stamp: string | null): Promise<boolean> => {
+  if (stamp === null || !stamp.split(':').slice(0, 2).includes('0')) return false;
+  const sourceStamp = await organizationFileStamp(source);
+  const copyStamp = await organizationFileStamp(copy);
+  const size = (await stat(copy)).size;
+  if (!Number.isSafeInteger(size) || size > (await stat(source)).size) return false;
+  const hash = createHash('sha256');
+  if (size > 0) for await (const bytes of createReadStream(source, { end: size - 1 })) hash.update(bytes);
+  return hash.digest('hex') === (await fingerprint(copy)).sha256 &&
+    sourceStamp === await organizationFileStamp(source) && copyStamp === await organizationFileStamp(copy);
+};
+
 export const organizationMoveState = async (move: OrganizationJournal['moves'][number]) => {
   const matches = async (path: string, stamp: string | null): Promise<boolean> => stamp !== null &&
     (sameFileStamp(stamp, move.stamp) || move.rollbackInstalled && sameFileStamp(stamp, move.rollbackStamp) ||
@@ -163,9 +182,15 @@ export const organizationMoveState = async (move: OrganizationJournal['moves'][n
     await matches(move.to, toStamp) || toStamp !== null && move.sha256 !== null && fromStamp === null && temporaryStamp === null;
   const alias = to && fromStamp === null && await sameOrganizationFile(move.from, move.to);
   const temporary = await matches(move.temporary, temporaryStamp);
-  if (fromStamp !== null && !from && !sameFileStamp(fromStamp, move.rollbackStamp)) throw new Error(`The original audio changed: ${move.from}`);
-  const destinationOwned = to || sameFileStamp(toStamp, move.destinationStamp) && (from || temporary);
-  if (toStamp !== null && !destinationOwned) throw new Error(`The destination changed: ${move.to}`);
+  const rollbackOwned = sameFileStamp(fromStamp, move.rollbackStamp) || fromStamp !== null && move.rollbackInstalled === false && to &&
+    await incompleteCopyMatches(move.to, move.from, move.rollbackStamp);
+  if (fromStamp !== null && !from && !rollbackOwned) throw new Error(`The original audio changed: ${move.from}`);
+  const destinationOwned = to || toStamp !== null && (from || temporary) &&
+    (sameFileStamp(toStamp, move.destinationStamp) || move.installed === false &&
+      await incompleteCopyMatches(from ? move.from : move.temporary, move.to, move.destinationStamp));
+  if (toStamp !== null && !destinationOwned && (!from || move.destinationStamp !== null || move.installed !== undefined || move.completed)) {
+    throw new Error(`The destination changed: ${move.to}`);
+  }
   if (!from && !to && !temporary && (move.stamp !== null || move.sha256 !== null)) throw new Error(`The audio is unavailable: ${move.from}, ${move.to}`);
   const copies = [from ? move.from : null, to ? move.to : null, temporary ? move.temporary : null].filter((path) => path !== null);
   const first = copies[0];
@@ -250,7 +275,7 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
   }
   for (const move of [...journal.moves].reverse()) {
     let state = await organizationMoveState(move);
-    if (state.alias || state.toStamp !== null && await sameOrganizationFile(move.from, move.to)) {
+    if ((!journal.preserveDestinations || !state.from) && (state.alias || state.toStamp !== null && await sameOrganizationFile(move.from, move.to))) {
       if (state.temporaryStamp !== null) await unlinkMusicFile(move.temporary);
       await rm(`${move.temporary}.copy`, { force: true });
       await moveMusicFile(move.to, move.from, move.temporary, {
@@ -261,7 +286,8 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
     }
     if (!state.from && (move.stamp !== null || move.sha256 !== null)) throw new Error(`The original audio is unavailable: ${move.from}`);
     if (state.toStamp !== null && move.to !== move.from && !await sameOrganizationFile(move.from, move.to)) {
-      if (state.destinationOwned) await unlinkMusicFile(move.to);
+      if (journal.preserveDestinations) warnings.push(`Kept audio at ${move.to} because restored libraries may reference it.`);
+      else if (state.destinationOwned) await unlinkMusicFile(move.to);
       else warnings.push(`Kept an unverified file at the interrupted destination: ${move.to}`);
     }
     if (state.temporaryStamp !== null) await unlinkMusicFile(move.temporary);

@@ -17,10 +17,11 @@ export const inside = (root: string, path: string): boolean => {
   return child === '' || child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child);
 };
 
-export const canonicalOrganizationPath = async (path: string): Promise<string> => {
+export const canonicalOrganizationPath = async (path: string, allowUnreadable = false): Promise<string> => {
   try { return await resolveSeratoMediaPath(await realpath(path)); } catch (error) {
+    if (allowUnreadable && error instanceof Error && 'code' in error && ['ELOOP', 'ENOTDIR', 'EACCES', 'EPERM'].includes(String(error.code))) return resolve(path);
     if (!missing(error) || dirname(path) === path) throw error;
-    return join(await canonicalOrganizationPath(dirname(path)), basename(path));
+    return join(await canonicalOrganizationPath(dirname(path), allowUnreadable), basename(path));
   }
 };
 
@@ -62,12 +63,12 @@ export const planLibraryOrganization = async (
 ): Promise<OrganizationPlan> => {
   const root = resolve(request.destinationRoot);
   const canonicalRoot = await canonicalOrganizationPath(root);
-  const bundleRoots = await Promise.all(portableRoots.map(canonicalOrganizationPath));
-  const cloud = new Set(cloudPaths.map(normalizePath));
+  const bundleRoots = await Promise.all(portableRoots.map((path) => canonicalOrganizationPath(path)));
+  const cloud = new Set(await Promise.all(cloudPaths.filter(isAbsolute).map(async (path) => portableKey(await canonicalOrganizationPath(path, true)))));
   const entries: LibraryOrganizationEntry[] = [];
   const stamps = new Map<string, string>();
   const sources = new Set<string>();
-  const used = new Set(await Promise.all(reservedPaths.filter(isAbsolute).map(async (path) => portableKey(await canonicalOrganizationPath(path)))));
+  const used = new Set(await Promise.all(reservedPaths.filter(isAbsolute).map(async (path) => portableKey(await canonicalOrganizationPath(path, true)))));
   const namesByDirectory = new Map<string, ReadonlySet<string>>();
   const availableDirectories = new Map<string, boolean>();
   const directoryAvailable = async (directory: string): Promise<boolean> => {
@@ -99,15 +100,16 @@ export const planLibraryOrganization = async (
     if (index % 32 === 0) progress(index, library.tracks.length);
     let from = track.location ?? track.path;
     const skip = (reason: Extract<LibraryOrganizationEntry, { kind: 'skip' }>['reason']) => entries.push({ kind: 'skip', from, reason });
-    if (track.song.source !== 'local' || !isAbsolute(from) || isCloudPath(from) || cloud.has(normalizePath(from))) { skip('Cloud or streaming track'); continue; }
+    if (track.song.source !== 'local' || !isAbsolute(from) || isCloudPath(from)) { skip('Cloud or streaming track'); continue; }
     if (!isSupportedAudioPath(from)) { skip('Unsupported audio format'); continue; }
     try {
       await organizationFileStamp(from);
       from = resolve(from);
+      const canonicalSource = await canonicalOrganizationPath(from);
+      if (cloud.has(portableKey(canonicalSource))) { skip('Cloud or streaming track'); continue; }
       const key = await seratoMediaPathKey(from);
       if (sources.has(key)) { skip('Shares audio with another library entry; relocated together if that entry moves'); continue; }
       sources.add(key);
-      const canonicalSource = await canonicalOrganizationPath(from);
       if (bundleRoots.some((root) => inside(root, canonicalSource))) { skip('Inside a portable library bundle'); continue; }
       stamps.set(from, await organizationFileStamp(from));
     } catch (error) {

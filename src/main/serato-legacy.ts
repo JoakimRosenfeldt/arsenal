@@ -229,6 +229,11 @@ export const validateSeratoLegacyDestination = async (directory: string, path: s
   relativeMediaPath(await canonicalOrganizationPath(path), await canonicalOrganizationPath(volumeRoot(directory)));
 };
 
+const organizationRelativeMediaPath = async (path: string, root: string): Promise<string> => {
+  const canonical = relativeMediaPath(await canonicalOrganizationPath(path), await canonicalOrganizationPath(root));
+  try { return relativeMediaPath(path, root); } catch { return canonical; }
+};
+
 export const readSeratoLegacy = async (directory: string): Promise<SyncLibrary> => resolveSeratoLibraryPaths((await readNativeLibrary(directory, false)).library);
 
 export const repairSeratoLegacyMissingFile = (
@@ -242,7 +247,7 @@ export const repairSeratoLegacyMissingFiles = async (
 ): Promise<LibraryFileRepairResult> => {
   await assertClosed();
   const native = await readNativeLibrary(directory, false, options.mode === 'reorganize');
-  const root = options.mode === 'reorganize' ? await canonicalOrganizationPath(native.root) : native.root;
+  const root = native.root;
   const replacements = new Map<string, string | null>();
   const sourcePaths = new Set(repairs.flatMap((repair) => [normalizePath(repair.missingPath),
     ...(options.mode === 'reorganize' && repair.replacementPath !== null ? [normalizePath(repair.replacementPath)] : [])]));
@@ -254,7 +259,7 @@ export const repairSeratoLegacyMissingFiles = async (
       throw new Error('The selected audio file already has an entry in this Serato library. Remove the missing entry or choose another audio file.');
     }
     replacements.set(options.mode === 'reorganize' ? normalizePath(repair.missingPath) : await seratoMediaPathKey(repair.missingPath),
-      replacement === null ? null : relativeMediaPath(options.mode === 'reorganize' ? await canonicalOrganizationPath(replacement) : replacement, root));
+      replacement === null ? null : options.mode === 'reorganize' ? await organizationRelativeMediaPath(replacement, root) : relativeMediaPath(replacement, root));
   }
   const files = [native.database, ...native.crates];
   const updates: { path: string; before: Buffer; after: Buffer }[] = [];
