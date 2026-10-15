@@ -6,7 +6,7 @@ import { basename, dirname, join } from 'node:path';
 import { readOrganizationOperation, type LibraryOrganizationOperation, type LibraryOrganizationRequest, type LibraryOrganizationSettings } from '../shared/dj-library';
 import { fingerprint, readLibraryModel } from './portable-library';
 import type { SyncLibrary } from './library-sync-model';
-import { canonicalOrganizationPath, installMusicFile, moveMusicFile, organizationFileStamp, readOrganizationRequest, sameOrganizationFile, removeOrganizationDirectories, syncOrganizationDirectory, unlinkMusicFile } from './reorganize-library';
+import { canonicalOrganizationPath, installMusicFile, moveMusicFile, organizationFileStamp, readOrganizationRequest, sameOrganizationFile, removeOrganizationDirectories, syncOrganizationDirectory, unlinkMusicFile, type ExistingOrganizationCopy } from './reorganize-library';
 import { assertLibraryFileBackup, type LibraryFileBackup, restoreLibraryFileBackup } from './repair-library-files';
 import { assertRekordboxClosed, assertRekordboxDatabaseBackup, isRekordboxDatabasePath, openRekordboxDatabase, restoreRekordboxDatabaseBackup, RekordboxRunningError } from './rekordbox-database-connection';
 import { assertSeratoSqliteBackup, recoverSeratoSqlite, restoreSeratoSqliteBackup } from './serato-sqlite';
@@ -18,6 +18,7 @@ export type OrganizationJournal = {
   request?: LibraryOrganizationRequest;
   previousOrganization?: LibraryOrganizationSettings;
   additions?: SyncLibrary;
+  existingCopies?: readonly ExistingOrganizationCopy[];
   moves: { installed?: boolean; rollbackInstalled?: boolean; from: string; to: string; temporary: string; sha256: string | null; stamp: string | null; destinationStamp: string | null; rollbackStamp: string | null; completed: boolean }[];
   restores: OrganizationRestore[];
   createdDirectories: string[];
@@ -57,6 +58,15 @@ const parseOrganizationJournal = (bytes: string, path: string): OrganizationJour
       applied: previous.applied === null ? null : readOrganizationRequest(previous.applied) };
   }
   if ('additions' in value) journal.additions = readLibraryModel(value.additions);
+  if ('existingCopies' in value) {
+    if (!Array.isArray(value.existingCopies)) throw invalid();
+    journal.existingCopies = value.existingCopies.map((copy: unknown) => {
+      if (typeof copy !== 'object' || copy === null || !('from' in copy) || typeof copy.from !== 'string' ||
+        !('to' in copy) || typeof copy.to !== 'string' || !('stamp' in copy) || typeof copy.stamp !== 'string' ||
+        !('sha256' in copy) || typeof copy.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(copy.sha256)) throw invalid();
+      return { from: copy.from, to: copy.to, stamp: copy.stamp, sha256: copy.sha256 };
+    });
+  }
   if ('preserveDestinations' in value) {
     if (typeof value.preserveDestinations !== 'boolean') throw invalid();
     journal.preserveDestinations = value.preserveDestinations;
@@ -144,6 +154,7 @@ export const readOrganizationJournal = async (path: string): Promise<Organizatio
   let request: OrganizationJournal['request'];
   let previousOrganization: OrganizationJournal['previousOrganization'];
   let additions: OrganizationJournal['additions'];
+  let existingCopies: OrganizationJournal['existingCopies'];
   for (const line of lines) {
     const update = parseOrganizationJournal(line, path);
     replacements = update.replacements ?? replacements;
@@ -154,11 +165,12 @@ export const readOrganizationJournal = async (path: string): Promise<Organizatio
     request = update.request ?? request;
     previousOrganization = update.previousOrganization ?? previousOrganization;
     additions = update.additions ?? additions;
+    existingCopies = update.existingCopies ?? existingCopies;
     for (const move of update.moves) moves.set(move.from, move);
     for (const restore of update.restores) restores.set(restore.path, restore);
     for (const directory of update.createdDirectories) createdDirectories.add(directory);
   }
-  const journal = { ...(previousOrganization === undefined ? {} : { previousOrganization }), ...(request === undefined ? {} : { request }), ...(additions === undefined ? {} : { additions }), ...(operation === undefined ? {} : { operation }), ...(preserveDestinations === undefined ? {} : { preserveDestinations }), ...(acceptedConnections === undefined ? {} : { acceptedConnections }), ...(targets === undefined ? {} : { targets }), ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
+  const journal = { ...(existingCopies === undefined ? {} : { existingCopies }), ...(previousOrganization === undefined ? {} : { previousOrganization }), ...(request === undefined ? {} : { request }), ...(additions === undefined ? {} : { additions }), ...(operation === undefined ? {} : { operation }), ...(preserveDestinations === undefined ? {} : { preserveDestinations }), ...(acceptedConnections === undefined ? {} : { acceptedConnections }), ...(targets === undefined ? {} : { targets }), ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
   if (tail) await writeOrganizationJournal(path, journal);
   return journal;
 };
@@ -263,6 +275,9 @@ export const undoOrganization = async (journal: OrganizationJournal, progress: (
   const restores = [...journal.restores].reverse();
   for (const restore of restores) await assertOrganizationRestore(restore);
   for (const move of journal.moves) await organizationMoveState(move);
+  for (const copy of journal.existingCopies ?? []) if ((await fingerprint(copy.from)).sha256 !== copy.sha256) {
+    throw new Error(`The original audio changed. Existing copies were kept: ${copy.from}`);
+  }
   // Keep the new audio paths until every library has been restored successfully.
   for (const move of [...journal.moves].reverse()) {
     await clearIncompleteOrganizationDestination(move);

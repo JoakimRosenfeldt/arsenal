@@ -567,7 +567,7 @@ export type LibraryOrganizationSettings = Readonly<{
 }>;
 export type LibraryOrganizationEntry =
   | Readonly<{ kind: 'move'; from: string; to: string; collision: boolean }>
-  | Readonly<{ kind: 'skip'; from: string; reason: string }>;
+  | Readonly<{ kind: 'skip'; from: string; reason: string; existingCopy?: string }>;
 export type LibraryOrganizationPreview = Readonly<{
   id: string;
   destinationRoot: string;

@@ -148,7 +148,7 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
 
   const space = preview?.copySpace;
   const insufficientSpace = insufficientCopySpace(space);
-  const canApply = preview !== null && (preview.moveCount > 0 || hasAppliedSettings && preview.entries.some((entry) => entry.kind === 'skip' && entry.reason === 'Already in place'));
+  const canApply = preview !== null && (preview.moveCount > 0 || preview.entries.some((entry) => entry.kind === 'skip' && (entry.reason === 'Already in place' || entry.existingCopy !== undefined)));
   const canStop = action === 'apply' && preview?.operation.kind === 'copy' &&
     (progress === null || progress.phase === 'validating' || progress.phase === 'copying');
   const skipped = preview?.entries.filter((entry) => entry.kind === 'skip') ?? [];
@@ -244,7 +244,7 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
         <div className="reorganize-paths"><table><caption>First 100 planned {preview.operation.kind === 'copy' ? 'copies' : 'moves'}</caption><thead><tr><th>Current path</th><th>New path</th></tr></thead>
           <tbody>{preview.entries.filter((entry) => entry.kind === 'move').slice(0, 100).map((entry) => <tr key={entry.from}>
             <td><code>{entry.from}</code></td><td><code>{entry.to}</code>{entry.collision && <span>Numbered to avoid a collision</span>}</td></tr>)}</tbody></table></div>
-        {!!skipped.length && <details><summary>Skipped files ({skipped.length})</summary><ul>{skipped.slice(0, 100).map((entry) => <li key={entry.from}><code>{entry.from}</code>: {entry.reason}</li>)}</ul>
+        {!!skipped.length && <details><summary>Skipped files ({skipped.length})</summary><ul>{skipped.slice(0, 100).map((entry) => <li key={entry.from}><code>{entry.from}</code>: {entry.reason}{entry.existingCopy && <> at <code>{entry.existingCopy}</code></>}</li>)}</ul>
           {skipped.length > 100 && <p>Showing the first 100 skipped files.</p>}</details>}
       </div>}
     </>}

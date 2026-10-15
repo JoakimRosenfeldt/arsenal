@@ -55,7 +55,7 @@ export const MusicImportDialog = ({ preview, onWorking, onComplete, onClose }: R
       {preview.moveCount > 100 && <p>Showing the first 100 paths.</p>}</details>
     {(preview.warnings.length > 0 || preview.skippedCount > 0) && <details><summary>Skipped files and warnings</summary><ul>
       {preview.warnings.map((warning, index) => <li key={index}>{warning}</li>)}
-      {preview.entries.filter((entry) => entry.kind === 'skip').map((entry) => <li key={entry.from}>{entry.from}: {entry.reason}</li>)}
+      {preview.entries.filter((entry) => entry.kind === 'skip').map((entry) => <li key={entry.from}>{entry.from}: {entry.reason}{entry.existingCopy && <> at <code>{entry.existingCopy}</code></>}</li>)}
     </ul></details>}
     {working && <p role="status">{stopping ? 'Stopping copy…' : progress ? `${phases[progress.phase]}: ${progress.completed} / ${progress.total}` : 'Checking the preview…'}</p>}
     {error && <p className="reorganize-error" role="alert">{error} Close this preview and choose the files again.</p>}

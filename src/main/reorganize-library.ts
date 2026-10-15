@@ -53,10 +53,18 @@ export const organizationFileStamp = async (path: string): Promise<string> => {
   return `${info.dev}:${info.ino}:${info.size}:${info.mtimeNs}`;
 };
 
+export type ExistingOrganizationCopy = Readonly<{ from: string; to: string; stamp: string; sha256: string }>;
+
 export type OrganizationPlan = Readonly<{
   preview: LibraryOrganizationPreview;
   stamps: ReadonlyMap<string, string>;
+  existingCopies: ReadonlyMap<string, ExistingOrganizationCopy>;
 }>;
+
+export const validateExistingOrganizationCopies = async (copies: Iterable<ExistingOrganizationCopy>): Promise<void> => {
+  for (const copy of copies) if (await organizationFileStamp(copy.to) !== copy.stamp || (await fingerprint(copy.to)).sha256 !== copy.sha256 ||
+    await organizationFileStamp(copy.to) !== copy.stamp) throw new Error(`The existing copy changed. Preview again: ${copy.to}`);
+};
 
 export const readOrganizationRequest = (value: unknown): LibraryOrganizationRequest => {
   if (typeof value !== 'object' || value === null || !('destinationRoot' in value) || typeof value.destinationRoot !== 'string' ||
@@ -111,6 +119,7 @@ export const planLibraryOrganization = async (
   const cloud = new Set(await Promise.all(cloudPaths.filter(isAbsolute).map(async (path) => portableKey(await canonicalOrganizationPath(path, true)))));
   const entries: LibraryOrganizationEntry[] = [];
   const stamps = new Map<string, string>();
+  const existingCopies = new Map<string, ExistingOrganizationCopy>();
   const sources = new Set<string>();
   const used = new Set(await Promise.all(reservedPaths.filter(isAbsolute).map(async (path) => portableKey(await canonicalOrganizationPath(path, true)))));
   const namesByDirectory = new Map<string, ReadonlySet<string>>();
@@ -177,16 +186,40 @@ export const planLibraryOrganization = async (
     const sourceKey = await seratoMediaPathKey(from);
     const ownDestination = async (path: string): Promise<boolean> => {
       const key = await seratoMediaPathKey(path);
-      return key === sourceKey && !(await lstat(path)).isSymbolicLink() ||
+      return key === sourceKey && !(await lstat(path)).isSymbolicLink() &&
+        (request.operation?.kind !== 'copy' || portableKey(canonicalSource) === portableKey(join(canonicalDirectory, basename(path)))) ||
         key.startsWith('path:') && portableKey(canonicalSource) === portableKey(join(canonicalDirectory, basename(path)));
     };
     let suffix = 2;
-    while (await occupied(to) && (request.operation?.kind === 'copy' || !await ownDestination(to))) to = join(directory, `${stem} (${suffix++})${extension}`);
+    let existingCopy: ExistingOrganizationCopy | null = null;
+    while (await occupied(to) && !await ownDestination(to)) {
+      if (request.operation?.kind === 'copy') {
+        try {
+          const info = await lstat(to, { bigint: true });
+          if (info.isFile() && info.size.toString() === stamps.get(from)?.split(':')[2]) {
+            const stamp = await organizationFileStamp(to);
+            const original = await fingerprint(from);
+            const candidate = await fingerprint(to);
+            if (await organizationFileStamp(from) !== stamps.get(from) || await organizationFileStamp(to) !== stamp) throw new Error('An audio file changed during preview. Preview again.');
+            if (original.sha256 === candidate.sha256) { existingCopy = { from, to, stamp, sha256: original.sha256 }; break; }
+          }
+        } catch (error) { if (!missing(error)) throw error; }
+      }
+      to = join(directory, `${stem} (${suffix++})${extension}`);
+    }
+    if (existingCopy !== null) {
+      try { await validateDestination(from, to); } catch (error) {
+        skip(error instanceof Error ? error.message : 'Destination cannot be stored in a connected library'); continue;
+      }
+      existingCopies.set(from, existingCopy);
+      entries.push({ kind: 'skip', from, reason: 'Identical copy already exists', existingCopy: to });
+      continue;
+    }
     const temporaryName = `.arsenal-${randomUUID()}.tmp`;
     if (process.platform === 'win32' && Math.max(to.length, join(directory, `${temporaryName}.copy`).length) > 259) { skip('Destination path exceeds the Windows 259-character limit'); continue; }
     const canonicalDestination = join(canonicalDirectory, basename(to));
     if (canonicalSource.normalize('NFC') === canonicalDestination.normalize('NFC') ||
-        await ownDestination(to) && (portableKey(canonicalSource) !== portableKey(canonicalDestination) || (await readdir(directory)).includes(basename(to)))) {
+        await ownDestination(to) && (request.operation?.kind === 'copy' || portableKey(canonicalSource) !== portableKey(canonicalDestination) || (await readdir(directory)).includes(basename(to)))) {
       skip('Already in place'); continue;
     }
     try { await validateDestination(from, to); } catch (error) {
@@ -198,15 +231,21 @@ export const planLibraryOrganization = async (
   progress(library.tracks.length, library.tracks.length);
   const moves = entries.filter((entry) => entry.kind === 'move');
   const plan: OrganizationPlan = { preview: { id: randomUUID(), destinationRoot: root, operation: request.operation ?? { kind: 'move' }, entries, moveCount: moves.length,
-    skippedCount: entries.length - moves.length, collisionCount: moves.filter((entry) => entry.collision).length, copySpace: null }, stamps };
+    skippedCount: entries.length - moves.length, collisionCount: moves.filter((entry) => entry.collision).length, copySpace: null }, stamps, existingCopies };
   return request.operation?.kind === 'copy' ? { ...plan, preview: { ...plan.preview, copySpace: await organizationCopySpace(plan) } } : plan;
 };
 
 export const validateOrganizationPlan = async (plan: OrganizationPlan, progress: (completed: number, total: number) => void = () => undefined): Promise<void> => {
-  const moves = plan.preview.entries.filter((entry) => entry.kind === 'move');
+  const moves = plan.preview.entries.filter((entry) => entry.kind === 'move' || entry.existingCopy !== undefined);
   for (let offset = 0; offset < moves.length; offset += 32) {
     await Promise.all(moves.slice(offset, offset + 32).map(async (entry) => {
       if (await organizationFileStamp(entry.from) !== plan.stamps.get(entry.from)) throw new Error(`The audio file changed. Preview again: ${entry.from}`);
+      if (entry.kind === 'skip') {
+        const copy = plan.existingCopies.get(entry.from);
+        if (copy === undefined || copy.to !== entry.existingCopy) throw new Error('The preview is missing an existing copy. Preview again.');
+        await validateExistingOrganizationCopies([copy]);
+        return;
+      }
       try { await lstat(entry.to); } catch (error) { if (missing(error)) return; throw error; }
       if (await seratoMediaPathKey(entry.from) !== await seratoMediaPathKey(entry.to)) {
         throw new Error(`The destination is now occupied. Preview again: ${entry.to}`);
