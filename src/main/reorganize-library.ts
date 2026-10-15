@@ -154,8 +154,8 @@ export const planLibraryOrganization = async (
     const skip = (reason: Extract<LibraryOrganizationEntry, { kind: 'skip' }>['reason']) => entries.push({ kind: 'skip', from, reason });
     if (!isAbsolute(from) || isCloudPath(from)) { skip('Cloud or streaming track'); continue; }
     if (!isSupportedAudioPath(from)) { skip('Unsupported audio format'); continue; }
-    // Rekordbox keeps its built-in sampler files here; moving them breaks its sampler presets.
-    if (/[\\/]PioneerDJ[\\/]Sampler[\\/]/i.test(from)) { skip('Rekordbox sample'); continue; }
+    // Rekordbox sampler files; moving them breaks its sampler presets.
+    if (/[\\/](?:PioneerDJ|rekordbox)[\\/]Sampler[\\/]/i.test(from) || track.song.artist?.toLowerCase() === 'rekordbox') { skip('Rekordbox sample'); continue; }
     try {
       await organizationFileStamp(from);
       from = resolve(from);
