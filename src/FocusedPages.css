@@ -232,3 +232,5 @@
   .focused-duplicate-controls { flex-wrap: wrap; }
   .focused-duplicates .duplicate-groups { width: 180px; }
 }
+.focused-library.is-dropping-music { outline: 2px solid var(--accent); outline-offset: -4px; }
+.library-drop-hint { color: var(--muted); margin: 8px 28px 16px; font-size: 13px; }

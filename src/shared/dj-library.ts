@@ -9,6 +9,9 @@ export const ARSENAL_LIBRARY_ID = 'arsenal';
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
   organizationRoot: 'dj-library:organization-root',
+  organizationSettings: 'dj-library:organization-settings',
+  saveOrganizationSettings: 'dj-library:save-organization-settings',
+  previewMusicImport: 'dj-library:preview-music-import',
   organizationDestination: 'dj-library:organization-destination',
   chooseOrganizationRoot: 'dj-library:choose-organization-root',
   previewOrganization: 'dj-library:preview-organization',
@@ -558,6 +561,10 @@ export type LibraryOrganizationRequest = Readonly<{
   operation: LibraryOrganizationOperation;
   layout?: LibraryOrganizationLayout;
 }>;
+export type LibraryOrganizationSettings = Readonly<{
+  draft: LibraryOrganizationRequest | null;
+  applied: LibraryOrganizationRequest | null;
+}>;
 export type LibraryOrganizationEntry =
   | Readonly<{ kind: 'move'; from: string; to: string; collision: boolean }>
   | Readonly<{ kind: 'skip'; from: string; reason: string }>;
@@ -582,11 +589,17 @@ export type LibraryOrganizationResult = Readonly<{
   operation: LibraryOrganizationOperation;
   backupPaths: readonly string[];
   warnings: readonly string[];
+  addedCount?: number;
 }>;
+export type LibraryMusicImportPreview = LibraryOrganizationPreview & Readonly<{ addCount: number; warnings: readonly string[] }>;
 
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
   organizationRoot(): Promise<string>;
+  organizationSettings(): Promise<LibraryOrganizationSettings>;
+  saveOrganizationSettings(request: LibraryOrganizationRequest): Promise<void>;
+  previewMusicImport(paths?: readonly string[]): Promise<LibraryMusicImportPreview | null>;
+  musicFilePaths(files: readonly File[]): readonly string[];
   organizationDestination(root: string): Promise<LibraryOrganizationDestination>;
   chooseOrganizationRoot(): Promise<string | null>;
   previewOrganization(request: LibraryOrganizationRequest): Promise<LibraryOrganizationPreview>;

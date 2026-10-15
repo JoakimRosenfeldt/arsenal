@@ -266,6 +266,8 @@ const NoLibrary = ({ onManageLibraries }: Readonly<{ onManageLibraries: () => vo
 
 export const LibraryPage = ({
   busy,
+  canAddMusic,
+  onMusicFiles,
   filters,
   onCreate,
   onAdd,
@@ -282,6 +284,8 @@ export const LibraryPage = ({
   view,
 }: CommonPageProps &
   Readonly<{
+    canAddMusic: boolean;
+    onMusicFiles: (files?: readonly File[]) => void;
     onPage: (offset: number) => void;
     onSort: (sort: SongSort) => void;
     sort: SongSort;
@@ -299,6 +303,7 @@ export const LibraryPage = ({
   const [selection, setSelection] = useState<ReadonlyMap<string, SongRow>>(new Map());
   const [action, setAction] = useState<SelectionAction>(null);
   const [menuError, setMenuError] = useState(false);
+  const [draggingFiles, setDraggingFiles] = useState(false);
   const [layout, setLayout] = useLibraryColumnLayout();
   const columns = visibleColumns(layout);
   const anchorId = useRef<string | null>(null);
@@ -391,7 +396,21 @@ export const LibraryPage = ({
   };
 
   return (
-    <section className="workspace-page library-page focused-library" aria-labelledby="library-title">
+    <section className={`workspace-page library-page focused-library${draggingFiles ? ' is-dropping-music' : ''}`} aria-labelledby="library-title"
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes('Files')) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = canAddMusic && !selectionLocked ? 'copy' : 'none';
+        setDraggingFiles(canAddMusic && !selectionLocked);
+      }} onDragLeave={(event) => {
+        if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDraggingFiles(false);
+      }} onDrop={(event) => {
+        if (!event.dataTransfer.types.includes('Files') && !event.dataTransfer.files.length) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDraggingFiles(false);
+        if (canAddMusic && !selectionLocked && event.dataTransfer.files.length) onMusicFiles(Array.from(event.dataTransfer.files));
+      }}>
       <header className="page-header library-header">
         <div className="page-title-line">
           <h1 id="library-title">All tracks</h1>
@@ -400,6 +419,7 @@ export const LibraryPage = ({
       </header>
 
       <div className="library-tools">
+        {canAddMusic && <button className="quiet-button" type="button" disabled={selectionLocked} onClick={() => onMusicFiles()}>Add music files</button>}
         <label className="library-search">
           <span className="search-icon" aria-hidden />
           <span className="visually-hidden">Search tracks</span>
@@ -443,6 +463,9 @@ export const LibraryPage = ({
           onAction={setAction} onClear={() => setSelection(new Map())} onCreate={onCreate}
           playlists={playlists} songs={selectedSongs} />}
       </div>
+
+      {canAddMusic && <p className="library-drop-hint" role={draggingFiles ? 'status' : undefined}>
+        {draggingFiles ? 'Drop to preview adding these music files.' : 'Drop music files here to add them using your saved organization settings.'}</p>}
 
       {menuError && <p className="library-menu-error" role="alert">Something went wrong. Try again.</p>}
 

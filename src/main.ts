@@ -18,7 +18,7 @@ import {
 
 import { RekordboxLibrary } from './main/rekordbox-library';
 import { organizationDestination } from './main/organization-destination';
-import { readOrganizationLayout } from './shared/library-organization';
+import { readOrganizationRequest } from './main/reorganize-library';
 import { readPlaylistSuggestionRequest } from './main/playlist-suggestions';
 import { AppUpdates } from './main/app-updates';
 import { OpenRouterConnection } from './main/openrouter';
@@ -33,8 +33,6 @@ import {
 import {
   DJ_LIBRARY_CHANNELS,
   readSyncRequest,
-  readOrganizationOperation,
-  LIBRARY_ORGANIZATION_SCHEMES,
   DUPLICATE_MATCH_MODES,
   SONG_PAGE_SIZE,
   SONG_SOURCE_LABELS,
@@ -528,6 +526,34 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     }
   });
 
+  ipc.handle(DJ_LIBRARY_CHANNELS.organizationSettings, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage organization from the library window');
+    return library.organizationSettings();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.saveOrganizationSettings, (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage organization from the library window');
+    return library.saveOrganizationSettings(readOrganizationRequest(value));
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.previewMusicImport, async (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Add music from the library window');
+    let paths: string[] | undefined;
+    if (value !== undefined) {
+      if (!Array.isArray(value) || value.length === 0 || value.length > 10000) throw new Error('Choose up to 10,000 music files');
+      paths = value.map((path: unknown) => {
+        if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0') || path.length > 32768) throw new Error('Choose local music files');
+        return path;
+      });
+    }
+    libraryActions += 1;
+    try { return await library.previewMusicImport(owner, paths); }
+    finally { libraryActions -= 1; }
+  });
+
   ipc.handle(DJ_LIBRARY_CHANNELS.organizationRoot, (event) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Reorganize from the library window');
@@ -550,17 +576,9 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   ipc.handle(DJ_LIBRARY_CHANNELS.previewOrganization, async (event, value: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Reorganize from the library window');
-    if (!isRecord(value) || typeof value.destinationRoot !== 'string' || !isAbsolute(value.destinationRoot) ||
-      value.destinationRoot.includes('\0') || value.destinationRoot.length > 32768 || typeof value.renameFiles !== 'boolean') {
-      throw new Error('Choose an absolute destination folder and filename option');
-    }
-    const scheme = LIBRARY_ORGANIZATION_SCHEMES.find((option) => option.value === value.scheme)?.value;
-    if (scheme === undefined) throw new Error('Choose an organization scheme');
-    const operation = readOrganizationOperation(value.operation);
-    const layout = value.layout === undefined ? undefined : readOrganizationLayout(value.layout);
+    const request = readOrganizationRequest(value);
     libraryActions += 1;
-    try { return await library.previewOrganization({ destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles, operation,
-      ...(layout === undefined ? {} : { layout }) }, owner); }
+    try { return await library.previewOrganization(request, owner); }
     finally { libraryActions -= 1; }
   });
 

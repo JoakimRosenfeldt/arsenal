@@ -30,6 +30,12 @@
 .organization-example code { display: block; line-height: 1.6; }
 .organization-space { padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 4px; }
 .organization-space strong { color: var(--text); }
+.music-import-dialog { overflow: auto; }
+.music-import-dialog code { overflow-wrap: anywhere; }
+.music-import-dialog .reorganize-actions { margin-top: 20px; }
+.music-import-dialog .reorganize-error { color: var(--accent); }
+.music-import-dialog details { margin-top: 16px; }
+.music-import-dialog li { margin: 8px 0; }
 @media (max-width: 650px) {
   .organization-field-actions { display: flex; margin: 8px 0 0; }
 }

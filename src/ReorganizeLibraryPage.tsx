@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type JSX } from 'react';
 import { LIBRARY_ORGANIZATION_SCHEMES, type LibraryOrganizationDestination, type LibraryOrganizationPreview, type LibraryOrganizationProgress, type LibraryOrganizationRequest, type LibraryOrganizationResult } from './shared/dj-library';
 import { ARTIST_SEPARATORS, FILENAME_SEPARATORS, ORGANIZATION_FIELDS, organizationFieldValue, type LibraryOrganizationLayout, type OrganizationField } from './shared/library-organization';
 import './ReorganizeLibraryPage.css';
+import { insufficientCopySpace, OrganizationCopySpace } from './OrganizationCopySpace';
 
 const OrganizationFieldsEditor = ({ label, fields, onChange, disabled, minimum }: Readonly<{
   label: string; fields: readonly OrganizationField[]; onChange: (fields: readonly OrganizationField[]) => void; disabled: boolean; minimum: number;
@@ -34,11 +35,6 @@ const OrganizationFieldsEditor = ({ label, fields, onChange, disabled, minimum }
 const EXAMPLE_TRACK = { artist: "Bonobo, O'Flynn feat. Jordan Rakei", album: 'Fragments', genre: 'Electronic', year: 2022, label: 'Ninja Tune',
   title: 'Otomo', trackNumber: 8, discNumber: 1, bpm: 123, musicalKey: 'Am', dateAdded: '2022-01-14' };
 
-const formatSpace = (bytes: number): string => {
-  const unit = Math.min(4, Math.max(0, Math.floor(Math.log2(Math.max(1, bytes)) / 10)));
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(bytes / 1024 ** unit)} ${['B', 'KiB', 'MiB', 'GiB', 'TiB'][unit]}`;
-};
-
 export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayback }: Readonly<{
   busy: boolean;
   hasLibrary: boolean;
@@ -56,17 +52,48 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
   const [error, setError] = useState<string | null>(null);
   const [action, setAction] = useState<'choose' | 'preview' | 'apply' | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [hasAppliedSettings, setHasAppliedSettings] = useState(false);
+  const savedSettings = useRef('');
+  const saveSequence = useRef(0);
   const pending = useRef(false);
-  const working = busy || action !== null;
+  const working = busy || action !== null || !settingsLoaded;
 
   useEffect(() => {
     let active = true;
-    void window.djLibrary.organizationRoot().then((root) => { if (active) setDestinationRoot(root); })
+    void Promise.all([window.djLibrary.organizationSettings(), window.djLibrary.organizationRoot()]).then(([settings, root]) => {
+      if (!active) return;
+      const request = settings.draft ?? settings.applied;
+      setHasAppliedSettings(settings.applied !== null);
+      const restoredLayout: LibraryOrganizationLayout = request?.layout ?? { folders: LIBRARY_ORGANIZATION_SCHEMES.find((preset) => preset.value === request?.scheme)?.folders ?? ['artist', 'album'],
+        artists: { kind: 'all' }, filename: request?.renameFiles ? { kind: 'fields', fields: ['artist', 'title'], separator: ' - ' } : { kind: 'original' } };
+      setDestinationRoot(request?.destinationRoot ?? root);
+      setLayout(restoredLayout);
+      setCopy(request?.operation.kind === 'copy');
+      setUseCopies(request?.operation.kind === 'copy' && request.operation.useCopies);
+      setSettingsLoaded(true);
+    })
       .catch((error: unknown) => { if (active) setError(error instanceof Error ? error.message : 'Could not choose a default folder.'); });
     return () => { active = false; };
   }, []);
 
   useEffect(() => window.djLibrary.onOrganizationProgress(setProgress), []);
+
+  useEffect(() => {
+    if (!settingsLoaded || !destinationRoot.trim()) return;
+    const request: LibraryOrganizationRequest = { destinationRoot, scheme: 'artist-album', renameFiles: layout.filename.kind === 'fields', layout,
+      operation: copy ? { kind: 'copy', useCopies } : { kind: 'move' } };
+    const serialized = JSON.stringify(request);
+    if (serialized === savedSettings.current) return;
+    savedSettings.current = serialized;
+    const sequence = ++saveSequence.current;
+    void window.djLibrary.saveOrganizationSettings(request).catch((error: unknown) => {
+      if (sequence === saveSequence.current) {
+        savedSettings.current = '';
+        setError(error instanceof Error ? error.message : 'Could not save organization settings.');
+      }
+    });
+  }, [settingsLoaded, destinationRoot, layout, copy, useCopies]);
 
   useEffect(() => {
     if (!copy || !destinationRoot.trim()) return;
@@ -104,7 +131,9 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
       } else if (preview !== null) {
         if (preview.operation.kind === 'move' || preview.operation.useCopies) onStopPlayback();
         const id = preview.id;
-        setResult(await window.djLibrary.applyOrganization(id));
+        const applied = await window.djLibrary.applyOrganization(id);
+        setResult(applied);
+        if (applied.outcome === 'completed') setHasAppliedSettings(true);
       }
     } catch (error) { setError(error instanceof Error ? error.message : 'Could not reorganize the library.'); }
     finally { if (next === 'apply') setPreview(null); pending.current = false; setAction(null); setStopping(false); onWorking(false); }
@@ -118,7 +147,8 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
   };
 
   const space = preview?.copySpace;
-  const insufficientSpace = space !== null && space !== undefined && space.availableBytes !== null && space.requiredBytes > space.availableBytes;
+  const insufficientSpace = insufficientCopySpace(space);
+  const canApply = preview !== null && (preview.moveCount > 0 || hasAppliedSettings && preview.entries.some((entry) => entry.kind === 'skip' && entry.reason === 'Already in place'));
   const canStop = action === 'apply' && preview?.operation.kind === 'copy' &&
     (progress === null || progress.phase === 'validating' || progress.phase === 'copying');
   const skipped = preview?.entries.filter((entry) => entry.kind === 'skip') ?? [];
@@ -186,17 +216,13 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
         <div className="organization-example" aria-live="polite"><strong>Example path</strong>
           <p>Example track: {EXAMPLE_TRACK.artist}, {EXAMPLE_TRACK.title}. The original file extension is always kept.</p><code>{examplePath}</code></div>
         <p>{!copy || useCopies ? 'Close connected DJ apps before applying. ' : ''}Missing metadata uses Unknown folders. Collisions get a numbered suffix. Existing files are kept.</p>
+        {hasAppliedSettings && <p>New music uses your last applied settings. Preview and apply to change how future files are organized.</p>}
         {copy && <>
           <p>You can stop before library updates begin. Stopping keeps completed copies, removes the unfinished file, and leaves DJ apps on the originals.</p>
-          {space ? <div className="organization-space" aria-live="polite">
-            <p><strong>Estimated space needed: {formatSpace(space.requiredBytes)}</strong><br />
-              {space.availableBytes === null ? 'Free space could not be checked.' : `Available when previewed: ${formatSpace(space.availableBytes)}`}</p>
-            {insufficientSpace ? <p className="reorganize-error" role="alert">Not enough free space. Choose another destination or free up at least {formatSpace(space.requiredBytes - (space.availableBytes ?? 0))}, then preview again.</p>
-              : <p>{space.availableBytes === null ? 'Check the destination has enough room before copying.' : 'Free space is checked again before copying. Folder and filesystem overhead may vary.'}</p>}
-          </div> : <p>Preview to estimate space needed and check free space.</p>}
+          {space ? <OrganizationCopySpace space={space} /> : <p>Preview to estimate space needed and check free space.</p>}
         </>}
         <div className="reorganize-actions"><button className="quiet-button" type="button" disabled={working || !destinationRoot.trim()} onClick={() => void run('preview')}>Preview</button>
-          <button className="accent-button" type="button" disabled={working || !preview?.moveCount || insufficientSpace} onClick={() => void run('apply')}>{copy ? 'Copy files' : 'Apply moves'}</button>
+          <button className="accent-button" type="button" disabled={working || !canApply || insufficientSpace} onClick={() => void run('apply')}>{preview?.moveCount === 0 && canApply ? 'Apply settings' : copy ? 'Copy files' : 'Apply moves'}</button>
           {canStop && <button className="quiet-button" type="button" disabled={stopping} onClick={() => void stopCopy()}>{stopping ? 'Stopping…' : 'Stop copy'}</button>}</div>
       </div>
       {action !== null && <div className="reorganize-progress" role="status">

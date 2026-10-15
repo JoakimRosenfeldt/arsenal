@@ -3,9 +3,10 @@ import { constants, createReadStream } from 'node:fs';
 import { open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
-import { readOrganizationOperation, type LibraryOrganizationOperation } from '../shared/dj-library';
-import { fingerprint } from './portable-library';
-import { canonicalOrganizationPath, installMusicFile, moveMusicFile, organizationFileStamp, sameOrganizationFile, removeOrganizationDirectories, syncOrganizationDirectory, unlinkMusicFile } from './reorganize-library';
+import { readOrganizationOperation, type LibraryOrganizationOperation, type LibraryOrganizationRequest, type LibraryOrganizationSettings } from '../shared/dj-library';
+import { fingerprint, readLibraryModel } from './portable-library';
+import type { SyncLibrary } from './library-sync-model';
+import { canonicalOrganizationPath, installMusicFile, moveMusicFile, organizationFileStamp, readOrganizationRequest, sameOrganizationFile, removeOrganizationDirectories, syncOrganizationDirectory, unlinkMusicFile } from './reorganize-library';
 import { assertLibraryFileBackup, type LibraryFileBackup, restoreLibraryFileBackup } from './repair-library-files';
 import { assertRekordboxClosed, assertRekordboxDatabaseBackup, isRekordboxDatabasePath, openRekordboxDatabase, restoreRekordboxDatabaseBackup, RekordboxRunningError } from './rekordbox-database-connection';
 import { assertSeratoSqliteBackup, recoverSeratoSqlite, restoreSeratoSqliteBackup } from './serato-sqlite';
@@ -14,6 +15,9 @@ import { assertSeratoClosed } from './serato-library';
 export type OrganizationRestore = LibraryFileBackup & Readonly<{ kind: 'rekordbox-database' | 'xml' | 'sqlite' | 'legacy' | 'portable' | 'arsenal'; libraryKind?: 'rekordbox' | 'serato' }>;
 export type OrganizationJournal = {
   operation?: LibraryOrganizationOperation;
+  request?: LibraryOrganizationRequest;
+  previousOrganization?: LibraryOrganizationSettings;
+  additions?: SyncLibrary;
   moves: { installed?: boolean; rollbackInstalled?: boolean; from: string; to: string; temporary: string; sha256: string | null; stamp: string | null; destinationStamp: string | null; rollbackStamp: string | null; completed: boolean }[];
   restores: OrganizationRestore[];
   createdDirectories: string[];
@@ -45,6 +49,14 @@ const parseOrganizationJournal = (bytes: string, path: string): OrganizationJour
       !('restores' in value) || !Array.isArray(value.restores) || !('createdDirectories' in value) || !Array.isArray(value.createdDirectories)) throw invalid();
   const journal: OrganizationJournal = { moves: [], restores: [], createdDirectories: [] };
   if ('operation' in value) journal.operation = readOrganizationOperation(value.operation);
+  if ('request' in value) journal.request = readOrganizationRequest(value.request);
+  if ('previousOrganization' in value) {
+    const previous = value.previousOrganization;
+    if (typeof previous !== 'object' || previous === null || !('draft' in previous) || !('applied' in previous)) throw invalid();
+    journal.previousOrganization = { draft: previous.draft === null ? null : readOrganizationRequest(previous.draft),
+      applied: previous.applied === null ? null : readOrganizationRequest(previous.applied) };
+  }
+  if ('additions' in value) journal.additions = readLibraryModel(value.additions);
   if ('preserveDestinations' in value) {
     if (typeof value.preserveDestinations !== 'boolean') throw invalid();
     journal.preserveDestinations = value.preserveDestinations;
@@ -129,6 +141,9 @@ export const readOrganizationJournal = async (path: string): Promise<Organizatio
   let targets: OrganizationJournal['targets'];
   let preserveDestinations: OrganizationJournal['preserveDestinations'];
   let operation: OrganizationJournal['operation'];
+  let request: OrganizationJournal['request'];
+  let previousOrganization: OrganizationJournal['previousOrganization'];
+  let additions: OrganizationJournal['additions'];
   for (const line of lines) {
     const update = parseOrganizationJournal(line, path);
     replacements = update.replacements ?? replacements;
@@ -136,11 +151,14 @@ export const readOrganizationJournal = async (path: string): Promise<Organizatio
     targets = update.targets ?? targets;
     preserveDestinations = update.preserveDestinations ?? preserveDestinations;
     operation = update.operation ?? operation;
+    request = update.request ?? request;
+    previousOrganization = update.previousOrganization ?? previousOrganization;
+    additions = update.additions ?? additions;
     for (const move of update.moves) moves.set(move.from, move);
     for (const restore of update.restores) restores.set(restore.path, restore);
     for (const directory of update.createdDirectories) createdDirectories.add(directory);
   }
-  const journal = { ...(operation === undefined ? {} : { operation }), ...(preserveDestinations === undefined ? {} : { preserveDestinations }), ...(acceptedConnections === undefined ? {} : { acceptedConnections }), ...(targets === undefined ? {} : { targets }), ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
+  const journal = { ...(previousOrganization === undefined ? {} : { previousOrganization }), ...(request === undefined ? {} : { request }), ...(additions === undefined ? {} : { additions }), ...(operation === undefined ? {} : { operation }), ...(preserveDestinations === undefined ? {} : { preserveDestinations }), ...(acceptedConnections === undefined ? {} : { acceptedConnections }), ...(targets === undefined ? {} : { targets }), ...(replacements === undefined ? {} : { replacements }), moves: [...moves.values()], restores: [...restores.values()], createdDirectories: [...createdDirectories] };
   if (tail) await writeOrganizationJournal(path, journal);
   return journal;
 };

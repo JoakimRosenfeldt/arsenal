@@ -4,8 +4,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 
 import type { LibraryOrganizationEntry, LibraryOrganizationPreview, LibraryOrganizationRequest } from '../shared/dj-library';
-import { LIBRARY_ORGANIZATION_SCHEMES } from '../shared/dj-library';
-import { organizationFieldValue, type LibraryOrganizationLayout } from '../shared/library-organization';
+import { LIBRARY_ORGANIZATION_SCHEMES, readOrganizationOperation } from '../shared/dj-library';
+import { organizationFieldValue, readOrganizationLayout, type LibraryOrganizationLayout } from '../shared/library-organization';
 import { normalizePath, type SyncLibrary } from './library-sync-model';
 import { fingerprint, safeName } from './portable-library';
 import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
@@ -57,6 +57,17 @@ export type OrganizationPlan = Readonly<{
   preview: LibraryOrganizationPreview;
   stamps: ReadonlyMap<string, string>;
 }>;
+
+export const readOrganizationRequest = (value: unknown): LibraryOrganizationRequest => {
+  if (typeof value !== 'object' || value === null || !('destinationRoot' in value) || typeof value.destinationRoot !== 'string' ||
+    !isAbsolute(value.destinationRoot) || value.destinationRoot.includes('\0') || value.destinationRoot.length > 32768 ||
+    !('renameFiles' in value) || typeof value.renameFiles !== 'boolean' || !('scheme' in value)) throw new Error('Choose an absolute destination folder and filename option.');
+  const scheme = LIBRARY_ORGANIZATION_SCHEMES.find((option) => option.value === value.scheme)?.value;
+  if (scheme === undefined) throw new Error('Choose an organization scheme.');
+  return { destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles,
+    operation: readOrganizationOperation('operation' in value ? value.operation : undefined),
+    ...('layout' in value && value.layout !== undefined ? { layout: readOrganizationLayout(value.layout) } : {}) };
+};
 
 export const organizationCopySpace = async (plan: OrganizationPlan): Promise<NonNullable<LibraryOrganizationPreview['copySpace']>> => {
   const sizes = plan.preview.entries.flatMap((entry) => {

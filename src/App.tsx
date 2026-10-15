@@ -26,6 +26,7 @@ import {
   type LibraryConnectionResult,
   type LibrarySummary,
   type LibraryStatus,
+  type LibraryMusicImportPreview,
   type LibraryStartupPreview,
   type LibraryStartupResult,
   type LibraryMutation,
@@ -50,6 +51,7 @@ import { TracklistExportDialog } from './TracklistExportDialog';
 import { LibraryChangesDialog } from './LibraryChangesDialog';
 import { LibraryConnectionsPage } from './LibraryConnectionsPage';
 import { ReorganizeLibraryPage } from './ReorganizeLibraryPage';
+import { MusicImportDialog } from './MusicImportDialog';
 import { Preferences } from './Preferences';
 import type { SmartPlaylistDefinition } from './shared/smart-playlists';
 
@@ -202,6 +204,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const busy = operationBusy || backgroundSyncing || reloadRequired;
   const [view, setView] = useState<LibraryView | null>(null);
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
+  const [canAddMusic, setCanAddMusic] = useState(false);
+  const [musicImport, setMusicImport] = useState<LibraryMusicImportPreview | null>(null);
+  const preparingMusic = useRef(false);
   const startupCheck = useRef<Promise<LibraryStartupPreview> | null>(null);
   const [startupPreview, setStartupPreview] = useState<LibraryStartupPreview | null>(null);
   const dismissedOrganizationJournal = useRef<string | null>(null);
@@ -412,6 +417,27 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setAudioDuration(0);
     setPlaybackFailed(false);
   }, []);
+
+  useEffect(() => {
+    if (playlistWindow || activePage !== 'library') return;
+    let active = true;
+    void window.djLibrary.organizationSettings().then((settings) => { if (active) setCanAddMusic(settings.applied !== null); })
+      .catch(() => { if (active) setCanAddMusic(false); });
+    return () => { active = false; };
+  }, [activePage, backgroundLibrary, playlistWindow]);
+
+  const addMusicFiles = async (files?: readonly File[]): Promise<void> => {
+    if (busy || !canAddMusic || preparingMusic.current || musicImport !== null) return;
+    preparingMusic.current = true;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const paths = files === undefined ? undefined : window.djLibrary.musicFilePaths(files);
+      if (paths !== undefined && paths.length === 0) throw new Error('Drop local music files from your file manager.');
+      setMusicImport(await window.djLibrary.previewMusicImport(paths));
+    } catch (error) { setFeedback({ tone: 'warning', message: error instanceof Error ? error.message : 'Could not read music files.' }); }
+    finally { preparingMusic.current = false; setBusy(false); }
+  };
 
   useEffect(() => window.preferences.onLibraryChanged((settings) => {
     if (settings.minimumSongLengthSeconds === minimumSongLengthSeconds) return;
@@ -1028,6 +1054,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           <LibraryPage
             key={`${libraryVersion}-${minimumSongLengthSeconds}`}
             busy={busy}
+            canAddMusic={canAddMusic}
+            onMusicFiles={(files) => void addMusicFiles(files)}
             filters={filters}
             onSearch={(nextQuery, nextFilters) => {
               setQuery(nextQuery);
@@ -1203,6 +1231,14 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       {playlistWindow === undefined && exportPlaylist !== null && (
         <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onError={reportError} onClose={() => setExportPlaylistId(null)} />
       )}
+      {playlistWindow === undefined && musicImport !== null && <MusicImportDialog preview={musicImport}
+        onWorking={(working) => { if (working) stopPlayback(); setBusy(working); }} onClose={() => setMusicImport(null)}
+        onComplete={(result) => {
+          setMusicImport(null);
+          setFeedback({ tone: result.warnings.length ? 'warning' : 'success', message: result.outcome === 'stopped'
+            ? `Copy stopped. ${result.fileCount} completed ${result.fileCount === 1 ? 'copy' : 'copies'} kept. No tracks added. Original library paths kept.`
+            : `${result.addedCount ?? 0} ${result.addedCount === 1 ? 'track' : 'tracks'} added. ${result.warnings.join(' ')}`.trim() });
+        }} />}
       {playlistWindow === undefined && !loading && startupPreview !== null && (
         <LibraryChangesDialog preview={startupPreview} busy={busy} onResolve={resolveStartupChanges} onDismiss={() => {
           dismissedOrganizationJournal.current = startupPreview.organizationRecovery?.journalPath ?? null;

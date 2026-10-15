@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 
 import { APP_UPDATE_CHANNELS, type AppUpdatesApi, type UpdateStatus } from './shared/app-updates';
 import { PREFERENCES_CHANNELS, type LibrarySettings, type PreferencesApi } from './shared/preferences';
@@ -20,6 +20,10 @@ import {
 const api: DjLibraryApi = Object.freeze({
   status: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.status),
   organizationRoot: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.organizationRoot),
+  organizationSettings: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.organizationSettings),
+  saveOrganizationSettings: (request) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.saveOrganizationSettings, request),
+  previewMusicImport: (paths) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.previewMusicImport, paths),
+  musicFilePaths: (files) => files.map((file) => webUtils.getPathForFile(file)).filter(Boolean),
   organizationDestination: (root) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.organizationDestination, root),
   chooseOrganizationRoot: () => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.chooseOrganizationRoot),
   previewOrganization: (request) => ipcRenderer.invoke(DJ_LIBRARY_CHANNELS.previewOrganization, request),
