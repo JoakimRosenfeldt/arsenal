@@ -6,8 +6,9 @@ import { basename, dirname, extname, join, parse, posix, resolve, sep, win32 } f
 import type { SongRow } from '../shared/dj-library';
 import { mergeLibraries, normalizePath, type PlaylistNodeMove, type SyncLibrary, type SyncPlaylist, type SyncTrack } from './library-sync-model';
 import { assertSeratoMediaFile, resolveSeratoLibraryPaths, resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
-import { assertMissingFileRepair, saveRepairedLibraryFiles, type LibraryFileRepairResult } from './repair-library-files';
+import { assertMissingFileRepair, saveRepairedLibraryFiles, type LibraryFileRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
 import type { SeratoLibraryWriteOptions } from './serato-library';
+import { canonicalOrganizationPath } from './reorganize-library';
 
 type RecordField = Readonly<{ tag: string; data: Buffer }>;
 type NativeFile = Readonly<{ path: string; bytes: Buffer | null; records: readonly RecordField[] }>;
@@ -92,6 +93,7 @@ const absoluteMediaPath = (value: string, root: string): string => {
 
 const relativeMediaPath = (path: string, root: string): string => {
   const normalized = path.replaceAll('\\', '/');
+  root = root.replaceAll('\\', '/');
   if (normalized.includes('\0') || (!posix.isAbsolute(normalized) && !win32.isAbsolute(normalized))) {
     throw new Error(`Serato needs an absolute audio file path: ${path}`);
   }
@@ -158,9 +160,9 @@ const pathResolver = () => {
   };
 };
 
-const readNativeLibrary = async (directory: string, allowMissing: boolean) => {
+const readNativeLibrary = async (directory: string, allowMissing: boolean, rawPaths = false) => {
   const root = volumeRoot(directory);
-  const resolvePath = pathResolver();
+  const resolvePath = rawPaths ? async (path: string) => path : pathResolver();
   const database = await readNativeFile(join(directory, 'database V2'), DATABASE_VERSION, allowMissing);
   const tracks = new Map<string, SyncTrack>();
   const trackRecords = new Map<string, readonly RecordField[]>();
@@ -208,26 +210,60 @@ const readNativeLibrary = async (directory: string, allowMissing: boolean) => {
   return { root, database, trackRecords, crates, library, subcrates, names };
 };
 
+export const seratoLegacyOrganizationFiles = async (directory: string): Promise<string[]> => [
+  join(directory, 'database V2'), ...(await crateNames(join(directory, 'Subcrates'))).map((name) => join(directory, 'Subcrates', name)),
+];
+
+export const seratoLegacyOrganizationSource = async (directory: string) => {
+  const native = await readNativeLibrary(directory, false, true);
+  const files = [native.database, ...native.crates];
+  const paths = files.flatMap((file) => file.records.flatMap((record) => {
+    if (record.tag !== 'otrk') return [];
+    const value = getText(parseRecords(record.data, file.path), file === native.database ? 'pfil' : 'ptrk');
+    return value === null ? [] : [absoluteMediaPath(value, native.root)];
+  }));
+  return { paths: [...new Set(paths)], duplicatePaths: [], files: files.map((file) => file.path) };
+};
+
+export const validateSeratoLegacyDestination = async (directory: string, path: string): Promise<void> => {
+  relativeMediaPath(await canonicalOrganizationPath(path), await canonicalOrganizationPath(volumeRoot(directory)));
+};
+
+const organizationRelativeMediaPath = async (path: string, root: string): Promise<string> => {
+  const canonical = relativeMediaPath(await canonicalOrganizationPath(path), await canonicalOrganizationPath(root));
+  try { return relativeMediaPath(path, root); } catch { return canonical; }
+};
+
 export const readSeratoLegacy = async (directory: string): Promise<SyncLibrary> => resolveSeratoLibraryPaths((await readNativeLibrary(directory, false)).library);
 
-export const repairSeratoLegacyMissingFile = async (
+export const repairSeratoLegacyMissingFile = (
+  directory: string, missingPath: string, replacementPath: string | null, assertClosed: () => Promise<void>,
+): Promise<LibraryFileRepairResult> => repairSeratoLegacyMissingFiles(directory, [{ missingPath, replacementPath }], assertClosed);
+
+export const repairSeratoLegacyMissingFiles = async (
   directory: string,
-  missingPath: string,
-  replacementPath: string | null,
-  assertClosed: () => Promise<void>,
+  repairs: readonly MissingFileRepair[],
+  assertClosed: () => Promise<void>, options: LibraryRepairOptions = {},
 ): Promise<LibraryFileRepairResult> => {
   await assertClosed();
-  await assertMissingFileRepair(missingPath, replacementPath);
-  const native = await readNativeLibrary(directory, false);
-  const replacement = replacementPath === null ? null : await resolveSeratoMediaPath(replacementPath);
-  const location = replacement === null ? null : relativeMediaPath(replacement, native.root);
-  const missingKey = await seratoMediaPathKey(missingPath);
-  const replacementKey = replacement === null ? null : await seratoMediaPathKey(replacement);
-  for (const track of native.library.tracks) {
-    if (await seratoMediaPathKey(track.path) === replacementKey) throw new Error('The selected audio file already has an entry in this Serato library. Remove the missing entry or choose another audio file.');
+  const native = await readNativeLibrary(directory, false, options.mode === 'reorganize');
+  const root = native.root;
+  const replacements = new Map<string, string | null>();
+  const sourcePaths = new Set(repairs.flatMap((repair) => [normalizePath(repair.missingPath),
+    ...(options.mode === 'reorganize' && repair.replacementPath !== null ? [normalizePath(repair.replacementPath)] : [])]));
+  const existingKeys = new Set(await Promise.all(native.library.tracks.filter((track) => options.mode !== 'reorganize' || !sourcePaths.has(normalizePath(track.path))).map((track) => seratoMediaPathKey(track.path))));
+  for (const repair of repairs) {
+    await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
+    const replacement = repair.replacementPath === null || options.mode === 'reorganize' ? repair.replacementPath : await resolveSeratoMediaPath(repair.replacementPath);
+    if (replacement !== null && existingKeys.has(await seratoMediaPathKey(replacement))) {
+      throw new Error('The selected audio file already has an entry in this Serato library. Remove the missing entry or choose another audio file.');
+    }
+    replacements.set(options.mode === 'reorganize' ? normalizePath(repair.missingPath) : await seratoMediaPathKey(repair.missingPath),
+      replacement === null ? null : options.mode === 'reorganize' ? await organizationRelativeMediaPath(replacement, root) : relativeMediaPath(replacement, root));
   }
   const files = [native.database, ...native.crates];
   const updates: { path: string; before: Buffer; after: Buffer }[] = [];
+  const found = new Set<string>();
   for (const file of files) {
     const tag = file === native.database ? 'pfil' : 'ptrk';
     const records: RecordField[] = [];
@@ -236,24 +272,24 @@ export const repairSeratoLegacyMissingFile = async (
       if (record.tag !== 'otrk') { records.push(record); continue; }
       const fields = parseRecords(record.data, file.path);
       const value = getText(fields, tag);
-      if (value === null || await seratoMediaPathKey(absoluteMediaPath(value, native.root)) !== missingKey) {
-        records.push(record);
-        continue;
-      }
+      const key = value === null ? null : options.mode === 'reorganize' ? normalizePath(absoluteMediaPath(value, native.root)) : await seratoMediaPathKey(absoluteMediaPath(value, native.root));
+      const location = key === null ? undefined : replacements.get(key);
+      if (location === undefined || key === null) { records.push(record); continue; }
+      found.add(key);
       changed = true;
       if (location !== null) records.push({ ...record, data: encodeRecords(fields.map((field) => field.tag === tag ? textField(tag, location) : field)) });
     }
     if (changed && file.bytes !== null) updates.push({ path: file.path, before: file.bytes, after: encodeRecords(records) });
   }
-  if (updates.length === 0) throw new Error('The missing track is no longer in this Serato library. Scan the library again.');
+  if ([...replacements.keys()].some((key) => !found.has(key))) throw new Error('The missing track is no longer in this Serato library. Scan the library again.');
   return saveRepairedLibraryFiles(updates, async () => {
     await assertClosed();
-    await assertMissingFileRepair(missingPath, replacement);
-    if (JSON.stringify(await crateNames(native.subcrates)) !== JSON.stringify(native.names)) throw new Error('Serato crates changed during repair. Close Serato and retry.');
+    for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
+    if (JSON.stringify((await crateNames(native.subcrates)).sort()) !== JSON.stringify([...native.names].sort())) throw new Error('Serato crates changed during repair. Close Serato and retry.');
     for (const file of files) {
       if (!(await readOptional(file.path))?.equals(file.bytes ?? Buffer.alloc(0))) throw new Error('The Serato library changed during repair. Close Serato and retry.');
     }
-  });
+  }, options);
 };
 
 const fieldsForTrack = (track: SyncTrack, root: string, existing: readonly RecordField[] = []): RecordField[] => {

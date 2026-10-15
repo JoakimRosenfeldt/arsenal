@@ -247,7 +247,8 @@ const readManifest = (value: unknown): PortableLibraryManifest => {
 };
 
 const fingerprints = new Map<string, Readonly<{ stamp: string; sha256: string; sizeBytes: number }>>();
-const fingerprint = async (path: string) => {
+export const fingerprint = async (path: string, signal?: AbortSignal) => {
+  signal?.throwIfAborted();
   const file = await open(path, 'r');
   try {
     const before = await file.stat({ bigint: true });
@@ -258,10 +259,12 @@ const fingerprint = async (path: string) => {
     if (cached?.stamp === stamp) return cached;
     const hash = createHash('sha256');
     for await (const raw of file.createReadStream({ autoClose: false })) {
+      signal?.throwIfAborted();
       const chunk: unknown = raw;
       if (!Buffer.isBuffer(chunk)) throw new Error('Could not read music file bytes.');
       hash.update(chunk);
     }
+    signal?.throwIfAborted();
     if (stampFor(await file.stat({ bigint: true })) !== stamp) throw new Error('The music file changed while it was read. Retry the backup.');
     const result = { stamp, sha256: hash.digest('hex'), sizeBytes: Number(before.size) };
     fingerprints.set(path, result);
@@ -276,7 +279,7 @@ const within = (directory: string, path: string): boolean => {
 };
 const stableId = (kind: 'track' | 'playlist', value: string): string => `${kind}-${createHash('sha256').update(value).digest('hex')}`;
 
-const safeName = (value: string | null, fallback: string): string => {
+export const safeName = (value: string | null, fallback: string): string => {
   const cleaned = (value ?? '').normalize('NFC').replace(/[<>:"/\\|?*]|\p{Cc}/gu, '_').trim().replace(/^[. ]+|[. ]+$/g, '');
   let shortened = '';
   for (const character of cleaned) {
@@ -468,7 +471,8 @@ export const readPortableLibraryFolder = async (directory: string) => {
 
 export const resolvePortableLibrary = async (
   manifest: PortableLibraryManifest, manifestPath: string, searchRoots: readonly string[],
-  managedMediaDirectory?: string,
+  managedMediaDirectory?: string, knownPaths: readonly string[] = [],
+  knownTrackPaths: Readonly<Record<string, string>> = {},
 ) => {
   const root = await realpath(dirname(manifestPath));
   const resolved = new Map<string, string>();
@@ -487,6 +491,7 @@ export const resolvePortableLibrary = async (
       return false;
     }
   };
+  const previousPaths = new Map(Object.entries(knownTrackPaths));
   for (const track of manifest.tracks) {
     const media = track.media;
     if (media.kind === 'reference') { resolved.set(track.id, media.uri); continue; }
@@ -507,11 +512,29 @@ export const resolvePortableLibrary = async (
       }
     }
     if (isAbsolute(media.originalPath) && await matches(media.originalPath, media)) { resolved.set(track.id, media.originalPath); continue; }
+    const previous = previousPaths.get(track.id);
+    if (previous !== undefined && await matches(previous, media)) { resolved.set(track.id, previous); continue; }
     if (media.sha256 !== null && media.sizeBytes !== null) {
       let byHash = wanted.get(media.sizeBytes);
       if (byHash === undefined) { byHash = new Map(); wanted.set(media.sizeBytes, byHash); }
       const previous = byHash.get(media.sha256) ?? [];
       byHash.set(media.sha256, [...previous, track]);
+    }
+  }
+  for (const path of new Set(knownPaths)) {
+    if (wanted.size === 0) break;
+    try {
+      const info = await stat(path);
+      const byHash = wanted.get(info.size);
+      if (!info.isFile() || byHash === undefined) continue;
+      const found = await fingerprint(path);
+      const tracks = byHash.get(found.sha256);
+      if (tracks === undefined) continue;
+      for (const track of tracks) resolved.set(track.id, path);
+      byHash.delete(found.sha256);
+      if (byHash.size === 0) wanted.delete(info.size);
+    } catch (error) {
+      if (!missing(error)) warnings.push(`${basename(path)}: could not reuse the previous music file.`);
     }
   }
   const visited = new Set<string>();

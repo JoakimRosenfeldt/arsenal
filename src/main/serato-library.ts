@@ -3,9 +3,10 @@ import { stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import type { LibraryRepairOptions, MissingFileRepair } from './repair-library-files';
 import type { PlaylistNodeMove, SyncLibrary } from './library-sync-model';
-import { moveSeratoLegacyNode, readSeratoLegacy, repairSeratoLegacyMissingFile, writeSeratoLegacy } from './serato-legacy';
-import { moveSeratoSqliteNode, readSeratoSqlite, repairSeratoSqliteMissingFile, writeSeratoSqlite } from './serato-sqlite';
+import { seratoLegacyOrganizationFiles, seratoLegacyOrganizationSource, validateSeratoLegacyDestination, moveSeratoLegacyNode, readSeratoLegacy, repairSeratoLegacyMissingFile, repairSeratoLegacyMissingFiles, writeSeratoLegacy } from './serato-legacy';
+import { seratoSqliteOrganizationSource, validateSeratoSqliteDestination, moveSeratoSqliteNode, readSeratoSqlite, repairSeratoSqliteMissingFile, repairSeratoSqliteMissingFiles, writeSeratoSqlite } from './serato-sqlite';
 
 export type SeratoSource = Readonly<{ kind: 'legacy' | 'sqlite'; path: string }>;
 
@@ -56,6 +57,10 @@ export const assertSeratoClosed = async (): Promise<void> => {
 export const readSeratoLibrary = (source: SeratoSource): Promise<SyncLibrary> =>
   source.kind === 'sqlite' ? readSeratoSqlite(source.path) : readSeratoLegacy(source.path);
 
+export const repairSeratoMissingFiles = (source: SeratoSource, repairs: readonly MissingFileRepair[], options: LibraryRepairOptions = {}) =>
+  source.kind === 'sqlite' ? repairSeratoSqliteMissingFiles(source.path, repairs, options)
+    : repairSeratoLegacyMissingFiles(source.path, repairs, assertSeratoClosed, options);
+
 export const moveSeratoNode = async (source: SeratoSource, move: PlaylistNodeMove): Promise<void> => {
   await assertSeratoClosed();
   if (source.kind === 'sqlite') await moveSeratoSqliteNode(source.path, move);
@@ -71,3 +76,12 @@ export const writeSeratoLibrary = async (source: SeratoSource, incoming: SyncLib
   if (source.kind === 'sqlite') return writeSeratoSqlite(source.path, incoming, options);
   return { ...await writeSeratoLegacy(source.path, incoming, options), warnings: [] };
 };
+
+export const seratoOrganizationSource = (source: SeratoSource) => source.kind === 'sqlite'
+  ? seratoSqliteOrganizationSource(source.path) : seratoLegacyOrganizationSource(source.path);
+
+export const validateSeratoOrganizationDestination = (source: SeratoSource, path: string): Promise<void> => source.kind === 'sqlite'
+  ? validateSeratoSqliteDestination(source.path, path) : validateSeratoLegacyDestination(source.path, path);
+
+export const seratoOrganizationFiles = async (source: SeratoSource): Promise<string[]> => source.kind === 'legacy'
+  ? seratoLegacyOrganizationFiles(source.path) : [source.path, `${source.path}-wal`];

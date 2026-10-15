@@ -26,6 +26,7 @@ import {
   type LibraryConnectionResult,
   type LibrarySummary,
   type LibraryStatus,
+  type LibraryMusicImportPreview,
   type LibraryStartupPreview,
   type LibraryStartupResult,
   type LibraryMutation,
@@ -49,13 +50,15 @@ import { FolderCreator, SmartPlaylistEditor } from './SmartPlaylistEditor';
 import { TracklistExportDialog } from './TracklistExportDialog';
 import { LibraryChangesDialog } from './LibraryChangesDialog';
 import { LibraryConnectionsPage } from './LibraryConnectionsPage';
+import { ReorganizeLibraryPage } from './ReorganizeLibraryPage';
+import { MusicImportDialog } from './MusicImportDialog';
 import { Preferences } from './Preferences';
 import type { SmartPlaylistDefinition } from './shared/smart-playlists';
 
 type DisplayError = ImportFailure | MutationFailure | 'unexpected';
 
 type Feedback = Readonly<{
-  tone: 'warning';
+  tone: 'warning' | 'success';
   message: string;
 }>;
 
@@ -201,8 +204,12 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
   const busy = operationBusy || backgroundSyncing || reloadRequired;
   const [view, setView] = useState<LibraryView | null>(null);
   const [connections, setConnections] = useState<LibraryConnections | null>(null);
+  const [canAddMusic, setCanAddMusic] = useState(false);
+  const [musicImport, setMusicImport] = useState<LibraryMusicImportPreview | null>(null);
+  const preparingMusic = useRef(false);
   const startupCheck = useRef<Promise<LibraryStartupPreview> | null>(null);
   const [startupPreview, setStartupPreview] = useState<LibraryStartupPreview | null>(null);
+  const dismissedOrganizationJournal = useRef<string | null>(null);
   const initialStateLoaded = useRef(false);
   const [startupSyncResult, setStartupSyncResult] = useState<Exclude<SyncResult, { kind: 'cancelled' }> | null>(null);
   const [playlists, setPlaylists] = useState<readonly RekordboxPlaylist[] | null>(null);
@@ -257,6 +264,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setConnections(startup.connections);
     const syncResult = startup.syncResult?.kind === 'cancelled' ? null : startup.syncResult;
     setStartupSyncResult(syncResult);
+    if (startup.message) setFeedback({ tone: 'success', message: startup.message });
     if (startup.warnings.length > 0) {
       setFeedback({ tone: 'warning', message: startup.warnings.join(' ') });
     }
@@ -271,8 +279,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     startupCheck.current ??= window.djLibrary.checkStartupChanges();
     void startupCheck.current.then(async (preview) => {
       if (!active) return;
-      if (preview.libraries.length > 0) {
-        setStartupPreview(preview);
+      if (preview.organizationRecovery || preview.libraries.length > 0) {
+        if (preview.organizationRecovery?.journalPath !== dismissedOrganizationJournal.current) setStartupPreview(preview);
         return;
       }
       const startup = await window.djLibrary.resolveStartupChanges('skip');
@@ -410,6 +418,27 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setPlaybackFailed(false);
   }, []);
 
+  useEffect(() => {
+    if (playlistWindow || activePage !== 'library') return;
+    let active = true;
+    void window.djLibrary.organizationSettings().then((settings) => { if (active) setCanAddMusic(settings.applied !== null); })
+      .catch(() => { if (active) setCanAddMusic(false); });
+    return () => { active = false; };
+  }, [activePage, backgroundLibrary, playlistWindow]);
+
+  const addMusicFiles = async (files?: readonly File[]): Promise<void> => {
+    if (busy || !canAddMusic || preparingMusic.current || musicImport !== null) return;
+    preparingMusic.current = true;
+    setBusy(true);
+    setFeedback(null);
+    try {
+      const paths = files === undefined ? undefined : window.djLibrary.musicFilePaths(files);
+      if (paths !== undefined && paths.length === 0) throw new Error('Drop local music files from your file manager.');
+      setMusicImport(await window.djLibrary.previewMusicImport(paths));
+    } catch (error) { setFeedback({ tone: 'warning', message: error instanceof Error ? error.message : 'Could not read music files.' }); }
+    finally { preparingMusic.current = false; setBusy(false); }
+  };
+
   useEffect(() => window.preferences.onLibraryChanged((settings) => {
     if (settings.minimumSongLengthSeconds === minimumSongLengthSeconds) return;
     stopPlayback();
@@ -435,6 +464,9 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     });
     const stopChanges = window.djLibrary.onLibraryChanged((status) => {
       setBackgroundLibrary(status);
+      if (!playlistWindow) void window.djLibrary.checkStartupChanges().then((preview) => {
+        if (active && preview.organizationRecovery && preview.organizationRecovery.journalPath !== dismissedOrganizationJournal.current) setStartupPreview(preview);
+      }).catch(() => undefined);
       if (playlistWindow && (status.kind === 'empty' || status.library.revision !== playlistWindow.request.revision)) {
         setError('stale-library');
       }
@@ -560,7 +592,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     });
   };
 
-  const resolveStartupChanges = async (action: 'import' | 'skip'): Promise<void> => {
+  const resolveStartupChanges = async (action: Parameters<typeof window.djLibrary.resolveStartupChanges>[0]): Promise<void> => {
     if (operationPending.current) throw new Error('Another library action is still running.');
     operationPending.current = true;
     setBusy(true);
@@ -569,7 +601,17 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
     setError(null);
     setFeedback(null);
     try {
-      const startup = await window.djLibrary.resolveStartupChanges(action);
+      let startup = await window.djLibrary.resolveStartupChanges(action);
+      let nextPreview: typeof startupPreview = null;
+      if (action === 'undo-reorganization' || action === 'keep-reorganization') {
+        dismissedOrganizationJournal.current = null;
+        const preview = await window.djLibrary.checkStartupChanges();
+        if (preview.organizationRecovery || preview.libraries.length > 0) nextPreview = preview;
+        else {
+          const next = await window.djLibrary.resolveStartupChanges('skip');
+          startup = { ...next, message: startup.message, warnings: [...startup.warnings, ...next.warnings] };
+        }
+      }
       showStartupResult(startup);
       try {
         if (startup.status.kind === 'ready') {
@@ -585,7 +627,7 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       } catch {
         setReloadRequired(true);
       }
-      setStartupPreview(null);
+      setStartupPreview(nextPreview);
     } finally {
       operationPending.current = false;
       setBusy(false);
@@ -1003,6 +1045,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           onImportChanges={(id) => manageConnection(() => window.djLibrary.manageLibraryConnection({ kind: 'open', id }))}
           onSync={(request) => runSync(() => window.djLibrary.syncLibraries(request))}
           onResolveMissing={(action) => runSync(() => window.djLibrary.resolveSyncMissingFile(action))} />;
+      case 'reorganize':
+        return <ReorganizeLibraryPage busy={busy} hasLibrary={hasLibrary} onWorking={setBusy} onStopPlayback={stopPlayback} />;
       case 'preferences':
         return <Preferences onCancel={() => navigate('library')} onError={reportError} />;
       case 'library':
@@ -1010,6 +1054,8 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
           <LibraryPage
             key={`${libraryVersion}-${minimumSongLengthSeconds}`}
             busy={busy}
+            canAddMusic={canAddMusic}
+            onMusicFiles={(files) => void addMusicFiles(files)}
             filters={filters}
             onSearch={(nextQuery, nextFilters) => {
               setQuery(nextQuery);
@@ -1185,8 +1231,19 @@ export const App = ({ playlistWindow }: Readonly<{ playlistWindow?: PlaylistWind
       {playlistWindow === undefined && exportPlaylist !== null && (
         <TracklistExportDialog key={exportPlaylist.id} playlist={exportPlaylist} onError={reportError} onClose={() => setExportPlaylistId(null)} />
       )}
+      {playlistWindow === undefined && musicImport !== null && <MusicImportDialog preview={musicImport}
+        onWorking={(working) => { if (working) stopPlayback(); setBusy(working); }} onClose={() => setMusicImport(null)}
+        onComplete={(result) => {
+          setMusicImport(null);
+          setFeedback({ tone: result.warnings.length ? 'warning' : 'success', message: result.outcome === 'stopped'
+            ? `Copy stopped. ${result.fileCount} completed ${result.fileCount === 1 ? 'copy' : 'copies'} kept. No tracks added. Original library paths kept.`
+            : `${result.addedCount ?? 0} ${result.addedCount === 1 ? 'track' : 'tracks'} added. ${result.warnings.join(' ')}`.trim() });
+        }} />}
       {playlistWindow === undefined && !loading && startupPreview !== null && (
-        <LibraryChangesDialog preview={startupPreview} busy={busy} onResolve={resolveStartupChanges} />
+        <LibraryChangesDialog preview={startupPreview} busy={busy} onResolve={resolveStartupChanges} onDismiss={() => {
+          dismissedOrganizationJournal.current = startupPreview.organizationRecovery?.journalPath ?? null;
+          setStartupPreview(null);
+        }} />
       )}
     </div>
   );

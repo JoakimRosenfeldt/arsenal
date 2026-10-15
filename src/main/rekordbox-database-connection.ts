@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import Database from 'better-sqlite3-multiple-ciphers';
 import { app } from 'electron';
 import { SaxesParser } from 'saxes';
+import { assertLibraryFileBackup, currentLibraryFileHash, databaseContentHash, restoreLibraryFileBackup, type LibraryFileBackup } from './repair-library-files';
 
 export type RekordboxDatabase = Database.Database;
 
@@ -130,10 +131,10 @@ const recentBackup = async (root: string, name: string): Promise<boolean> => {
   return false;
 };
 
-export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: string): Promise<string[]> => {
+export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: string, force = false): Promise<string[]> => {
   await assertRekordboxClosed();
   if (db.inTransaction) throw new Error('Back up the Rekordbox database before starting a transaction.');
-  if (await recentBackup(join(dirname(path), 'arsenal-backups'), basename(path))) return [];
+  if (!force && await recentBackup(join(dirname(path), 'arsenal-backups'), basename(path))) return [];
   const directory = join(dirname(path), 'arsenal-backups', `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
   await mkdir(directory, { recursive: true });
   const databaseBackup = join(directory, basename(path));
@@ -148,4 +149,22 @@ export const backupRekordboxDatabase = async (db: RekordboxDatabase, path: strin
   }
   await assertRekordboxClosed();
   return backupPaths;
+};
+
+export const assertRekordboxDatabaseBackup = async (backup: LibraryFileBackup): Promise<void> => {
+  await assertRekordboxClosed();
+  await readFile(backup.backupPath);
+  if (backup.databaseHashes && await currentLibraryFileHash(backup.path) !== null) {
+    const db = await openRekordboxDatabase(backup.path, { readonly: false });
+    try {
+      if (!backup.databaseHashes.includes(databaseContentHash((sql) => db.prepare<[], Record<string, unknown>>(sql).iterate()))) {
+        throw new Error(`The Rekordbox database has later edits. Kept it unchanged: ${backup.path}`);
+      }
+    } finally { db.close(); }
+  } else await assertLibraryFileBackup(backup.path, backup.backupPath, backup.expectedHash, backup.expectedHashes);
+};
+
+export const restoreRekordboxDatabaseBackup = async (backup: LibraryFileBackup): Promise<void> => {
+  await assertRekordboxDatabaseBackup(backup);
+  await restoreLibraryFileBackup(backup.path, backup.backupPath, await currentLibraryFileHash(backup.path), true);
 };

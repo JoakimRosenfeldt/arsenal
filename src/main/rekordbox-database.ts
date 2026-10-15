@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path';
 import { SaxesParser } from 'saxes';
 import type { SongRow, SyncFields } from '../shared/dj-library';
 import { normalizePath, preserveHotLoops, type SyncBeatgrid, type SyncCue, type SyncLibrary, type SyncLoop, type SyncPerformance, type SyncPlaylist } from './library-sync-model';
-import type { LibraryFilesRepairResult, MissingFileRepair } from './repair-library-files';
+import { assertMissingFileRepair, databaseContentHash, currentLibraryFileHash, type LibraryFileBackup, type LibraryFilesRepairResult, type LibraryRepairOptions, type MissingFileRepair } from './repair-library-files';
 import { isCloudPath } from './cloud-tracks';
 import { assertRekordboxClosed, assertRekordboxClosedSync, backupRekordboxDatabase, openRekordboxDatabase, type RekordboxDatabase } from './rekordbox-database-connection';
 
@@ -136,7 +136,8 @@ const cueColor = [255, 0, 0] as const;
 const loopColor = [39, 170, 225] as const;
 
 // Leave out performance when only paths and playlists are needed; reading beat grids opens an analysis file per track.
-export const readRekordboxDatabase = async (path: string, { performance: withPerformance = true } = {}): Promise<{ library: SyncLibrary; warnings: string[] }> => {
+export const readRekordboxDatabase = async (path: string, { performance: withPerformance = true, includeMissingOriginals = false }:
+  Readonly<{ performance?: boolean; includeMissingOriginals?: boolean }> = {}): Promise<{ library: SyncLibrary; warnings: string[] }> => {
   const db = await openRekordboxDatabase(path);
   try {
     schema(db);
@@ -172,17 +173,20 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
       }));
     }
     let encryptedTracks = 0;
-    // A cloud synced track reads as the local file it was uploaded from, when that file is on this computer.
-    const uploadedFrom = new Map<Row, string>();
+    // Cloud/service flags do not prevent a track from having an ordinary local file.
+    const localFiles = new Map<Row, string>();
     await Promise.all(contents.map(async (row) => {
-      const original = isCloudPath(text(row.FolderPath) ?? '') ? text(row.OrgFolderPath) : null;
-      if (original !== null && await stat(original).then((file) => file.isFile(), () => false)) uploadedFrom.set(row, original);
+      const folderPath = text(row.FolderPath);
+      const localPath = isCloudPath(folderPath ?? '') ? text(row.OrgFolderPath) : number(row.ServiceID) ? folderPath : null;
+      // Recovery must still find the original path after its file has moved, before relinking.
+      if (localPath !== null && /^(?:\/|[a-z]:[\\/])/i.test(localPath) && !isCloudPath(localPath) &&
+        (includeMissingOriginals && isCloudPath(folderPath ?? '') || await stat(localPath).then((file) => file.isFile(), () => false))) localFiles.set(row, localPath);
     }));
     const tracks = contents.flatMap((row) => {
       const trackId = id(row.ID);
       if (encrypted(row.FolderPath) || !text(row.FolderPath) && Object.values(row).some(encrypted)) { encryptedTracks++; return []; }
-      const original = uploadedFrom.get(row);
-      const path = original ?? text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
+      const localFile = localFiles.get(row);
+      const path = localFile ?? text(row.FolderPath) ?? `streaming://rekordbox/${encodeURIComponent(trackId)}`;
       const title = text(row.Title) ?? basename(path);
       const linked = (field: keyof typeof links): string | null => {
         const [table, column] = links[field];
@@ -199,7 +203,7 @@ export const readRekordboxDatabase = async (path: string, { performance: withPer
         durationSeconds: number(row.Length), fileKind: fileTypes[number(row.FileType) ?? 0] ?? null, fileSizeBytes: number(row.FileSize),
         bitRateKbps: number(row.BitRate), sampleRateHz: number(row.SampleRate), trackNumber: number(row.TrackNo), discNumber: number(row.DiscNo),
         playCount: number(row.DJPlayCount), rating: rating === null ? null : rating * 51, dateAdded: text(row.StockDate), comments: text(row.Commnt),
-        artworkUrl: null, audioUrl: null, source: original !== undefined || /^(?:\/|[a-z]:[\\/])/i.test(path) && !number(row.ServiceID) ? 'local' : 'streaming',
+        artworkUrl: null, audioUrl: null, source: localFile !== undefined || /^(?:\/|[a-z]:[\\/])/i.test(path) && !isCloudPath(path) && !number(row.ServiceID) ? 'local' : 'streaming',
         cuePointCount: performance ? performance.hotCues.length + performance.memoryCues.length + performance.loops.length : 0,
         hotCueCount: performance ? performance.hotCues.length + performance.loops.filter((loop) => loop.hotCue).length : 0,
       };
@@ -386,7 +390,7 @@ export const writeRekordboxDatabase = async (
         result = (async () => {
           try {
             const file = await stat(path, { bigint: true });
-            if (file.isFile() && file.ino !== 0n) return `file:${file.dev}:${file.ino}`;
+            if (file.isFile() && file.dev !== 0n && file.ino !== 0n) return `file:${file.dev}:${file.ino}`;
           } catch (error) {
             if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
           }
@@ -762,15 +766,17 @@ export const writeRekordboxDatabase = async (
 };
 
 // Relinks missing Collection files, or removes their tracks when replacementPath is null.
-export const repairRekordboxDatabaseFiles = async (path: string, repairs: readonly MissingFileRepair[]): Promise<LibraryFilesRepairResult> => {
+export const repairRekordboxDatabaseFiles = async (path: string, repairs: readonly MissingFileRepair[], options: LibraryRepairOptions = {}): Promise<LibraryFilesRepairResult> => {
   await assertRekordboxClosed();
+  if (options.mode === 'reorganize') for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
   const db = await openRekordboxDatabase(path, { readonly: false });
   try {
     schema(db);
     const contents = rows(db, 'SELECT * FROM djmdContent WHERE COALESCE(rb_local_deleted, 0) = 0');
     const byPath = new Map<string, Row[]>();
     for (const row of contents) {
-      const folderPath = text(row.FolderPath);
+      const folderPath = options.mode === 'reorganize' && isCloudPath(text(row.FolderPath) ?? '')
+        ? text(row.OrgFolderPath) ?? text(row.FolderPath) : text(row.FolderPath);
       if (folderPath === null) continue;
       byPath.set(normalizePath(folderPath), [...byPath.get(normalizePath(folderPath)) ?? [], row]);
     }
@@ -780,23 +786,45 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
     let revision = number(rows(db, "SELECT int_1 FROM agentRegistry WHERE registry_id = 'localUpdateCount'")[0]?.int_1) ?? 0;
     const statements: { sql: string; values: Value[] }[] = [];
     const failures: { path: string; message: string }[] = [];
+    const sourceKeys = new Set(repairs.map((repair) => normalizePath(repair.missingPath)));
+    const occupiedPaths = new Map([...byPath].filter(([key]) => !sourceKeys.has(key)).map(([key, rows]) => [key.normalize('NFC').toLowerCase(), rows[0]]));
+    let applied = 0;
     for (const { missingPath, replacementPath } of repairs) {
+      if (options.mode === 'reorganize' && replacementPath === null) throw new Error('Reorganization must preserve every Rekordbox entry.');
       const missing = byPath.get(normalizePath(missingPath)) ?? [];
-      if (!missing.length) continue;
-      const existing = replacementPath === null ? undefined : byPath.get(normalizePath(replacementPath))?.[0];
+      if (!missing.length) {
+        if (options.mode === 'reorganize') throw new Error(`The repair target is no longer in Rekordbox: ${missingPath}`);
+        continue;
+      }
+      const destinationKey = replacementPath === null ? null : normalizePath(replacementPath).normalize('NFC').toLowerCase();
+      const existing = options.mode === 'reorganize'
+        ? destinationKey === null ? undefined : occupiedPaths.get(destinationKey)
+        : replacementPath === null ? undefined : byPath.get(normalizePath(replacementPath))?.[0];
+      if (options.mode === 'reorganize' && existing !== undefined) throw new Error(`The destination already has a Rekordbox entry: ${replacementPath}`);
       let fileSize: number | null = null;
       if (replacementPath !== null && existing === undefined) {
         try { fileSize = (await stat(replacementPath)).size; } catch (error) {
+          if (options.mode === 'reorganize') throw error;
           failures.push({ path: missingPath, message: error instanceof Error ? error.message : 'Could not read the replacement file.' });
           continue;
         }
       }
+      applied++;
       byPath.delete(normalizePath(missingPath));
       for (const row of missing) {
         if (replacementPath !== null && existing === undefined) {
           const location = process.platform === 'win32' ? replacementPath.replaceAll('\\', '/') : replacementPath;
-          statements.push({ sql: 'UPDATE djmdContent SET FolderPath = ?, FileNameL = ?, FileSize = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
-            values: [location, basename(location), fileSize, ++revision, now, id(row.ID)] });
+          if (options.mode === 'reorganize' && isCloudPath(text(row.FolderPath) ?? '')) {
+            statements.push({ sql: 'UPDATE djmdContent SET OrgFolderPath = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
+              values: [location, ++revision, now, id(row.ID)] });
+          } else {
+            statements.push({ sql: 'UPDATE djmdContent SET FolderPath = ?, FileNameL = ?, FileSize = ?, rb_local_usn = ?, updated_at = ? WHERE ID = ?',
+              values: [location, basename(location), fileSize, ++revision, now, id(row.ID)] });
+            const originalPath = text(row.OrgFolderPath);
+            if (options.mode === 'reorganize' && originalPath !== null && normalizePath(originalPath) === normalizePath(missingPath)) {
+              statements.push({ sql: 'UPDATE djmdContent SET OrgFolderPath = ? WHERE ID = ?', values: [location, id(row.ID)] });
+            }
+          }
           byPath.set(normalizePath(replacementPath), [row]);
           continue;
         }
@@ -808,15 +836,44 @@ export const repairRekordboxDatabaseFiles = async (path: string, repairs: readon
         revision++;
       }
     }
-    if (!statements.length) return { backupPaths: [], warnings: [], failures };
-    const backupPaths = await backupRekordboxDatabase(db, path);
+    if (options.mode === 'reorganize' && applied !== repairs.length) throw new Error('Not every Rekordbox repair was applied.');
+    if (!statements.length) return { backupPaths: [], backups: [], warnings: [], failures };
+    if (options.mode === 'reorganize' && rows(db, 'PRAGMA wal_checkpoint(TRUNCATE)')[0]?.busy !== 0) throw new Error('Rekordbox database is busy.');
+    const backupPaths = await backupRekordboxDatabase(db, path, options.forceBackup);
+    const beforeHash = options.onBackup ? databaseContentHash((sql) => rows(db, sql)) : null;
+    const backups: LibraryFileBackup[] = [];
+    for (const backupPath of backupPaths) {
+      const target = join(dirname(path), basename(backupPath));
+      const backup = { path: target, backupPath, expectedHash: await currentLibraryFileHash(target),
+        ...(beforeHash !== null && target === path ? { databaseHashes: [beforeHash] } : {}) };
+      backups.push(backup);
+      await options.onBackup?.(backup);
+    }
     db.exec('BEGIN IMMEDIATE');
-    for (const statement of statements) db.prepare(statement.sql).run(...statement.values);
+    for (const statement of statements) {
+      const result = db.prepare(statement.sql).run(...statement.values);
+      if (options.mode === 'reorganize' && result.changes !== 1) throw new Error('A Rekordbox repair target changed before it could be updated.');
+    }
     db.prepare("UPDATE agentRegistry SET int_1 = ?, updated_at = ? WHERE registry_id = 'localUpdateCount'").run(revision, now);
     if (rows(db, 'PRAGMA quick_check')[0]?.quick_check !== 'ok') throw new Error('Rekordbox database verification failed.');
+    if (options.mode === 'reorganize') for (const repair of repairs) await assertMissingFileRepair(repair.missingPath, repair.replacementPath, options);
     assertRekordboxClosedSync();
+    if (beforeHash !== null) {
+      const afterHash = databaseContentHash((sql) => rows(db, sql));
+      for (const backup of backups) if (backup.path === path) {
+        const guarded = { ...backup, databaseHashes: [beforeHash, afterHash] };
+        backups[backups.indexOf(backup)] = guarded;
+        await options.onBackup?.(guarded);
+      }
+    }
     db.exec('COMMIT');
-    return { backupPaths, warnings: [], failures };
+    if (options.onBackup) for (const [index, backup] of backups.entries()) {
+      const updated = { ...backup, expectedHash: await currentLibraryFileHash(backup.path) };
+      backups[index] = updated;
+      await options.onBackup?.(updated);
+    }
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* The committed edit is recoverable with its WAL. */ }
+    return { backupPaths, backups, warnings: [], failures };
   } catch (error) {
     if (db.inTransaction) db.exec('ROLLBACK');
     throw error;

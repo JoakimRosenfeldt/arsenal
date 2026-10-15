@@ -10,7 +10,8 @@ export const resolveSeratoMediaPath = async (path: string): Promise<string> => {
     const dataVolume = '/System/Volumes/Data';
     if (process.platform === 'darwin' && resolved.startsWith(`${dataVolume}/`)) {
       const logical = resolved.slice(dataVolume.length);
-      if (await seratoMediaPathKey(logical) === await seratoMediaPathKey(resolved)) return logical;
+      const [left, right] = await Promise.all([stat(logical, { bigint: true }), stat(resolved, { bigint: true })]);
+      if (left.dev !== 0n && left.ino !== 0n && left.dev === right.dev && left.ino === right.ino) return logical;
     }
     return resolved;
   } catch (error) {
@@ -23,12 +24,12 @@ export const seratoMediaPathKey = async (path: string): Promise<string> => {
   if (isAbsolute(path) || win32.isAbsolute(path)) {
     try {
       const file = await stat(path, { bigint: true });
-      if (file.isFile() && file.ino !== 0n) return `file:${file.dev}:${file.ino}`;
+      if (file.isFile() && file.dev !== 0n && file.ino !== 0n) return `file:${file.dev}:${file.ino}`;
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR'))) throw error;
     }
   }
-  return `path:${normalizePath(path)}`;
+  return `path:${normalizePath(await resolveSeratoMediaPath(path))}`;
 };
 
 export const assertSeratoMediaFile = async (path: string): Promise<void> => {

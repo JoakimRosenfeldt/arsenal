@@ -2,11 +2,22 @@ import type { SongSort } from './library-columns';
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
 import type { SmartPlaylistDefinition } from './smart-playlists';
 import type { BackupConfiguration, BackupConnection } from './library-backup';
+import type { LibraryOrganizationLayout } from './library-organization';
 
 export const ARSENAL_LIBRARY_ID = 'arsenal';
 
 export const DJ_LIBRARY_CHANNELS = Object.freeze({
   status: 'dj-library:status',
+  organizationRoot: 'dj-library:organization-root',
+  organizationSettings: 'dj-library:organization-settings',
+  saveOrganizationSettings: 'dj-library:save-organization-settings',
+  previewMusicImport: 'dj-library:preview-music-import',
+  organizationDestination: 'dj-library:organization-destination',
+  chooseOrganizationRoot: 'dj-library:choose-organization-root',
+  previewOrganization: 'dj-library:preview-organization',
+  applyOrganization: 'dj-library:apply-organization',
+  stopOrganizationCopy: 'dj-library:stop-organization-copy',
+  organizationProgress: 'dj-library:organization-progress',
   connections: 'dj-library:connections',
   checkStartupChanges: 'dj-library:check-startup-changes',
   resolveStartupChanges: 'dj-library:resolve-startup-changes',
@@ -240,7 +251,10 @@ export type LibraryConnectionResult =
   | Readonly<{ kind: 'rejected'; message: string }>
   | Readonly<{ kind: 'updated'; connections: LibraryConnections; status: LibraryStatus; warnings: readonly string[] }>;
 
+export type LibraryStartupAction = 'import' | 'skip' | 'undo-reorganization' | 'keep-reorganization';
+
 export type LibraryStartupPreview = Readonly<{
+  organizationRecovery?: Readonly<{ journalPath: string; moveCount: number; operation?: LibraryOrganizationOperation }>;
   libraries: readonly Readonly<{ id: string; name: string; changes: readonly string[] }>[];
   syncAfterImport: boolean;
   warnings: readonly string[];
@@ -520,11 +534,81 @@ export type LibraryMutationResult = (
       message?: string;
     }>) & Readonly<{ warning?: string }>;
 
+export const LIBRARY_ORGANIZATION_SCHEMES = [
+  { value: 'artist-album', label: 'Artist / Album / file', folders: ['artist', 'album'] },
+  { value: 'genre-artist', label: 'Genre / Artist / file', folders: ['genre', 'artist'] },
+  { value: 'year-album', label: 'Year / Album / file', folders: ['year', 'album'] },
+  { value: 'date-added', label: 'Date added (Year / Month) / file', folders: ['dateAddedYear', 'dateAddedMonth'] },
+  { value: 'flat', label: 'All files in one folder', folders: [] },
+] as const;
+
+export type LibraryOrganizationOperation = Readonly<{ kind: 'move' }> | Readonly<{ kind: 'copy'; useCopies: boolean }>;
+export type LibraryOrganizationDestination = 'internal' | 'external' | 'unknown';
+
+export const readOrganizationOperation = (value: unknown): LibraryOrganizationOperation => {
+  if (value === undefined) return { kind: 'move' };
+  if (typeof value === 'object' && value !== null && 'kind' in value) {
+    if (value.kind === 'move') return { kind: 'move' };
+    if (value.kind === 'copy' && 'useCopies' in value && typeof value.useCopies === 'boolean') return { kind: 'copy', useCopies: value.useCopies };
+  }
+  throw new Error('Choose whether to move or copy files and whether to use the copies.');
+};
+
+export type LibraryOrganizationRequest = Readonly<{
+  destinationRoot: string;
+  scheme: (typeof LIBRARY_ORGANIZATION_SCHEMES)[number]['value'];
+  renameFiles: boolean;
+  operation: LibraryOrganizationOperation;
+  layout?: LibraryOrganizationLayout;
+}>;
+export type LibraryOrganizationSettings = Readonly<{
+  draft: LibraryOrganizationRequest | null;
+  applied: LibraryOrganizationRequest | null;
+}>;
+export type LibraryOrganizationEntry =
+  | Readonly<{ kind: 'move'; from: string; to: string; collision: boolean }>
+  | Readonly<{ kind: 'skip'; from: string; reason: string; existingCopy?: string }>;
+export type LibraryOrganizationPreview = Readonly<{
+  id: string;
+  destinationRoot: string;
+  operation: LibraryOrganizationOperation;
+  moveCount: number;
+  skippedCount: number;
+  collisionCount: number;
+  entries: readonly LibraryOrganizationEntry[];
+  copySpace: Readonly<{ requiredBytes: number; availableBytes: number | null }> | null;
+}>;
+export type LibraryOrganizationProgress = Readonly<{
+  phase: 'validating' | 'moving' | 'copying' | 'relinking' | 'rolling-back';
+  completed: number;
+  total: number;
+}>;
+export type LibraryOrganizationResult = Readonly<{
+  outcome: 'completed' | 'stopped';
+  fileCount: number;
+  operation: LibraryOrganizationOperation;
+  backupPaths: readonly string[];
+  warnings: readonly string[];
+  addedCount?: number;
+}>;
+export type LibraryMusicImportPreview = LibraryOrganizationPreview & Readonly<{ addCount: number; warnings: readonly string[] }>;
+
 export type DjLibraryApi = Readonly<{
   status(): Promise<LibraryStatus>;
+  organizationRoot(): Promise<string>;
+  organizationSettings(): Promise<LibraryOrganizationSettings>;
+  saveOrganizationSettings(request: LibraryOrganizationRequest): Promise<void>;
+  previewMusicImport(paths?: readonly string[]): Promise<LibraryMusicImportPreview | null>;
+  musicFilePaths(files: readonly File[]): readonly string[];
+  organizationDestination(root: string): Promise<LibraryOrganizationDestination>;
+  chooseOrganizationRoot(): Promise<string | null>;
+  previewOrganization(request: LibraryOrganizationRequest): Promise<LibraryOrganizationPreview>;
+  applyOrganization(id: string): Promise<LibraryOrganizationResult>;
+  stopOrganizationCopy(id: string): Promise<boolean>;
+  onOrganizationProgress(listener: (progress: LibraryOrganizationProgress) => void): () => void;
   connections(): Promise<LibraryConnections>;
   checkStartupChanges(): Promise<LibraryStartupPreview>;
-  resolveStartupChanges(action: 'import' | 'skip'): Promise<LibraryStartupResult>;
+  resolveStartupChanges(action: LibraryStartupAction): Promise<LibraryStartupResult>;
   backupStatus(): Promise<readonly BackupConnection[]>;
   configureBackup(request: BackupConfiguration): Promise<BackupConnection | null>;
   backupNow(id: string): Promise<BackupConnection>;

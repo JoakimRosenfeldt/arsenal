@@ -17,6 +17,8 @@ import {
 } from 'electron';
 
 import { RekordboxLibrary } from './main/rekordbox-library';
+import { organizationDestination } from './main/organization-destination';
+import { readOrganizationRequest } from './main/reorganize-library';
 import { readPlaylistSuggestionRequest } from './main/playlist-suggestions';
 import { AppUpdates } from './main/app-updates';
 import { OpenRouterConnection } from './main/openrouter';
@@ -397,7 +399,7 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
   ipc.handle(DJ_LIBRARY_CHANNELS.resolveStartupChanges, async (event, action: unknown) => {
     assertTrustedSender(event, owner);
     if (content.kind !== 'main') throw new Error('Review changed libraries from the library window');
-    if (action !== 'import' && action !== 'skip') throw new Error('Choose whether to import the changes');
+    if (action !== 'import' && action !== 'skip' && action !== 'undo-reorganization' && action !== 'keep-reorganization') throw new Error('Choose whether to import the changes');
     libraryActions += 1;
     try { return await library.resolveStartupChanges(owner, action); } finally { libraryActions -= 1; }
   });
@@ -521,6 +523,81 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
       return await library.syncLibraries(owner, validated);
     } finally {
       libraryActions -= 1;
+    }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.organizationSettings, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage organization from the library window');
+    return library.organizationSettings();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.saveOrganizationSettings, (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Manage organization from the library window');
+    return library.saveOrganizationSettings(readOrganizationRequest(value));
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.previewMusicImport, async (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Add music from the library window');
+    let paths: string[] | undefined;
+    if (value !== undefined) {
+      if (!Array.isArray(value) || value.length === 0 || value.length > 10000) throw new Error('Choose up to 10,000 music files');
+      paths = value.map((path: unknown) => {
+        if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0') || path.length > 32768) throw new Error('Choose local music files');
+        return path;
+      });
+    }
+    libraryActions += 1;
+    try { return await library.previewMusicImport(owner, paths); }
+    finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.organizationRoot, (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Reorganize from the library window');
+    return library.organizationRoot();
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.chooseOrganizationRoot, async (event) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Reorganize from the library window');
+    libraryActions += 1;
+    try { return await library.chooseOrganizationRoot(owner); } finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.organizationDestination, async (event, root: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main' || typeof root !== 'string' || !isAbsolute(root) || root.includes('\0') || root.length > 32768) throw new Error('Choose an absolute destination folder');
+    return organizationDestination(root);
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.previewOrganization, async (event, value: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Reorganize from the library window');
+    const request = readOrganizationRequest(value);
+    libraryActions += 1;
+    try { return await library.previewOrganization(request, owner); }
+    finally { libraryActions -= 1; }
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.stopOrganizationCopy, (event, id: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main' || typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id)) throw new Error('Choose the active copy operation');
+    return library.stopOrganizationCopy(id);
+  });
+
+  ipc.handle(DJ_LIBRARY_CHANNELS.applyOrganization, async (event, id: unknown) => {
+    assertTrustedSender(event, owner);
+    if (content.kind !== 'main') throw new Error('Reorganize from the library window');
+    if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/.test(id)) throw new Error('Preview the reorganization first');
+    libraryActions += 1;
+    try {
+      return await library.applyOrganization(owner, id);
+    } finally {
+      libraryActions -= 1;
+      for (const window of BrowserWindow.getAllWindows()) window.webContents.send(DJ_LIBRARY_CHANNELS.libraryChanged, library.status());
     }
   });
 

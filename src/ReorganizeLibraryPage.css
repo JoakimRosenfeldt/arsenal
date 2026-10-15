@@ -1,0 +1,41 @@
+.reorganize-page { overflow: auto; padding: 24px; }
+.reorganize-page h1 { margin: 0; }
+.reorganize-page p { color: var(--muted); line-height: 1.5; }
+.reorganize-settings { display: grid; gap: 12px; max-width: 760px; margin: 24px 0; }
+.reorganize-settings label { font-weight: 600; }
+.reorganize-destination { display: flex; gap: 12px; }
+.reorganize-destination input { flex: 1; min-width: 0; }
+.reorganize-settings input:not([type="checkbox"]), .reorganize-settings select {
+  background: var(--panel-raised); color: inherit; border: 1px solid var(--line-strong); border-radius: 4px; padding: 10px;
+}
+.reorganize-filename { display: flex; align-items: center; gap: 10px; }
+.reorganize-actions { display: flex; gap: 12px; }
+.reorganize-paths { overflow: auto; margin: 20px 0; }
+.reorganize-paths table { width: 100%; border-collapse: collapse; text-align: left; }
+.reorganize-paths th, .reorganize-paths td { padding: 12px; border-bottom: 1px solid var(--line-strong); vertical-align: top; }
+.reorganize-paths caption { text-align: left; padding-bottom: 12px; }
+.reorganize-page code { overflow-wrap: anywhere; }
+.reorganize-paths td span { display: block; margin-top: 8px; color: var(--muted); }
+.reorganize-page .reorganize-error { color: var(--accent); white-space: pre-wrap; overflow-wrap: anywhere; }
+.reorganize-progress progress { width: min(100%, 760px); }
+.organization-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.organization-fields legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
+.organization-fields ol { list-style: decimal; margin: 0 0 10px; padding-left: 28px; }
+.organization-fields li { padding-left: 4px; margin: 8px 0; }
+.organization-fields li select { width: min(100%, 280px); }
+.organization-field-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 10px; }
+.organization-artist-rules p, .organization-example p { margin: 8px 0; font-size: 13px; }
+.organization-artist-rules label { margin: 10px 0; }
+.organization-example { padding: 16px; border: 1px solid var(--line-strong); border-radius: 4px; }
+.organization-example code { display: block; line-height: 1.6; }
+.organization-space { padding: 0 16px; border: 1px solid var(--line-strong); border-radius: 4px; }
+.organization-space strong { color: var(--text); }
+.music-import-dialog { overflow: auto; }
+.music-import-dialog code { overflow-wrap: anywhere; }
+.music-import-dialog .reorganize-actions { margin-top: 20px; }
+.music-import-dialog .reorganize-error { color: var(--accent); }
+.music-import-dialog details { margin-top: 16px; }
+.music-import-dialog li { margin: 8px 0; }
+@media (max-width: 650px) {
+  .organization-field-actions { display: flex; margin: 8px 0 0; }
+}
