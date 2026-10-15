@@ -2,6 +2,7 @@ import type { SongSort } from './library-columns';
 import type { PlaylistSuggestionProgress, PlaylistSuggestionRequest, PlaylistSuggestionResult } from './playlist-suggestions';
 import type { SmartPlaylistDefinition } from './smart-playlists';
 import type { BackupConfiguration, BackupConnection } from './library-backup';
+import type { LibraryOrganizationLayout } from './library-organization';
 
 export const ARSENAL_LIBRARY_ID = 'arsenal';
 
@@ -530,11 +531,11 @@ export type LibraryMutationResult = (
     }>) & Readonly<{ warning?: string }>;
 
 export const LIBRARY_ORGANIZATION_SCHEMES = [
-  { value: 'artist-album', label: 'Artist / Album / file' },
-  { value: 'genre-artist', label: 'Genre / Artist / file' },
-  { value: 'year-album', label: 'Year / Album / file' },
-  { value: 'date-added', label: 'Date added (Year / Month) / file' },
-  { value: 'flat', label: 'All files in one folder' },
+  { value: 'artist-album', label: 'Artist / Album / file', folders: ['artist', 'album'] },
+  { value: 'genre-artist', label: 'Genre / Artist / file', folders: ['genre', 'artist'] },
+  { value: 'year-album', label: 'Year / Album / file', folders: ['year', 'album'] },
+  { value: 'date-added', label: 'Date added (Year / Month) / file', folders: ['dateAddedYear', 'dateAddedMonth'] },
+  { value: 'flat', label: 'All files in one folder', folders: [] },
 ] as const;
 
 export type LibraryOrganizationOperation = Readonly<{ kind: 'move' }> | Readonly<{ kind: 'copy'; useCopies: boolean }>;
@@ -554,6 +555,7 @@ export type LibraryOrganizationRequest = Readonly<{
   scheme: (typeof LIBRARY_ORGANIZATION_SCHEMES)[number]['value'];
   renameFiles: boolean;
   operation: LibraryOrganizationOperation;
+  layout?: LibraryOrganizationLayout;
 }>;
 export type LibraryOrganizationEntry =
   | Readonly<{ kind: 'move'; from: string; to: string; collision: boolean }>

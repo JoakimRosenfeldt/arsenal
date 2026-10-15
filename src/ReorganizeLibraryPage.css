@@ -18,3 +18,16 @@
 .reorganize-paths td span { display: block; margin-top: 8px; color: var(--muted); }
 .reorganize-page .reorganize-error { color: var(--accent); white-space: pre-wrap; overflow-wrap: anywhere; }
 .reorganize-progress progress { width: min(100%, 760px); }
+.organization-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.organization-fields legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
+.organization-fields ol { list-style: decimal; margin: 0 0 10px; padding-left: 28px; }
+.organization-fields li { padding-left: 4px; margin: 8px 0; }
+.organization-fields li select { width: min(100%, 280px); }
+.organization-field-actions { display: inline-flex; flex-wrap: wrap; gap: 6px; margin-left: 10px; }
+.organization-artist-rules p, .organization-example p { margin: 8px 0; font-size: 13px; }
+.organization-artist-rules label { margin: 10px 0; }
+.organization-example { padding: 16px; border: 1px solid var(--line-strong); border-radius: 4px; }
+.organization-example code { display: block; line-height: 1.6; }
+@media (max-width: 650px) {
+  .organization-field-actions { display: flex; margin: 8px 0 0; }
+}

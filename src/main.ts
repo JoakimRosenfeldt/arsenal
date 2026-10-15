@@ -18,6 +18,7 @@ import {
 
 import { RekordboxLibrary } from './main/rekordbox-library';
 import { organizationDestination } from './main/organization-destination';
+import { readOrganizationLayout } from './shared/library-organization';
 import { readPlaylistSuggestionRequest } from './main/playlist-suggestions';
 import { AppUpdates } from './main/app-updates';
 import { OpenRouterConnection } from './main/openrouter';
@@ -556,8 +557,10 @@ const installIpc = (owner: BrowserWindow, updates: AppUpdates, content: WindowCo
     const scheme = LIBRARY_ORGANIZATION_SCHEMES.find((option) => option.value === value.scheme)?.value;
     if (scheme === undefined) throw new Error('Choose an organization scheme');
     const operation = readOrganizationOperation(value.operation);
+    const layout = value.layout === undefined ? undefined : readOrganizationLayout(value.layout);
     libraryActions += 1;
-    try { return await library.previewOrganization({ destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles, operation }, owner); }
+    try { return await library.previewOrganization({ destinationRoot: value.destinationRoot, scheme, renameFiles: value.renameFiles, operation,
+      ...(layout === undefined ? {} : { layout }) }, owner); }
     finally { libraryActions -= 1; }
   });
 

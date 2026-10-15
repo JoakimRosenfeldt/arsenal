@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 
 import type { LibraryOrganizationEntry, LibraryOrganizationPreview, LibraryOrganizationRequest } from '../shared/dj-library';
+import { LIBRARY_ORGANIZATION_SCHEMES } from '../shared/dj-library';
+import { organizationFieldValue, type LibraryOrganizationLayout } from '../shared/library-organization';
 import { normalizePath, type SyncLibrary } from './library-sync-model';
 import { fingerprint, safeName } from './portable-library';
 import { resolveSeratoMediaPath, seratoMediaPathKey } from './serato-paths';
@@ -62,6 +64,10 @@ export const planLibraryOrganization = async (
   progress: (completed: number, total: number) => void = () => undefined,
 ): Promise<OrganizationPlan> => {
   const root = resolve(request.destinationRoot);
+  const preset = LIBRARY_ORGANIZATION_SCHEMES.find((preset) => preset.value === request.scheme);
+  if (preset === undefined) throw new Error('Choose an organization scheme.');
+  const layout: LibraryOrganizationLayout = request.layout ?? { folders: preset.folders, artists: { kind: 'all' },
+    filename: request.renameFiles ? { kind: 'fields', fields: ['artist', 'title'], separator: ' - ' } : { kind: 'original' } };
   const canonicalRoot = await canonicalOrganizationPath(root);
   const bundleRoots = await Promise.all(portableRoots.map((path) => canonicalOrganizationPath(path)));
   const cloud = new Set(await Promise.all(cloudPaths.filter(isAbsolute).map(async (path) => portableKey(await canonicalOrganizationPath(path, true)))));
@@ -116,25 +122,11 @@ export const planLibraryOrganization = async (
       skip(missing(error) ? 'Missing on disk' : error instanceof Error ? error.message : 'Could not read audio file'); continue;
     }
     const song = track.song;
-    const artist = safeName(song.artist, 'Unknown Artist');
-    const album = safeName(song.album, 'Unknown Album');
-    const folders = (() => {
-      switch (request.scheme) {
-        case 'artist-album': return [artist, album];
-        case 'genre-artist': return [safeName(song.genre, 'Unknown Genre'), artist];
-        case 'year-album': return [song.year ? String(song.year) : 'Unknown Year', album];
-        case 'date-added': {
-          const date = song.dateAdded === null ? NaN : Date.parse(/^\d{4}-\d{2}-\d{2}$/.test(song.dateAdded) ? `${song.dateAdded}T00:00:00` : song.dateAdded);
-          return Number.isFinite(date) ? [String(new Date(date).getFullYear()), String(new Date(date).getMonth() + 1).padStart(2, '0')]
-            : ['Unknown Year', 'Unknown Month'];
-        }
-        case 'flat': return [];
-        default: { const unexpected: never = request.scheme; throw new Error(`Unknown organization scheme: ${unexpected}`); }
-      }
-    })();
+    const value = (field: Parameters<typeof organizationFieldValue>[1]) => safeName(organizationFieldValue(song, field, layout.artists), 'Unknown');
+    const folders = layout.folders.map(value);
     const extension = extname(from);
     const originalName = basename(from, extension);
-    const name = request.renameFiles ? `${artist} - ${safeName(song.title, 'Unknown Title')}` : originalName;
+    const name = layout.filename.kind === 'fields' ? layout.filename.fields.map(value).join(layout.filename.separator) : originalName;
     // Leave room for the extension and collision suffix while preserving ordinary filenames.
     let stem = name.normalize('NFC').replace(/[<>:"/\\|?*]|\p{Cc}/gu, '_').trim().replace(/[. ]+$/g, '') || 'Unknown Title';
     while (Buffer.byteLength(stem) > 200) stem = [...stem].slice(0, -1).join('');

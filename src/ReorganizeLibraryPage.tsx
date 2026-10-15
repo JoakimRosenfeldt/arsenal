@@ -1,7 +1,38 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 
 import { LIBRARY_ORGANIZATION_SCHEMES, type LibraryOrganizationDestination, type LibraryOrganizationPreview, type LibraryOrganizationProgress, type LibraryOrganizationRequest, type LibraryOrganizationResult } from './shared/dj-library';
+import { ARTIST_SEPARATORS, FILENAME_SEPARATORS, ORGANIZATION_FIELDS, organizationFieldValue, type LibraryOrganizationLayout, type OrganizationField } from './shared/library-organization';
 import './ReorganizeLibraryPage.css';
+
+const OrganizationFieldsEditor = ({ label, fields, onChange, disabled, minimum }: Readonly<{
+  label: string; fields: readonly OrganizationField[]; onChange: (fields: readonly OrganizationField[]) => void; disabled: boolean; minimum: number;
+}>): JSX.Element => <fieldset className="organization-fields" disabled={disabled}>
+  <legend>{label}</legend>
+  {fields.length === 0 && <p>All files go directly in the destination folder.</p>}
+  <ol>{fields.map((field, index) => <li key={index}>
+    <select aria-label={`${label} ${index + 1}`} value={field} onChange={(event) => {
+      const selected = ORGANIZATION_FIELDS.find((option) => option.value === event.target.value);
+      if (selected) onChange(fields.map((current, position) => position === index ? selected.value : current));
+    }}>{ORGANIZATION_FIELDS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+    <div className="organization-field-actions">
+      {([-1, 1] as const).map((direction) => <button className="quiet-button" type="button" key={direction}
+        aria-label={`Move ${label.toLowerCase()} ${index + 1} ${direction === -1 ? 'up' : 'down'}`}
+        disabled={index + direction < 0 || index + direction >= fields.length} onClick={() => {
+          const reordered = [...fields];
+          reordered.splice(index, 1);
+          reordered.splice(index + direction, 0, field);
+          onChange(reordered);
+        }}>{direction === -1 ? 'Up' : 'Down'}</button>)}
+      <button className="quiet-button" type="button" aria-label={`Remove ${label.toLowerCase()} ${index + 1}`}
+        disabled={fields.length <= minimum} onClick={() => onChange(fields.filter((_field, position) => position !== index))}>Remove</button>
+    </div>
+  </li>)}</ol>
+  <button className="quiet-button" type="button" disabled={fields.length >= 8}
+    onClick={() => onChange([...fields, minimum === 0 ? 'artist' : 'title'])}>Add {minimum === 0 ? 'folder level' : 'filename field'}</button>
+</fieldset>;
+
+const EXAMPLE_TRACK = { artist: "Bonobo, O'Flynn feat. Jordan Rakei", album: 'Fragments', genre: 'Electronic', year: 2022, label: 'Ninja Tune',
+  title: 'Otomo', trackNumber: 8, discNumber: 1, bpm: 123, musicalKey: 'Am', dateAdded: '2022-01-14' };
 
 export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayback }: Readonly<{
   busy: boolean;
@@ -10,8 +41,7 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
   onStopPlayback: () => void;
 }>): JSX.Element => {
   const [destinationRoot, setDestinationRoot] = useState('');
-  const [scheme, setScheme] = useState<LibraryOrganizationRequest['scheme']>('artist-album');
-  const [renameFiles, setRenameFiles] = useState(false);
+  const [layout, setLayout] = useState<LibraryOrganizationLayout>({ folders: ['artist', 'album'], filename: { kind: 'original' }, artists: { kind: 'all' } });
   const [copy, setCopy] = useState(false);
   const [useCopies, setUseCopies] = useState(false);
   const [destination, setDestination] = useState<Readonly<{ root: string; kind: LibraryOrganizationDestination }> | null>(null);
@@ -63,7 +93,7 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
         }
       } else if (next === 'preview') {
         setPreview(null);
-        setPreview(await window.djLibrary.previewOrganization({ destinationRoot, scheme, renameFiles, operation }));
+        setPreview(await window.djLibrary.previewOrganization({ destinationRoot, scheme: 'artist-album', renameFiles: layout.filename.kind === 'fields', operation, layout }));
       } else if (preview !== null) {
         if (preview.operation.kind === 'move' || preview.operation.useCopies) onStopPlayback();
         const id = preview.id;
@@ -77,6 +107,9 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
   const skipped = preview?.entries.filter((entry) => entry.kind === 'skip') ?? [];
   const reasons = [...new Set(skipped.map((entry) => entry.reason))];
   const phase = progress?.phase === 'validating' ? 'Validating files and libraries' : progress?.phase === 'moving' ? 'Moving files' : progress?.phase === 'copying' ? 'Copying files' : progress?.phase === 'relinking' ? 'Updating libraries' : 'Restoring files and libraries';
+  const preset = LIBRARY_ORGANIZATION_SCHEMES.find((option) => option.folders.length === layout.folders.length && option.folders.every((field, index) => field === layout.folders[index]));
+  const exampleValue = (field: OrganizationField) => organizationFieldValue(EXAMPLE_TRACK, field, layout.artists);
+  const examplePath = [...layout.folders.map(exampleValue), `${layout.filename.kind === 'original' ? 'original-track' : layout.filename.fields.map(exampleValue).join(layout.filename.separator)}.flac`].join(' / ');
 
   return <section className="workspace-page reorganize-page" aria-labelledby="reorganize-title" aria-busy={working}>
     <header className="page-heading"><div><h1 id="reorganize-title">Reorganize files</h1>
@@ -99,13 +132,42 @@ export const ReorganizeLibraryPage = ({ busy, hasLibrary, onWorking, onStopPlayb
               : drive === null ? 'Checking destination drive. DJ apps will keep using the original files by default.'
                 : useCopies ? 'Library paths will switch to the copies. Original audio files stay where they are.' : 'Arsenal and DJ apps will keep using the original files.'}</p>
         </div>}
-        <label htmlFor="organization-scheme">Folder structure</label>
-        <select id="organization-scheme" value={scheme} disabled={working} onChange={(event) => {
+        <label htmlFor="organization-scheme">Start from a folder preset</label>
+        <select id="organization-scheme" value={preset?.value ?? 'custom'} disabled={working} onChange={(event) => {
           const option = LIBRARY_ORGANIZATION_SCHEMES.find((option) => option.value === event.target.value);
-          if (option) { setScheme(option.value); invalidate(); }
-        }}>{LIBRARY_ORGANIZATION_SCHEMES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
-        <label className="reorganize-filename"><input type="checkbox" checked={renameFiles} disabled={working}
-          onChange={(event) => { setRenameFiles(event.target.checked); invalidate(); }} />Rename files to Artist - Title, keeping the extension</label>
+          if (option) { setLayout({ ...layout, folders: option.folders }); invalidate(); }
+        }}><option value="custom" disabled>Custom folder structure</option>
+          {LIBRARY_ORGANIZATION_SCHEMES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+        <OrganizationFieldsEditor label="Folder level" fields={layout.folders} minimum={0} disabled={working}
+          onChange={(folders) => { setLayout({ ...layout, folders }); invalidate(); }} />
+        <label htmlFor="organization-filename">Filename</label>
+        <select id="organization-filename" value={layout.filename.kind} disabled={working} onChange={(event) => {
+          setLayout({ ...layout, filename: event.target.value === 'original' ? { kind: 'original' } : { kind: 'fields', fields: ['artist', 'title'], separator: ' - ' } }); invalidate();
+        }}><option value="original">Keep original filename</option><option value="fields">Build from metadata fields</option></select>
+        {layout.filename.kind === 'fields' && <>
+          <OrganizationFieldsEditor label="Filename field" fields={layout.filename.fields} minimum={1} disabled={working}
+            onChange={(fields) => { if (layout.filename.kind === 'fields') { setLayout({ ...layout, filename: { ...layout.filename, fields } }); invalidate(); } }} />
+          <label htmlFor="organization-separator">Between filename fields</label>
+          <select id="organization-separator" value={layout.filename.separator} disabled={working} onChange={(event) => {
+            const separator = FILENAME_SEPARATORS.find((separator) => separator === event.target.value);
+            if (separator !== undefined && layout.filename.kind === 'fields') { setLayout({ ...layout, filename: { ...layout.filename, separator } }); invalidate(); }
+          }}>{FILENAME_SEPARATORS.map((separator) => <option key={separator} value={separator}>{separator === ' - ' ? 'Dash (Artist - Title)' : separator === '_' ? 'Underscore (Artist_Title)' : separator === ' ' ? 'Space (Artist Title)' : 'Dot (Artist.Title)'}</option>)}</select>
+        </>}
+        <label htmlFor="organization-artists">Artist names in folders and filenames</label>
+        <select id="organization-artists" value={layout.artists.kind} disabled={working} onChange={(event) => {
+          setLayout({ ...layout, artists: event.target.value === 'all' ? { kind: 'all' } : { kind: 'main', separators: ['featured', 'semicolon', 'comma'] } }); invalidate();
+        }}><option value="all">All collaborating artists</option><option value="main">Main artist only</option></select>
+        {layout.artists.kind === 'main' && <details className="organization-artist-rules"><summary>How to identify the main artist</summary>
+          <p>Use the first credited name before these separators. Ampersands and x stay in band names unless selected.</p>
+          {ARTIST_SEPARATORS.map((separator) => <label className="reorganize-filename" key={separator.value}>
+            <input type="checkbox" disabled={working} checked={layout.artists.kind === 'main' && layout.artists.separators.includes(separator.value)}
+              onChange={(event) => { if (layout.artists.kind === 'main') {
+                setLayout({ ...layout, artists: { kind: 'main', separators: event.target.checked ? [...layout.artists.separators, separator.value]
+                  : layout.artists.separators.filter((value) => value !== separator.value) } }); invalidate();
+              } }} />{separator.label}</label>)}
+        </details>}
+        <div className="organization-example" aria-live="polite"><strong>Example path</strong>
+          <p>Example track: {EXAMPLE_TRACK.artist}, {EXAMPLE_TRACK.title}. The original file extension is always kept.</p><code>{examplePath}</code></div>
         <p>{!copy || useCopies ? 'Close connected DJ apps before applying. ' : ''}Missing metadata uses Unknown folders. Collisions get a numbered suffix. Existing files are kept.</p>
         <div className="reorganize-actions"><button className="quiet-button" type="button" disabled={working || !destinationRoot.trim()} onClick={() => void run('preview')}>Preview</button>
           <button className="accent-button" type="button" disabled={working || !preview?.moveCount} onClick={() => void run('apply')}>{copy ? 'Copy files' : 'Apply moves'}</button></div>
