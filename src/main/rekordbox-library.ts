@@ -2593,7 +2593,11 @@ export class RekordboxLibrary {
       await rm(this.organizationJournalPath);
       this.organizationRecovery = null;
       if (!copy) warnings.push(...await this.cleanOrganizationSourceDirectories(journal));
-      if (additions) this.requestOngoingSync();
+      const syncRequest = this.savedSyncPreferences.request;
+      // Added tracks go to the DJ apps right away, even without ongoing sync.
+      if (additions && syncRequest?.cadence === 'ongoing') this.requestOngoingSync();
+      else if (additions && syncRequest) void this.enqueue(() => this.syncNow(syncRequest)).catch(() => undefined);
+      else if (additions) warnings.push('Choose a sync destination in Connections to add these tracks to your DJ apps.');
       return { outcome: 'completed', fileCount: moves.length, operation, backupPaths: journal.restores.map((restore) => restore.backupPath), warnings,
         ...(additions === undefined ? {} : { addedCount: additions.tracks.length }) };
     }).finally(() => { if (this.organizationCopy?.id === id) this.organizationCopy = null; });
